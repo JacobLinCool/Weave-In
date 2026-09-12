@@ -1005,12 +1005,12 @@ export function App(): ReactNode {
     return (
       <>
       <MeetingSurface
-        groupPanel={agentRuntime ? <details><summary>Omni · Public suggestions</summary><AgentPanel runtime={agentRuntime} mode="group" isHost={selfRef.current?.isHost ?? false} /></details> : null}
+        groupPanel={agentRuntime ? <AgentPanel runtime={agentRuntime} mode="group" isHost={selfRef.current?.isHost ?? false} /> : null}
         noticeActions={{
           onSpeak: async (text) => { if (!agentRuntime) throw new Error('Chat is reconnecting. Please try again.'); await agentRuntime.speakForMe(text); },
           onDiscuss: async (text) => { if (!agentRuntime) throw new Error('Chat is reconnecting. Please try again.'); await agentRuntime.discussReminder(text); setPanelTab('private'); },
         }}
-        agentPanel={agentRuntime ? <AgentPanel runtime={agentRuntime} mode="personal" isHost={selfRef.current?.isHost ?? false} /> : null}
+        agentPanel={agentRuntime ? (reminders) => <AgentPanel runtime={agentRuntime} mode="personal" reminders={reminders} isHost={selfRef.current?.isHost ?? false} /> : undefined}
         whiteboard={whiteboard}
         onWhiteboardApi={onWhiteboardApi}
         roomCode={roomCode}
@@ -1077,7 +1077,7 @@ export function App(): ReactNode {
 }
 
 function MeetingSurface(props: {
-  agentPanel: ReactNode;
+  agentPanel: ((reminders: ReactNode) => ReactNode) | undefined;
   groupPanel: ReactNode;
   noticeActions: NoticeActions;
   whiteboard: ExcalidrawStore;
