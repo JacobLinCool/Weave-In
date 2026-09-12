@@ -27,6 +27,16 @@ describe('meeting signaling protocol', () => {
 });
 
 describe('peer data-channel protocol', () => {
+  it('preserves Markdown whitespace in live chat and history replay', () => {
+    const at = '2026-09-12T00:00:00.000Z';
+    const text = '    indented code\n\n# Title\n\n- Item\n  - Nested\n\n```js\n\tconst x = 1;\n```\n\nLine  \nBreak';
+    expect(parsePeerMessage({ type: 'chat', id: 'md', text, at })).toMatchObject({ text });
+    expect(parsePeerMessage({ type: 'history', more: false, entries: [{ kind: 'chat', id: 'md', text, at }] }))
+      .toMatchObject({ entries: [{ text }] });
+    expect(parsePeerMessage({ type: 'chat', id: 'md', text: 'line\r\nnext\u0000', at })).toMatchObject({ text: 'line\nnext' });
+    expect(parsePeerMessage({ type: 'chat', id: 'md', text: '\u0000\t\n', at })).toBeNull();
+  });
+
   it('validates media state announcements', () => {
     expect(parsePeerMessage({
       type: 'state',
@@ -40,7 +50,7 @@ describe('peer data-channel protocol', () => {
 
   it('bounds chat and transcript text and strips control characters', () => {
     const at = '2026-09-12T00:00:00.000Z';
-    expect(parsePeerMessage({ type: 'chat', id: 'm1', text: '  hi there ', at })).toEqual({ type: 'chat', id: 'm1', text: 'hi there', at, agent: null });
+    expect(parsePeerMessage({ type: 'chat', id: 'm1', text: '  hi there ', at })).toEqual({ type: 'chat', id: 'm1', text: '  hi there ', at, agent: null });
     expect(parsePeerMessage({ type: 'chat', id: 'm1', text: 'hi', at, agent: ' ChatGPT ' })).toMatchObject({ agent: 'ChatGPT' });
     expect(parsePeerMessage({ type: 'chat', id: 'm1', text: 'hi', at, agent: 'x'.repeat(80) })).toMatchObject({ agent: 'x'.repeat(40) });
     expect(parsePeerMessage({ type: 'chat', id: 'm1', text: 'hi', at, agent: 7 })).toBeNull();
@@ -64,7 +74,7 @@ describe('peer data-channel protocol', () => {
       type: 'history',
       more: true,
       entries: [
-        { kind: 'chat', id: 'c1', text: 'hi', at, agent: 'ChatGPT' },
+        { kind: 'chat', id: 'c1', text: ' hi ', at, agent: 'ChatGPT' },
         { kind: 'transcript', id: 't1', text: 'we said this', at },
       ],
     });

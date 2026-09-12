@@ -2,6 +2,11 @@ import { observeVoiceActivity } from './voice-activity';
 import { AgentRuntime } from './agents/runtime';
 import { AgentPanel } from './agents/panel';
 import type { AgentRoomState, AgentLine } from './agents/contracts';
+import { captureWhiteboard } from './whiteboard-capture';
+import { editExcalidrawWhiteboard } from './whiteboard-webmcp';
+import { Whiteboard } from './whiteboard';
+import { ExcalidrawStore } from './excalidraw-store';
+import type { ExcalidrawImperativeAPI } from '@excalidraw/excalidraw/types';
 import { loadMeetingSession, saveMeetingSession } from './meeting-session';
 import { AutoReminders } from './auto-reminders';
 import { PrivateNotices } from './private-notices';
@@ -38,6 +43,7 @@ import { MeetingLog, type LogParticipant } from './meeting-log';
 import {
   MAX_FILE_BYTES,
   normalizeDisplayName,
+  normalizeChatText,
   ROOM_CODE_PATTERN,
   type HistoryEntry,
   type PeerIdentity,
@@ -122,6 +128,9 @@ export function App(): ReactNode {
   const localStreamRef = useRef<MediaStream | null>(null);
   const screenStreamRef = useRef<MediaStream | null>(null);
   const controllerRef = useRef<MeetingController | null>(null);
+  const [whiteboard] = useState(() => new ExcalidrawStore((element) => controllerRef.current?.broadcast({ type: 'excalidraw', element })));
+  const whiteboardApiRef = useRef<ExcalidrawImperativeAPI | null>(null);
+  const onWhiteboardApi = useCallback((api: ExcalidrawImperativeAPI | null) => { whiteboardApiRef.current = api; }, []);
   const participantsRef = useRef<Record<string, RemoteParticipant>>({});
   const nameRef = useRef('You');
   const micRef = useRef(true);
@@ -277,6 +286,9 @@ export function App(): ReactNode {
   const handlePeerMessage = (peerId: string, message: PeerMessage): void => {
     switch (message.type) {
       case 'agent-stream': case 'agent-line': case 'agent-history': agentRef.current?.receive(peerId, message); return;
+      case 'excalidraw':
+        whiteboard.merge(message.element);
+        return;
       case 'state':
         setParticipants((current) => {
           const participant = current[peerId];
@@ -533,6 +545,7 @@ export function App(): ReactNode {
       return;
     }
     setError(null);
+    whiteboard.reset();
     setPhase('connecting');
     nameRef.current = name;
     storeDisplayName(name);
@@ -556,7 +569,7 @@ export function App(): ReactNode {
           agentRef.current?.connectionRestored();
           setReconnecting(false);
           setError(null);
-          setRoomStartedAt(current => current ?? startedAt);
+          setRoomStartedAt(startedAt);
           selfRef.current = self;
           if (phaseRef.current === 'room') autoReminders.start({log: () => logRef.current, you: () => self.peerId});
           const next = Object.fromEntries(initialPeers.map((peer) => [peer.peerId, { identity: peer, seat: seatFor(peer.peerId), streams: {}, media: null }]));
@@ -617,6 +630,7 @@ export function App(): ReactNode {
         onPeerChannelOpen: (peerId) => {
           agentRef.current?.replayTo(peerId);
           controllerRef.current?.send(peerId, { type: 'state', ...currentMediaState() });
+          for (const element of whiteboard.records()) controllerRef.current?.send(peerId, { type: 'excalidraw', element });
           fileShareRef.current?.announceTo(peerId);
           replayHistoryTo(peerId);
         },
@@ -738,6 +752,7 @@ export function App(): ReactNode {
 
   /** Posts to chat; `agent` names the assistant when the message comes through a WebMCP tool rather than the keyboard. */
   const sendChat = (text: string, agent: string | null = null): { id: string; at: string } => {
+    text = normalizeChatText(text);
     const message = { id: crypto.randomUUID(), text, at: new Date().toISOString(), agent };
     setMessages((current) => [...current, { kind: 'text', ...message, from: SELF, name: nameRef.current, color: colorFor(SELF), own: true }]);
     controllerRef.current?.broadcast({ type: 'chat', ...message });
@@ -847,6 +862,19 @@ export function App(): ReactNode {
         return { file, blob };
       },
       captureScreen,
+      captureWhiteboard: (options) => {
+        const root = document.querySelector<HTMLElement>('.whiteboard');
+        if (!root) throw new Error('Open the whiteboard before capturing it.');
+        return captureWhiteboard(root, options);
+      },
+      editWhiteboard: async (input) => {
+        const result = await editExcalidrawWhiteboard(whiteboard, input);
+        if (result.action !== 'read') {
+          await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+          whiteboardApiRef.current?.scrollToContent(undefined, { fitToViewport: true, viewportZoomFactor: 0.8, animate: false });
+        }
+        return result;
+      },
       sendAgentMessage: (text, agent) => sendChat(text, agent ?? 'Assistant'),
     });
     return () => { autoReminders.stop(); window.clearInterval(timer); unregister?.(); privateNotices.clear(); };
@@ -865,7 +893,21 @@ export function App(): ReactNode {
           const blob = await share.download(fileId); const file = share.get(fileId);
           if (!file) throw new Error('File no longer available.');
           return { file, blob };
-        }, captureScreen, sendAgentMessage: (text, agent) => sendChat(text, agent ?? 'Assistant'),
+        }, captureScreen,
+      captureWhiteboard: (options) => {
+        const root = document.querySelector<HTMLElement>('.whiteboard');
+        if (!root) throw new Error('Open the whiteboard before capturing it.');
+        return captureWhiteboard(root, options);
+      },
+      editWhiteboard: async (input) => {
+        const result = await editExcalidrawWhiteboard(whiteboard, input);
+        if (result.action !== 'read') {
+          await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+          whiteboardApiRef.current?.scrollToContent(undefined, { fitToViewport: true, viewportZoomFactor: 0.8, animate: false });
+        }
+        return result;
+      },
+        sendAgentMessage: (text, agent) => sendChat(text, agent ?? 'Assistant'),
       },
       beginVoice: async (audience, owner) => {
         const source = localStreamRef.current?.getAudioTracks()[0];
@@ -958,6 +1000,8 @@ export function App(): ReactNode {
           onDiscuss: async (text) => { if (!agentRuntime) throw new Error('Chat is reconnecting. Please try again.'); await agentRuntime.discussReminder(text); setPanelTab('private'); },
         }}
         agentPanel={agentRuntime ? <AgentPanel runtime={agentRuntime} mode="personal" isHost={selfRef.current?.isHost ?? false} /> : null}
+        whiteboard={whiteboard}
+        onWhiteboardApi={onWhiteboardApi}
         roomCode={roomCode}
         displayName={nameRef.current}
         localStream={localStream}
@@ -1025,6 +1069,8 @@ function MeetingSurface(props: {
   agentPanel: ReactNode;
   groupPanel: ReactNode;
   noticeActions: NoticeActions;
+  whiteboard: ExcalidrawStore;
+  onWhiteboardApi(api: ExcalidrawImperativeAPI | null): void;
   privateNotices: PrivateNotices;
   autoReminders: AutoReminders;
   roomCode: string;
@@ -1056,6 +1102,7 @@ function MeetingSurface(props: {
   onCopy(): void;
   onLeave(): void;
 }): ReactNode {
+  const [whiteboardOpen, setWhiteboardOpen] = useState(false);
   const participants = Object.values(props.participants);
   const presentation = findPresentation(props.screenStream, props.displayName, participants);
   const tiles = [
@@ -1100,7 +1147,9 @@ function MeetingSurface(props: {
       />
       <div className="meeting-body">
         <section className="meeting-stage">
-          {presentation ? (
+          {whiteboardOpen ? (
+            <><div id="meeting-whiteboard"><Whiteboard store={props.whiteboard} onApi={props.onWhiteboardApi} /></div><div className="whiteboard-video-strip">{tiles}</div></>
+          ) : presentation ? (
             <div className="stage-presentation">
               <div className="stage-presentation__screen">
                 <VideoTile name={presentation.name} stream={presentation.stream} muted={false} cameraOff={false} local={presentation.local} presentation />
@@ -1115,6 +1164,8 @@ function MeetingSurface(props: {
           )}
           <div className="meeting-footer">
             <MeetingControls
+              whiteboardOpen={whiteboardOpen}
+              onToggleWhiteboard={() => setWhiteboardOpen(open => !open)}
               micEnabled={props.micEnabled}
               cameraEnabled={props.cameraEnabled}
               sharingScreen={Boolean(props.screenStream)}

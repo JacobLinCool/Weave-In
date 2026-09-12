@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest';
 import type { SharedFile } from '../src/file-share';
 import type { CaptureOptions } from '../src/screen-capture';
 import { MeetingLog } from '../src/meeting-log';
+import { WhiteboardStore } from '../src/whiteboard-model';
+import { editWhiteboard } from '../src/whiteboard-webmcp';
 import {
   createMeetingTools,
   findModelContext,
@@ -50,6 +52,11 @@ function fixture(): {
     privateNotices: new PrivateNotices(),
     snapshot: () => snapshot,
     log: () => log,
+    editWhiteboard: (input) => editWhiteboard(whiteboard, input),
+    captureWhiteboard: async (options) => ({
+      blob: new Blob([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], { type: options.format === 'png' ? 'image/png' : 'image/jpeg' }),
+      width: options.maxWidth, height: 720, sourceWidth: 1600, sourceHeight: 900,
+    }),
     download: async (fileId) => {
       if (fileId === notes.id) return { file: notes, blob: new Blob(['hello world'], { type: 'text/plain' }) };
       if (fileId === photo.id) return { file: photo, blob: new Blob([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], { type: 'image/png' }) };
@@ -72,6 +79,7 @@ function fixture(): {
       return { id: `m${posted.length}`, at: '2026-09-12T00:00:00.000Z' };
     },
   };
+  const whiteboard = new WhiteboardStore(() => {}, 'alice');
   return { context, log, posted, captures, sharing };
 }
 
@@ -88,9 +96,9 @@ async function payload(result: Promise<ToolResult>): Promise<{ body: Record<stri
 }
 
 describe('WebMCP meeting tools', () => {
-  it('exposes meeting and private tools with object input schemas', () => {
+  it('exposes all eight meeting, whiteboard and private tools with object input schemas', () => {
     const tools = createMeetingTools(fixture().context);
-    expect(tools.map((item) => item.name)).toEqual([MEETING_TOOL_NAMES.read, MEETING_TOOL_NAMES.download, MEETING_TOOL_NAMES.capture, MEETING_TOOL_NAMES.send, MEETING_TOOL_NAMES.notice, MEETING_TOOL_NAMES.notices]);
+    expect(tools.map((item) => item.name)).toEqual([MEETING_TOOL_NAMES.read, MEETING_TOOL_NAMES.download, MEETING_TOOL_NAMES.capture, MEETING_TOOL_NAMES.captureWhiteboard, MEETING_TOOL_NAMES.editWhiteboard, MEETING_TOOL_NAMES.send, MEETING_TOOL_NAMES.notice, MEETING_TOOL_NAMES.notices]);
     for (const item of tools) {
       expect(item.inputSchema).toMatchObject({ type: 'object', additionalProperties: false });
       expect(item.description.length).toBeGreaterThan(40);
@@ -177,10 +185,19 @@ describe('WebMCP meeting tools', () => {
     expect(plain.body).toEqual({ ok: true, id: 'm1', at: '2026-09-12T00:00:00.000Z', shownAs: "Alice's agent" });
     const named = await payload(send.execute({ text: 'Sources attached.', agent: 'ChatGPT' }));
     expect(named.body).toMatchObject({ shownAs: "Alice's agent · ChatGPT" });
-    expect(posted).toEqual([{ text: 'The answer is 42.', agent: null }, { text: 'Sources attached.', agent: 'ChatGPT' }]);
+    expect(posted).toEqual([{ text: '  The  answer is 42. ', agent: null }, { text: 'Sources attached.', agent: 'ChatGPT' }]);
     expect((await payload(send.execute({ text: '   ' }))).isError).toBe(true);
     expect((await payload(send.execute({ text: 'x'.repeat(2_001) }))).isError).toBe(true);
     expect((await payload(send.execute({ text: 'hi', agent: 3 }))).isError).toBe(true);
+  });
+
+  it('preserves Markdown from agents instead of flattening lines and indentation', async () => {
+    const { context, posted } = fixture();
+    const send = tool(createMeetingTools(context), MEETING_TOOL_NAMES.send);
+    const text = '# Summary\n\n- First\n  - Nested\n\n```ts\nconst ready = true;\n```';
+    expect((await payload(send.execute({ text }))).isError).toBe(false);
+    expect(posted).toEqual([{ text, agent: null }]);
+    expect((await payload(send.execute({ text: '\u0000\n\t' }))).isError).toBe(true);
   });
 
   it('registers with the browser model context and removes the tools again', () => {
@@ -196,10 +213,10 @@ describe('WebMCP meeting tools', () => {
       },
     };
     const unregister = registerMeetingTools(fixture().context, modelContext);
-    expect(registry.size).toBe(6);
+    expect(registry.size).toBe(8);
     unregister?.();
     expect(registry.size).toBe(0);
-    expect(unregistered).toEqual([MEETING_TOOL_NAMES.read, MEETING_TOOL_NAMES.download, MEETING_TOOL_NAMES.capture, MEETING_TOOL_NAMES.send, MEETING_TOOL_NAMES.notice, MEETING_TOOL_NAMES.notices]);
+    expect(unregistered).toEqual([MEETING_TOOL_NAMES.read, MEETING_TOOL_NAMES.download, MEETING_TOOL_NAMES.capture, MEETING_TOOL_NAMES.captureWhiteboard, MEETING_TOOL_NAMES.editWhiteboard, MEETING_TOOL_NAMES.send, MEETING_TOOL_NAMES.notice, MEETING_TOOL_NAMES.notices]);
     expect(registerMeetingTools(fixture().context, null)).toBeNull();
   });
 
@@ -207,12 +224,35 @@ describe('WebMCP meeting tools', () => {
     const provided: ToolDefinition[][] = [];
     const modelContext = { provideContext: (context: { tools: ToolDefinition[] }) => provided.push(context.tools) };
     const unregister = registerMeetingTools(fixture().context, modelContext);
-    expect(provided[0]).toHaveLength(6);
+    expect(provided[0]).toHaveLength(8);
     unregister?.();
     expect(provided[1]).toEqual([]);
     expect(findModelContext({ navigator: { modelContext } })).toBe(modelContext);
     expect(findModelContext({ navigator: {}, document: { modelContext } })).toBe(modelContext);
     expect(findModelContext({})).toBeNull();
+  });
+
+  it('captures the whiteboard as an image and reports closed-board errors', async () => {
+    const { context } = fixture();
+    const capture = tool(createMeetingTools(context), MEETING_TOOL_NAMES.captureWhiteboard);
+    const result = await capture.execute({});
+    expect(JSON.parse((result.content[0] as { text: string }).text)).toMatchObject({ shared: true, view: 'viewport', width: 1280, height: 720, sourceWidth: 1600, sourceHeight: 900 });
+    expect(result.content[1]).toEqual({ type: 'image', data: btoa('\x89PNG'), mimeType: 'image/png' });
+    expect((await capture.execute({ format: 'jpeg', maxWidth: 640 })).content[1]).toMatchObject({ mimeType: 'image/jpeg' });
+    for (const input of [null, [], { maxWidth: 0 }, { maxWidth: null }, { quality: Infinity }, { quality: null }, { format: 'gif' }, { unknown: true }]) {
+      expect((await capture.execute(input)).isError).toBe(true);
+    }
+    context.captureWhiteboard = async () => { throw new Error('Open the whiteboard first.'); };
+    expect((await payload(capture.execute({}))).body['error']).toBe('Open the whiteboard first.');
+  });
+
+  it('edits the actual shared whiteboard and exposes validation failures as tool errors', async () => {
+    const edit = tool(createMeetingTools(fixture().context), MEETING_TOOL_NAMES.editWhiteboard);
+    expect(edit.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true });
+    const created = await payload(edit.execute({ action: 'edit', operations: [{ op: 'create', kind: 'note', id: 'idea', x: 0, y: 0, text: '共享便利貼' }] }));
+    expect(created.body).toMatchObject({ shared: true, count: 1, changedIds: ['idea'] });
+    expect((await payload(edit.execute({ action: 'read' }))).body['elements']).toMatchObject([{ id: 'idea', text: '共享便利貼' }]);
+    expect((await edit.execute({ action: 'edit', operations: [{ op: 'update', id: 'idea', text: 'x'.repeat(501) }] })).isError).toBe(true);
   });
 });
 

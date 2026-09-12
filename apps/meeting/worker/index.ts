@@ -396,8 +396,8 @@ function withSecurityHeaders(response: Response, url: URL): Response {
   headers.set(
     'Content-Security-Policy',
     isLocalDevelopment
-      ? "default-src 'self'; base-uri 'none'; connect-src 'self' ws: wss://generativelanguage.googleapis.com https://api.openai.com; font-src 'self'; frame-ancestors 'none'; img-src 'self' data:; media-src 'self' blob:; object-src 'none'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'"
-      : "default-src 'self'; base-uri 'none'; connect-src 'self' wss://generativelanguage.googleapis.com https://api.openai.com; font-src 'self'; frame-ancestors 'none'; img-src 'self' data:; media-src 'self' blob:; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'",
+      ? "default-src 'self'; base-uri 'none'; connect-src 'self' ws: wss://generativelanguage.googleapis.com https://api.openai.com; font-src 'self'; frame-ancestors 'none'; img-src 'self' data: blob:; media-src 'self' blob:; object-src 'none'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'"
+      : "default-src 'self'; base-uri 'none'; connect-src 'self' wss://generativelanguage.googleapis.com https://api.openai.com; font-src 'self'; frame-ancestors 'none'; img-src 'self' data: blob:; media-src 'self' blob:; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'",
   );
 
   headers.set(

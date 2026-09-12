@@ -4,8 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "WRANGLER_LOG_PATH=./wrangler.log vite",
-    "build": "WRANGLER_LOG_PATH=./wrangler.log vite build && node scripts/verify-bundle.mjs",
+    "dev": "node scripts/prepare-whiteboard-assets.mjs && WRANGLER_LOG_PATH=./wrangler.log vite",
+    "build": "node scripts/prepare-whiteboard-assets.mjs && WRANGLER_LOG_PATH=./wrangler.log vite build && node scripts/verify-bundle.mjs",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test": "WRANGLER_LOG_PATH=./wrangler.log vitest run",
@@ -14,12 +14,20 @@
     "serve:local": "node scripts/serve-local.mjs"
   },
   "dependencies": {
+    "@excalidraw/excalidraw": "0.18.1",
+    "@excalidraw/mermaid-to-excalidraw": "2.2.2",
     "@fontsource-variable/azeret-mono": "5.2.8",
     "@fontsource-variable/jost": "5.2.8",
     "@weave-in/transcribe": "workspace:*",
+    "dompurify": "^3.4.15",
     "lucide-react": "1.34.0",
+    "mammoth": "^1.12.2",
+    "pdfjs-dist": "^6.3.289",
     "react": "19.2.0",
-    "react-dom": "19.2.0"
+    "react-dom": "19.2.0",
+    "react-markdown": "^10.1.0",
+    "remark-breaks": "^4.0.0",
+    "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "1.54.1",
@@ -30,6 +38,7 @@
     "@vitejs/plugin-react": "6.1.0",
     "miniflare": "5.20260826.0-alpha",
     "vite": "8.2.2",
+    "vite-plugin-static-copy": "^4.1.1",
     "wrangler": "4.127.0"
   }
 }
