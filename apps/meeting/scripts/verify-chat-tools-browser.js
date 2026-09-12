@@ -109,13 +109,7 @@ async (page, origin = 'http://127.0.0.1:8788') => {
                 if (part.type === 'input_image') state.images.push({ call: step, imageUrl: part.image_url });
               }
               const text = event.item?.content?.[0]?.text;
-              if (!started && typeof text === 'string' && text.startsWith('Background context only')) {
-                started = true;
-                setTimeout(() => {
-                  emit({ type: 'session.input_transcript.delta', delta: 'private-voice-only: Read the uploaded reference, draw the release workflow on the whiteboard, and post its steps in Room chat.', start_ms: 0, end_ms: 1000 });
-                  next();
-                }, 300);
-              }
+              if (!started && typeof text === 'string' && text.includes('Current explicit request:')) started = true;
             }
             if (event.type === 'response.create' && started && !state.complete && !state.errors.length) next();
             if (event.type === 'session.close') {
@@ -174,7 +168,8 @@ async (page, origin = 'http://127.0.0.1:8788') => {
     await page.getByTestId('file-card').getByText('workflow-reference.png', { exact: true }).waitFor();
     if (await page.getByRole('region', { name: 'Shared whiteboard', exact: true }).count()) throw new Error('Whiteboard should start closed');
     await tab(page, 'Muse').click();
-    await page.getByRole('button', { name: 'Talk to Muse', exact: true }).click();
+    await page.getByRole('textbox', { name: 'Message Muse', exact: true }).fill('private-request-only: Read the uploaded reference, draw the release workflow on the whiteboard, and post its steps in Room chat.');
+    await page.locator('.agent-compose').getByRole('button', { name: 'Send', exact: true }).click();
     await page.waitForFunction(() => window.__chatToolsTest.complete || window.__chatToolsTest.errors.length, null, { timeout: 60_000 });
     const errors = await page.evaluate(() => window.__chatToolsTest.errors);
     if (errors.length) throw new Error(errors.join('\n'));
@@ -215,7 +210,7 @@ async (page, origin = 'http://127.0.0.1:8788') => {
     });
     const provider = await page.evaluate(() => {
       const state = window.__chatToolsTest;
-      return { names: state.sessions[0].session.delegation.responses.tools.map(tool => tool.name), calls: state.calls.map(call => call.name), imageCalls: state.images.map(image => image.call), imagesValid: state.images.every(image => /^data:image\/(jpeg|png);base64,/.test(image.imageUrl)), configs: state.states.at(-1).agents.filter(agent => agent.owner === state.you).map(agent => agent.config), peerLeak: state.sends.some(item => item.channel === 'weave-in' && /private-voice-only|private-reply-only/.test(JSON.stringify(item.value))) };
+      return { names: state.sessions[0].session.delegation.responses.tools.map(tool => tool.name), calls: state.calls.map(call => call.name), imageCalls: state.images.map(image => image.call), imagesValid: state.images.every(image => /^data:image\/(jpeg|png);base64,/.test(image.imageUrl)), configs: state.states.at(-1).agents.filter(agent => agent.owner === state.you).map(agent => agent.config), peerLeak: state.sends.some(item => item.channel === 'weave-in' && /private-request-only|private-reply-only/.test(JSON.stringify(item.value))) };
     });
     for (const required of ['read_meeting', 'search_meeting', 'read_shared_file', 'edit_whiteboard', 'capture_whiteboard', 'send_chat_message']) {
       if (!provider.names.includes(required)) throw new Error(`GPT-Live was not initialized with ${required}`);
@@ -225,10 +220,9 @@ async (page, origin = 'http://127.0.0.1:8788') => {
     if (!provider.imagesValid || !provider.imageCalls.includes(4) || !provider.imageCalls.includes(7)) throw new Error('File or whiteboard image was not forwarded as provider input_image');
     if (provider.peerLeak) throw new Error('Private voice conversation was sent to the guest');
     await tab(guest, 'Transcript').click();
-    if (/private-voice-only|private-reply-only/.test(await guest.locator('body').innerText())) throw new Error('Guest saw private voice conversation');
-    await page.getByRole('button', { name: 'Finish speaking', exact: true }).click();
-    await page.getByRole('button', { name: 'Talk to Muse', exact: true }).waitFor();
-    return { clients: 2, calls: provider.calls, guestFileTransfer: true, sharedImageAsProviderVision: true, guestBoardSync: true, boardAutoOpen: true, renderedBoardAsProviderVision: true, diagramInViewport: true, boardZoom: zoom, renderedDiagram, attributedRoomPost: true, privateVoiceIsolation: true, allParticipantContextDefault: true, screenOptInPreserved: true, provider: 'simulated GPT-Live WebRTC with real room and tool execution (no real provider call)' };
+    if (/private-request-only|private-reply-only/.test(await guest.locator('body').innerText())) throw new Error('Guest saw private voice conversation');
+
+    return { clients: 2, calls: provider.calls, guestFileTransfer: true, sharedImageAsProviderVision: true, guestBoardSync: true, boardAutoOpen: true, renderedBoardAsProviderVision: true, diagramInViewport: true, boardZoom: zoom, renderedDiagram, attributedRoomPost: true, privateRequestIsolation: true, allParticipantContextDefault: true, screenOptInPreserved: true, provider: 'simulated GPT-Live WebRTC with real room and tool execution (no real provider call)' };
   } finally {
     await Promise.all([ownerContext, guestContext].map(context => context.close()));
   }

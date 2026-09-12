@@ -73,7 +73,7 @@ Tool results are `{ content: [{ type: 'text', text: <JSON> }] }` (plus an `image
 
 ## Muse and Omni
 
-Muse is configured automatically when a participant joins. Open **Muse** for reminders and private discussion. Automatic reminders are silent and do not start an audio session. A direct text question or **Talk to Muse** starts a private assistant interaction; private voice input temporarily isolates the microphone from the meeting and restores its previous state when finished.
+Muse is configured automatically when a participant joins. Open **Muse** for reminders and private discussion. Automatic reminders are silent and do not start an audio session. The microphone starts private dictation and temporarily isolates the microphone from the meeting. Stop finalizes the transcription into an editable draft without contacting Muse. Send during recording finalizes the last words, restores the meeting microphone and submits the text; ordinary text uses the same Send action. While Muse is connecting or responding, Send becomes a square Stop response control and returns to the arrow when finished or stopped. Dictation never enters shared captions or conversation history until submitted.
 
 New personal assistants include everyone's available public transcripts and Room chat, with shared file and image reading enabled. Shared-screen capture stays opt-in. Muse receives recent records and a file inventory, retrieves older records or file contents as needed, and can use the whiteboard tools during private interactions. Ask “Turn the discussion into a flowchart on the whiteboard,” “Read the uploaded design and draw its workflow,” or “Post the agreed next steps in Room chat.” Whiteboard edits synchronize with the room and requested Room messages are labelled as the owner's agent; Muse's spoken replies stay private. Drawing uses editable shapes and diagrams, not generated image assets.
 
@@ -91,7 +91,7 @@ The agent's `read_meeting` file inventory has its own `fileOffset` cursor, with 
 
 Context coverage is limited to records and file announcements available in this browser, including its same-tab recovery and connected peers' history replay. There is no server archive of the whole meeting. An uncached file cannot be fetched after its sharing participant leaves; a cached file may remain readable. Muse must report missing or unreadable content instead of treating its inventory as proof that it has read everything.
 
-When continuous background updates reach their reserved input budget, Muse shows that updates have paused and informs its reasoning backend that prior snapshots may be stale. The current tool workflow can still finish. The backend is instructed to fetch current meeting details for each new meeting-related request; starting a new voice session resumes continuous updates with a fresh context budget.
+When continuous background updates reach their reserved input budget, Muse shows that updates have paused and informs its reasoning backend that prior snapshots may be stale. The current tool workflow can still finish. The backend is instructed to fetch current meeting details for each new meeting-related request; starting a new request resumes continuous updates with a fresh context budget.
 
 To test this extension after upgrading the frontend, create a fresh test room so Muse receives the new instructions and default file permissions. In an existing room, inspect **Muse → Settings** first. Removing and recreating Muse applies the new defaults but also clears this tab's private Muse conversation. Whiteboard tools need neither screen-capture permission nor a browser MCP extension.
 
@@ -99,9 +99,9 @@ For a manual voice test:
 
 1. Open the latest frontend in a fresh test room and invite another participant. Enable captions, discuss a short workflow, and confirm that both speakers appear in **Transcript**.
 2. Have the other participant upload a small image, PDF, or text file in **Room** and stay connected so Muse can fetch it.
-3. Open **Muse → Talk** and ask, “Use our discussion and the uploaded reference to draw the workflow on the whiteboard, then post the agreed steps in Room chat.”
-4. Check that the whiteboard opens, both participants see the diagram and the attributed Room message, and Muse's spoken response stays private.
-5. Choose **Finish speaking** to end the private interaction and restore the meeting microphone to its previous state.
+3. Open **Muse**, click the microphone and dictate, “Use our discussion and the uploaded reference to draw the workflow on the whiteboard, then post the agreed steps in Room chat.”
+4. Click **Stop recording** to review the draft, then **Send** (or click **Send** while recording). Check that the whiteboard opens, both participants see the diagram and the attributed Room message, and Muse's spoken response stays private.
+5. Confirm that dictation alone produces no assistant response, Stop retains editable text, and the meeting microphone returns to its previous state.
 
 ## Automatic private analysis
 
@@ -213,7 +213,7 @@ playwright-cli -s=agents close
 
 The browser harness creates two independent browser contexts with real room WebSockets and peer connections, using a local WebRTC provider simulator for GPT-Live initialization and mocked TURN provisioning for local peer connectivity. It verifies automatic Muse setup without a Live connection, private isolation, approved-only public speech with owner attribution, an open owner microphone and interruption without resume, silent Omni messages in Room, private conversation recovery, signaling reconnection, public replay/deduplication, and mobile layout. `VERIFICATION.md` also contains historical results from the original PR #6. Provider simulation does not verify real credentials or speech understanding; real-provider connection and human listening checks complement it.
 
-`scripts/verify-chat-tools-browser.js` is a second harness with the same `(page, origin)` calling convention. It joins two real local participants, shares a guest's text file and image, and drives the owner's **Talk** through simulated GPT-Live function calls. Those calls execute the actual meeting search, file transfer/reader, Mermaid whiteboard edit, rendered board capture, and Room posting paths. Assertions cover the receiving peer's board and attributed message, image delivery as provider vision input, private voice transcript isolation, default file permission, and shared-screen opt-in. All provider responses in this harness are simulated; it checks tool integration rather than model judgment or actual speech recognition.
+`scripts/verify-chat-tools-browser.js` is a second harness with the same `(page, origin)` calling convention. It joins two real local participants, shares a guest's text file and image, and submits the owner's private request through simulated GPT-Live function calls. Those calls execute the actual meeting search, file transfer/reader, Mermaid whiteboard edit, rendered board capture, and Room posting paths. Assertions cover the receiving peer's board and attributed message, image delivery as provider vision input, private request isolation, default file permission, and shared-screen opt-in. All provider responses in this harness are simulated; it checks tool integration rather than model judgment or actual speech recognition.
 
 ### Stable local preview behind Tailscale
 
