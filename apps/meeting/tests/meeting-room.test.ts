@@ -48,7 +48,11 @@ describe('MeetingRoom Durable Object', () => {
       } satisfies Env,
     );
     expect(response.headers.get('Permissions-Policy')).toContain('display-capture=(self)');
-    expect(response.headers.get('Content-Security-Policy')).toContain("script-src 'self'");
+    const policy = response.headers.get('Content-Security-Policy');
+    expect(policy).toContain("script-src 'self'");
+    expect(policy).toContain("img-src 'self' data: blob:");
+    expect(policy).toContain("object-src 'none'");
+    expect(policy).not.toContain("'unsafe-eval'");
   });
 
   it('rejects malformed room routes and cross-origin WebSocket upgrades', async () => {

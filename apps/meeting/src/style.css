@@ -215,18 +215,18 @@ button:disabled { cursor: wait; opacity: .55; }
 .chat-message, .transcript-line { padding: 9px 11px; border-radius: 10px; background: var(--raised); font-size: 13px; line-height: 1.45; }
 .chat-message.is-own { background: rgba(var(--accent-rgb),.12); }
 .chat-message header, .transcript-line header { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 3px; }
-.chat-message strong, .transcript-line strong { font-size: 11px; font-weight: 700; color: var(--accent); }
-.chat-message.is-own strong { color: var(--accent-hover); }
+.chat-message > header strong, .transcript-line strong { font-size: 11px; font-weight: 700; color: var(--accent); }
+.chat-message.is-own > header strong { color: var(--accent-hover); }
 .chat-message time, .transcript-line time { color: var(--dim); font-size: 10px; font-variant-numeric: tabular-nums; }
-.chat-message p, .transcript-line p { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+.transcript-line p { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
 .chat-message.is-agent { background: transparent; border: 1px dashed var(--line); }
 .chat-message.is-agent.is-own { border-color: rgba(var(--accent-rgb),.42); }
-.chat-message.is-agent strong { display: inline-flex; align-items: center; gap: 5px; }
-.chat-message.is-agent strong svg { color: var(--muted); }
+.chat-message.is-agent > header strong { display: inline-flex; align-items: center; gap: 5px; }
+.chat-message.is-agent > header strong svg { color: var(--muted); }
 .chat-agent-tag { margin-right: auto; padding: 1px 6px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); font-family: var(--notation); font-size: 9px; font-weight: 500; letter-spacing: .08em; text-transform: uppercase; }
 .chat-message.is-file { padding-bottom: 10px; }
 .chat-panel { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.file-card { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 9px 10px; border: 1px solid var(--line-soft); border-radius: 8px; background: var(--panel); }
+.file-card { display: grid; min-width: 0; gap: 10px; padding: 9px 10px; border: 1px solid var(--line-soft); border-radius: 8px; background: var(--panel); }
 .file-card__icon { color: var(--muted); }
 .file-card.is-ready .file-card__icon, .file-card.is-downloading .file-card__icon { color: var(--accent); }
 .file-card.is-unavailable, .file-card.is-missing { opacity: .6; }
@@ -247,9 +247,9 @@ button:disabled { cursor: wait; opacity: .55; }
 .chat-composer { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; padding: 12px; border-top: 1px solid var(--line-soft); }
 .chat-composer__attach { width: 42px; height: 42px; border: 1px solid var(--line); border-radius: 10px; display: grid; place-items: center; color: var(--muted); background: var(--base); cursor: pointer; }
 .chat-composer__attach:hover { color: var(--ink); border-color: var(--dim); }
-.chat-composer input { min-height: 42px; padding: 0 12px; border: 1px solid var(--line); border-radius: 10px; color: var(--ink); background: var(--base); font-size: 13px; }
-.chat-composer input::placeholder { color: var(--dim); }
-.chat-composer button[type='submit'] { width: 42px; height: 42px; border: 0; border-radius: 10px; display: grid; place-items: center; color: var(--accent-ink); background: var(--accent); cursor: pointer; }
+.chat-composer textarea { min-width: 0; min-height: 54px; max-height: 180px; resize: vertical; padding: 8px 10px; line-height: 1.45; border: 1px solid var(--line); border-radius: 10px; color: var(--ink); background: var(--base); font-size: 13px; }
+.chat-composer textarea::placeholder { color: var(--dim); }
+.chat-composer button[type='submit'] { width: 42px; height: 42px; height: 42px; border: 0; border-radius: 10px; display: grid; place-items: center; color: var(--accent-ink); background: var(--accent); cursor: pointer; }
 .chat-composer button[type='submit']:disabled { cursor: default; opacity: .4; }
 
 @media (max-width: 980px) {
@@ -414,3 +414,56 @@ button:disabled { cursor: wait; opacity: .55; }
   .spec th { width: 92px; }
   .landing__footer { flex-direction: column; align-items: flex-start; padding: 18px 0; }
 }
+
+/* Participant messages and document previews share the same reading styles. */
+.chat-message { min-width: 0; flex-shrink: 0; }
+.markdown-body { min-width: 0; overflow-wrap: anywhere; line-height: 1.55; }
+.markdown-body > :first-child { margin-top: 0; }
+.markdown-body > :last-child { margin-bottom: 0; }
+.markdown-body p { margin: .55em 0; white-space: normal; }
+.markdown-body :is(h1,h2,h3,h4,h5,h6) { margin: 1em 0 .4em; font-weight: 600; line-height: 1.3; }
+.markdown-body h1 { font-size: 1.45em; }
+.markdown-body h2 { font-size: 1.3em; }
+.markdown-body :is(h3,h4,h5,h6) { font-size: 1.1em; }
+.markdown-body strong { color: inherit; font-size: inherit; font-weight: 700; }
+.markdown-body a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+.markdown-body :is(ul,ol) { margin: .5em 0; padding-left: 1.5em; }
+.markdown-body li + li { margin-top: .25em; }
+.markdown-body blockquote { margin: .6em 0; padding: .15em 0 .15em 12px; border-left: 3px solid var(--dim); color: var(--muted); }
+.markdown-body code { font-family: var(--notation); font-size: .9em; background: var(--base); padding: 1px 4px; border-radius: 3px; }
+.markdown-body pre { overflow-x: auto; max-width: 100%; padding: 10px; border-radius: 6px; background: var(--base); white-space: pre; }
+.markdown-body pre code { padding: 0; background: none; }
+.markdown-table { overflow-x: auto; }
+.markdown-body table { border-collapse: collapse; font-size: inherit; margin: .6em 0; }
+.markdown-body :is(th,td) { padding: 5px 8px; border: 1px solid var(--line); text-align: left; }
+.markdown-body th { background: var(--raised); }
+.markdown-body hr { border: 0; border-top: 1px solid var(--line); margin: 1em 0; }
+.markdown-body .task-list-item { list-style: none; }
+.markdown-body .task-list-item input { margin: 0 6px 0 -1.2em; accent-color: var(--accent); }
+.chat-composer { align-items: start; }
+.chat-composer__hint { grid-column: 1 / -1; color: var(--dim); font-size: 10px; }
+.file-card__summary { display: grid; grid-template-columns: auto minmax(0,1fr); align-items: center; gap: 10px; }
+.file-card__actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.file-card__actions:empty { display: none; }
+.file-card > p { margin: 0; }
+.file-preview { min-width: 0; max-height: 480px; overflow: auto; border-top: 1px solid var(--line-soft); padding-top: 10px; }
+.file-preview p[role] { margin: 0; color: var(--muted); font-size: 12px; }
+.file-preview__image { display: block; width: 100%; max-height: 360px; object-fit: contain; border-radius: 4px; }
+.file-preview__text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--notation); font-size: 11px; line-height: 1.6; }
+.document-preview { overflow-x: auto; }
+.pdf-preview canvas { max-width: 100%; height: auto; }
+.pdf-preview__controls { display: flex; align-items: center; justify-content: space-between; gap: 5px; padding-bottom: 10px; font-size: 11px; }
+.pdf-preview__controls button { padding: 4px 6px; border: 1px solid var(--line); border-radius: 5px; background: var(--raised); color: var(--ink); cursor: pointer; }
+.pdf-preview__controls button:disabled { opacity: .4; cursor: default; }
+.pdf-preview details { margin-top: 8px; }
+.pdf-preview summary { cursor: pointer; color: var(--muted); font-size: 11px; }
+
+.preview-dialog { width: min(920px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); padding: 16px; border: 1px solid var(--line); border-radius: 14px; color: var(--ink); background: var(--panel); box-shadow: 0 32px 100px rgba(0,0,0,.45); }
+.preview-dialog::backdrop { background: rgba(8,10,24,.8); }
+.preview-dialog__header { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.preview-dialog__header h2 { flex: 1; min-width: 0; overflow-wrap: anywhere; margin: 0; font-size: 16px; font-weight: 500; }
+.preview-dialog .file-preview { max-height: calc(100dvh - 150px); padding: 14px; }
+.preview-dialog .file-preview__image { max-height: calc(100dvh - 190px); }
+.preview-dialog .pdf-preview canvas { display: block; margin: 0 auto; }
+.preview-dialog .pdf-preview canvas[hidden] { display: none; }
+.preview-dialog .file-preview__text { font-size: 13px; }

@@ -175,10 +175,19 @@ describe('WebMCP meeting tools', () => {
     expect(plain.body).toEqual({ ok: true, id: 'm1', at: '2026-09-12T00:00:00.000Z', shownAs: "Alice's agent" });
     const named = await payload(send.execute({ text: 'Sources attached.', agent: 'ChatGPT' }));
     expect(named.body).toMatchObject({ shownAs: "Alice's agent · ChatGPT" });
-    expect(posted).toEqual([{ text: 'The answer is 42.', agent: null }, { text: 'Sources attached.', agent: 'ChatGPT' }]);
+    expect(posted).toEqual([{ text: '  The  answer is 42. ', agent: null }, { text: 'Sources attached.', agent: 'ChatGPT' }]);
     expect((await payload(send.execute({ text: '   ' }))).isError).toBe(true);
     expect((await payload(send.execute({ text: 'x'.repeat(2_001) }))).isError).toBe(true);
     expect((await payload(send.execute({ text: 'hi', agent: 3 }))).isError).toBe(true);
+  });
+
+  it('preserves Markdown from agents instead of flattening lines and indentation', async () => {
+    const { context, posted } = fixture();
+    const send = tool(createMeetingTools(context), MEETING_TOOL_NAMES.send);
+    const text = '# Summary\n\n- First\n  - Nested\n\n```ts\nconst ready = true;\n```';
+    expect((await payload(send.execute({ text }))).isError).toBe(false);
+    expect(posted).toEqual([{ text, agent: null }]);
+    expect((await payload(send.execute({ text: '\u0000\n\t' }))).isError).toBe(true);
   });
 
   it('registers with the browser model context and removes the tools again', () => {
