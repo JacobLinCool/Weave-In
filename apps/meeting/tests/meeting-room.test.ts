@@ -1,5 +1,5 @@
 import { env } from 'cloudflare:workers';
-import { evictDurableObject, SELF } from 'cloudflare:test';
+import { evictDurableObject, runInDurableObject, SELF } from 'cloudflare:test';
 import { afterEach, describe, expect, it } from 'vitest';
 import worker, { issueTranscriptionToken, resolveTranscriptionProvider, type Env, type MeetingRoom } from '../worker';
 import type { ServerMessage } from '../src/protocol';
@@ -16,6 +16,23 @@ afterEach(() => {
 });
 
 describe('MeetingRoom Durable Object', () => {
+  it.each([1004, 1005, 1006, 1015, 1000, 4001])('handles close status %i and still notifies peers', async (code) => {
+    const stub = room(`CL${code}`);
+    const host = await connect(stub, 'create', 'Host', peerId(60));
+    const joined = nextMessage(host.socket);
+    const guest = await connect(stub, 'join', 'Guest', peerId(61));
+    await joined;
+    const departed = nextMessage(guest.socket);
+    const closed = new Promise<CloseEvent>((resolve) => host.socket.addEventListener('close', resolve, { once: true }));
+    await runInDurableObject(stub, (instance, state) => {
+      const socket = state.getWebSockets().find((candidate) => candidate.deserializeAttachment()?.peerId === peerId(60));
+      if (!socket) throw new Error('Host socket missing');
+      instance.webSocketClose(socket, code, 'Disconnected', false);
+    });
+    expect((await closed).code).toBe([1004, 1005, 1006, 1015].includes(code) ? 1000 : code);
+    await expect(departed).resolves.toMatchObject({ type: 'peer-left', peerId: peerId(60) });
+  });
+
   it('serves the app with camera, microphone, and screen-capture permission headers', async () => {
     const response = await worker.fetch(
       new Request('https://demo.example/'),

@@ -252,7 +252,10 @@ export class MeetingRoom extends DurableObject<Env> {
 
   override webSocketClose(socket: WebSocket, code: number, reason: string, wasClean: boolean): void {
     const attachment = readAttachment(socket);
-    socket.close(code, reason);
+    // Reserved status codes describe local failures and cannot be sent in a
+    // close frame. Echoing 1006 throws before peers can be notified of departure.
+    const reserved = [1004, 1005, 1006, 1015].includes(code);
+    socket.close(reserved ? 1000 : code, reserved ? '' : reason);
     if (!attachment) return;
     this.#broadcast({ type: 'peer-left', peerId: attachment.peerId }, attachment.peerId);
     void wasClean;

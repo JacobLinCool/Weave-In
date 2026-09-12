@@ -55,6 +55,12 @@ export class TranscriptStore {
     this.#state.error = null;
   }
 
+  markReconnecting(): void {
+    this.#state.status = 'starting';
+    this.#state.interim = '';
+    this.#state.error = null;
+  }
+
   markStopping(): void {
     if (this.#state.status === 'transcribing' || this.#state.status === 'starting') {
       this.#state.status = 'stopping';
