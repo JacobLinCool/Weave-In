@@ -118,3 +118,18 @@ The initial HTML contains the canonical URL, Open Graph and X/Twitter large-imag
 ```bash
 uv run --with fonttools --with brotli python apps/meeting/scripts/generate-social-image.py
 ```
+
+### Stable local preview behind Tailscale
+
+For a long-running local meeting, build once and serve the completed Worker directly through Miniflare:
+
+```bash
+pnpm build
+pnpm serve:local --origin https://your-machine.your-tailnet.ts.net:9443
+# In another terminal:
+tailscale serve --bg --https=9443 http://127.0.0.1:8787
+```
+
+`serve:local` binds only to loopback. `--origin` must match the external HTTPS origin; the Worker continues to enforce its same-origin checks. The runner reads bindings, assets, SQLite Durable Objects, rate limits, and local secrets from the generated Wrangler configuration. It accepts `--config`, `--port`, and `--persist` for serving an isolated build snapshot under a process supervisor. It does not watch or rebuild source files.
+
+This avoids Wrangler's development ProxyWorker, whose fatal `Network connection lost` failure can disconnect all participants during HTTP requests alongside open WebSockets (Cloudflare workers-sdk issues [15452](https://github.com/cloudflare/workers-sdk/issues/15452) and [15203](https://github.com/cloudflare/workers-sdk/issues/15203)). Restarting a failed process does not restore an existing browser connection; rejoin the meeting after switching the running service.
