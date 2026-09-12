@@ -9,6 +9,20 @@ function fixture() {
 }
 
 describe('private notices lifecycle', () => {
+  it('collapses a toast without dismissing it or marking it read, including after recovery', () => {
+    const {store, log, input} = fixture(); store.show(input,log);store.collapse(input.id);
+    expect(store.getSnapshot().notices[0]).toMatchObject({status:'active',collapsed:true});
+    expect(store.getSnapshot().notices[0]?.read).not.toBe(true);
+    const restored = new PrivateNotices();restored.restore(store.getSnapshot());
+    expect(restored.getSnapshot()).toEqual(store.getSnapshot());
+  });
+  it('marks only viewed reminders read and does not resurface them on retries', () => {
+    const {store, log, input} = fixture();store.show(input,log);store.markRead([input.id]);
+    expect(store.show(input,log)).toMatchObject({read:true,collapsed:true,status:'active'});
+    store.show({...input,id:'next'},log);
+    expect(store.getSnapshot().notices[0]?.read).not.toBe(true);
+  });
+
   it('keeps one active reminder and never resurfaces a dismissed id on retry', () => {
     const { store, log, input } = fixture();
     store.show(input, log, 0);

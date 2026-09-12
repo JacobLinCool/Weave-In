@@ -1,7 +1,7 @@
 import { loadMeetingSession, saveMeetingSession } from './meeting-session';
 import { AutoReminders } from './auto-reminders';
 import { PrivateNotices } from './private-notices';
-import { PrivateNoticeDock } from './private-notice-ui';
+import { PrivateNoticeToast } from './private-notice-ui';
 import {
   createTranscription,
   type Credential,
@@ -998,10 +998,11 @@ function MeetingSurface(props: {
               onToggleCamera={props.onToggleCamera}
               onToggleScreen={props.onToggleScreen}
             />
-            <PrivateNoticeDock monitor={props.autoReminders} store={props.privateNotices} onHistory={() => props.onPanelTab('private')} />
           </div>
+          <PrivateNoticeToast store={props.privateNotices} onHistory={() => props.onPanelTab('private')} />
         </section>
         <SidePanel
+          autoReminders={props.autoReminders}
           privateNotices={props.privateNotices}
           tab={props.panelTab}
           onTabChange={props.onPanelTab}

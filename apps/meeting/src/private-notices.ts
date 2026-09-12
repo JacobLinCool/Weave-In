@@ -6,6 +6,8 @@ export interface PrivateNotice {
   at: number;
   expiresAt: number;
   status: 'active' | 'dismissed' | 'expired' | 'replaced';
+  read?: boolean;
+  collapsed?: boolean;
   evidence: Array<{ seq: number; name: string; text: string }>;
 }
 export interface PrivateNoticeState { hidden: boolean; notices: readonly PrivateNotice[] }
@@ -47,6 +49,14 @@ export class PrivateNotices {
     const previous = this.#state.notices.map((item): PrivateNotice => item.status === 'active' ? { ...item, status: 'replaced' } : item);
     this.#publish({ ...this.#state, notices: [notice, ...previous].slice(0, 50) });
     return notice;
+  }
+  collapse(id: string): void {
+    if (!this.#state.notices.some(n => n.id === id && !n.collapsed)) return;
+    this.#publish({...this.#state, notices:this.#state.notices.map(n => n.id === id ? {...n, collapsed:true} : n)});
+  }
+  markRead(ids: string[]): void {
+    if (!this.#state.notices.some(n => ids.includes(n.id) && !n.read)) return;
+    this.#publish({...this.#state, notices:this.#state.notices.map(n => ids.includes(n.id) ? {...n, read:true, collapsed:true} : n)});
   }
   dismiss(id: string): void {
     this.#publish({ ...this.#state, notices: this.#state.notices.map((item) => item.id === id && item.status === 'active' ? { ...item, status: 'dismissed' } : item) });

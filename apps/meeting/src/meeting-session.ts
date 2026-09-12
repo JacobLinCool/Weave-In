@@ -111,6 +111,8 @@ export function loadMeetingSession(roomCode: string, source = storage(), now = D
           typeof n.at === 'number' &&
           typeof n.expiresAt === 'number' &&
           ['active', 'dismissed', 'expired', 'replaced'].includes(String(n.status)) &&
+          (n.read === undefined || typeof n.read === 'boolean') &&
+          (n.collapsed === undefined || typeof n.collapsed === 'boolean') &&
           Array.isArray(n.evidence) &&
           n.evidence.length <= 5 &&
           n.evidence.every((e) => record(e) && Number.isSafeInteger(e.seq) && text(e.name) && text(e.text)),

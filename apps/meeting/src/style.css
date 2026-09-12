@@ -413,13 +413,14 @@ button:disabled { cursor: wait; opacity: .55; }
   .landing__footer { flex-direction: column; align-items: flex-start; padding: 18px 0; }
 }
 
-/* Keep controls and private reminders together; empty reminders use only one line. */
+/* Notifications float independently; meeting controls never move when one arrives. */
+.meeting-stage { position: relative; }
 .meeting-footer { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; flex: 0 0 auto; margin-top: 10px; }
 .meeting-footer .meeting-controls { height: auto; min-height: 44px; flex: 1 1 auto; }
-.private-notice-dock { flex: 1 1 280px; min-width: 0; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); padding: 10px 12px; overflow: hidden; }
+.private-notice-toast { position: absolute; z-index: 5; left: 17px; width: min(360px, calc(100% - 34px)); border: 1px solid var(--line); border-radius: 12px; background: var(--panel); padding: 10px 12px; box-shadow: 0 8px 24px rgba(0,0,0,.25); }
 .private-notice-dock__heading { display: flex; align-items: center; gap: 10px; font-size: 11px; color: var(--dim); }
 .private-notice-dock__heading > span { display: inline-flex; align-items: center; gap: 5px; flex: 1; }
-.private-notice-dock button, .private-notice-history button { display: inline-flex; align-items: center; gap: 4px; padding: 4px 2px; border: 0; background: none; color: var(--accent); cursor: pointer; font-size: 12px; }
+.private-notice-toast button, .private-notice-history button { display: inline-flex; align-items: center; gap: 4px; padding: 4px 2px; border: 0; background: none; color: var(--accent); cursor: pointer; font-size: 12px; }
 .private-notice-dock__body { max-height: 180px; overflow-y: auto; overflow-wrap: anywhere; }
 .private-notice-dock__body > p { margin: 8px 0; font-size: 14px; line-height: 1.4; }
 .private-notice-dock__body .private-notice-empty { color: var(--dim); font-size: 12px; }
@@ -439,3 +440,6 @@ button:disabled { cursor: wait; opacity: .55; }
 }
 
 .private-monitor { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--dim); font-size: 11px; }
+
+.private-unread { width: 6px; height: 6px; flex-shrink: 0; border-radius: 50%; background: var(--accent); }
+.private-notice-toast button { min-height: 28px; }
