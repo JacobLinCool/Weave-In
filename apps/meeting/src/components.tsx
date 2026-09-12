@@ -1,3 +1,6 @@
+import type { AutoReminders } from './auto-reminders';
+import { PrivateNoticeHistory } from './private-notice-ui';
+import type { PrivateNotices } from './private-notices';
 import type { TranscriptionStatus } from '@weave-in/transcribe';
 import {
   AlertCircle,
@@ -28,7 +31,7 @@ import {
   Users,
   X,
 } from 'lucide-react';
-import { useEffect, useRef, useState, type CSSProperties, type DragEvent, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type DragEvent, type FormEvent, type ReactNode } from 'react';
 import { MAX_CHAT_CHARACTERS, MAX_FILE_BYTES, MAX_PARTICIPANTS } from './protocol';
 import { Brand } from './brand';
 import { formatBytes, type SharedFile } from './file-share';
@@ -80,7 +83,7 @@ export interface TranscriptionView {
   error: { code: string; message: string } | null;
 }
 
-export type SidePanelTab = 'chat' | 'transcript';
+export type SidePanelTab = 'chat' | 'transcript' | 'private';
 
 export function VideoTile({
   name,
@@ -286,6 +289,8 @@ export function MeetingControls({
 }
 
 export function SidePanel({
+  autoReminders,
+  privateNotices,
   tab,
   onTabChange,
   messages,
@@ -297,6 +302,8 @@ export function SidePanel({
   onShareFiles,
   onDownloadFile,
 }: {
+  autoReminders: AutoReminders;
+  privateNotices: PrivateNotices;
   tab: SidePanelTab;
   onTabChange(tab: SidePanelTab): void;
   messages: ChatMessage[];
@@ -308,6 +315,8 @@ export function SidePanel({
   onShareFiles(files: File[]): void;
   onDownloadFile(id: string): void;
 }): ReactNode {
+  const noticeState = useSyncExternalStore(privateNotices.subscribe, privateNotices.getSnapshot);
+  const unread = noticeState.notices.some(n => !n.read);
   return (
     <aside className="side-panel" aria-label="Meeting panel">
       <div className="side-panel__tabs" role="tablist">
@@ -317,8 +326,9 @@ export function SidePanel({
         <button role="tab" type="button" aria-selected={tab === 'transcript'} className={tab === 'transcript' ? 'is-active' : ''} onClick={() => onTabChange('transcript')}>
           <Captions size={15} /> Transcript{transcript.length > 0 && <em>{transcript.length}</em>}
         </button>
+        <button data-private-tab role="tab" type="button" aria-selected={tab === 'private'} className={tab === 'private' ? 'is-active' : ''} onClick={() => onTabChange('private')}>Private{unread && <span className="private-unread" aria-label="Unread reminders" />}</button>
       </div>
-      {tab === 'chat'
+      {tab === 'private' ? <PrivateNoticeHistory store={privateNotices} monitor={autoReminders} /> : tab === 'chat'
         ? <ChatPanel messages={messages} files={files} joinedAt={joinedAt} onSend={onSendChat} onShareFiles={onShareFiles} onDownloadFile={onDownloadFile} />
         : <TranscriptPanel transcript={transcript} interims={interims} joinedAt={joinedAt} />}
     </aside>

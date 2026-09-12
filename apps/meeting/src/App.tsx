@@ -3,6 +3,10 @@ import { editExcalidrawWhiteboard } from './whiteboard-webmcp';
 import { Whiteboard } from './whiteboard';
 import { ExcalidrawStore } from './excalidraw-store';
 import type { ExcalidrawImperativeAPI } from '@excalidraw/excalidraw/types';
+import { loadMeetingSession, saveMeetingSession } from './meeting-session';
+import { AutoReminders } from './auto-reminders';
+import { PrivateNotices } from './private-notices';
+import { PrivateNoticeToast } from './private-notice-ui';
 import {
   createTranscription,
   type Credential,
@@ -10,7 +14,7 @@ import {
   type TranscriptState,
   type TranscriptionProvider,
 } from '@weave-in/transcribe';
-import { LoaderCircle, LockKeyhole } from 'lucide-react';
+import { LoaderCircle } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { threadColor, threadStyle } from './brand';
 import {
@@ -77,6 +81,8 @@ const ROOM_QUERY_PARAM = 'room';
 const IDLE_TRANSCRIPTION: TranscriptionView = { status: 'idle', error: null };
 
 export function App(): ReactNode {
+  const [privateNotices] = useState(() => new PrivateNotices());
+  const [autoReminders] = useState(() => new AutoReminders(privateNotices));
   const [phase, setPhase] = useState<AppPhase>('lobby');
   const [displayName, setDisplayName] = useState(readStoredDisplayName);
   const [roomInput, setRoomInput] = useState(readRoomCodeFromUrl);
@@ -98,6 +104,8 @@ export function App(): ReactNode {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [joinedAt, setJoinedAt] = useState<string | null>(null);
   const [roomStartedAt, setRoomStartedAt] = useState<number | null>(null);
+  const [reconnecting, setReconnecting] = useState(false);
+  const [recoveryWarning, setRecoveryWarning] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const transcriptionRef = useRef<Transcription | null>(null);
@@ -136,6 +144,15 @@ export function App(): ReactNode {
   const syncingRef = useRef(new Set<string>());
   /** `peerId:id` of every remote chat message and caption seen, so replays never duplicate live traffic. */
   const seenRef = useRef(new Set<string>());
+  const checkpointRef = useRef(() => {});
+  checkpointRef.current = () => {
+    const self = selfRef.current;
+    if (phaseRef.current !== 'room' || !self || !roomCodeRef.current || !roomStartedAt || !joinedAt) return;
+    const saved = saveMeetingSession({version:1,monitoringEnabled:autoReminders.getSnapshot().enabled,savedAt:Date.now(),roomCode:roomCodeRef.current,peerId:self.peerId,name:nameRef.current,startedAt:roomStartedAt,joinedAt,
+      log:logRef.current.snapshot(),
+      messages:messagesRef.current,transcript:transcriptRef.current,notices:privateNotices.getSnapshot()});
+    setRecoveryWarning(!saved);
+  };
   phaseRef.current = phase;
   filesRef.current = files;
   interimsRef.current = interims;
@@ -376,6 +393,7 @@ export function App(): ReactNode {
 
   useEffect(() => {
     const onUnload = (): void => {
+      checkpointRef.current();
       const transcription = transcriptionRef.current;
       const finish = (): void => {
         controllerRef.current?.close();
@@ -509,19 +527,32 @@ export function App(): ReactNode {
     nameRef.current = name;
     storeDisplayName(name);
     try {
+      const saved = loadMeetingSession(code);
+      if (roomCodeRef.current !== code) {
+        logRef.current.restore(saved?.log ?? []);
+        messagesRef.current = saved?.messages ?? [];
+        transcriptRef.current = saved?.transcript ?? [];
+        setMessages(messagesRef.current); setTranscript(transcriptRef.current);
+        setRoomStartedAt(saved?.startedAt ?? null); setJoinedAt(saved?.joinedAt ?? null);
+        seenRef.current = new Set([...messagesRef.current, ...transcriptRef.current].filter(r=>!r.own).map(r=>`${r.from}:${r.id}`));
+        if (saved) privateNotices.restore(saved.notices); else privateNotices.clear();
+        autoReminders.setEnabled(saved?.monitoringEnabled ?? true);
+      }
       const stream = await prepareMedia();
       const controller = new MeetingController([stream], {
         onConnected: (self, initialPeers, startedAt) => {
-          setRoomStartedAt(startedAt);
+          setReconnecting(false);
+          setError(null);
+          setRoomStartedAt(current => current ?? startedAt);
           selfRef.current = self;
+          if (phaseRef.current === 'room') autoReminders.start({log: () => logRef.current, you: () => self.peerId});
           const next = Object.fromEntries(initialPeers.map((peer) => [peer.peerId, { identity: peer, seat: seatFor(peer.peerId), streams: {}, media: null }]));
           participantsRef.current = next;
           setParticipants(next);
           const at = new Date().toISOString();
-          setJoinedAt(at);
+          setJoinedAt(current => current ?? at);
           syncingRef.current = new Set(initialPeers.map((peer) => peer.peerId));
           newcomersRef.current.clear();
-          seenRef.current.clear();
           for (const peer of initialPeers) {
             logRef.current.append({ kind: 'presence', at, participant: { peerId: peer.peerId, name: peer.name }, event: 'present' });
           }
@@ -571,12 +602,13 @@ export function App(): ReactNode {
           controllerRef.current?.send(peerId, { type: 'state', ...currentMediaState() });
           for (const element of whiteboard.records()) controllerRef.current?.send(peerId, { type: 'excalidraw', element });
           fileShareRef.current?.announceTo(peerId);
-          if (newcomersRef.current.has(peerId)) replayHistoryTo(peerId);
+          replayHistoryTo(peerId);
         },
         onPeerChannel: (peerId, channel) => {
           if (!fileShareRef.current?.handleChannel(peerId, channel)) channel.close();
         },
         onPeerMessage: handlePeerMessage,
+        onReconnecting: () => { autoReminders.stop(); setReconnecting(true); },
         onError: (_code, message) => setError(message),
       });
       controllerRef.current = controller;
@@ -589,7 +621,7 @@ export function App(): ReactNode {
         },
         setFiles,
       );
-      await controller.connect({ roomCode: code, action, displayName: name, peerId: createPeerId() });
+      await controller.connect({ roomCode: code, action, displayName: name, peerId: saved?.peerId ?? createPeerId() });
       roomCodeRef.current = code;
       setRoomCode(code);
       setRoomInput(code);
@@ -601,7 +633,6 @@ export function App(): ReactNode {
       controllerRef.current = null;
       fileShareRef.current?.close();
       fileShareRef.current = null;
-      logRef.current.clear();
       setError(cause instanceof Error ? cause.message : 'Unable to enter the room.');
       setPhase('lobby');
     }
@@ -610,6 +641,8 @@ export function App(): ReactNode {
 
   const leaveMeeting = useCallback(async (): Promise<void> => {
     if (phase === 'leaving') return;
+    checkpointRef.current();
+    setReconnecting(false);
     setPhase('leaving');
     setError(null);
     await stopTranscription();
@@ -630,6 +663,7 @@ export function App(): ReactNode {
     seatsRef.current.clear();
     nextSeatRef.current = 1;
     setParticipants({});
+    privateNotices.clear();
     setMessages([]);
     setFiles({});
     setTranscript([]);
@@ -777,7 +811,10 @@ export function App(): ReactNode {
 
   useEffect(() => {
     if (phase !== 'room') return;
+    autoReminders.start({ log: () => logRef.current, you: () => logParticipant(SELF).peerId });
+    const timer = window.setInterval(() => privateNotices.expire(), 1000);
     const unregister = registerMeetingTools({
+      privateNotices,
       snapshot: meetingSnapshot,
       log: () => logRef.current,
       download: async (fileId) => {
@@ -804,9 +841,18 @@ export function App(): ReactNode {
       },
       sendAgentMessage: (text, agent) => sendChat(text, agent ?? 'Assistant'),
     });
-    return () => unregister?.();
+    return () => { autoReminders.stop(); window.clearInterval(timer); unregister?.(); privateNotices.clear(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase]);
+
+  useEffect(() => { checkpointRef.current(); }, [messages, transcript, phase, roomStartedAt, joinedAt]);
+  useEffect(() => {
+    const unsubscribe = privateNotices.subscribe(() => checkpointRef.current());
+    const unsubscribeMonitor = autoReminders.subscribe(() => checkpointRef.current());
+    const save = () => checkpointRef.current();
+    window.addEventListener('pagehide', save);
+    return () => { unsubscribe(); unsubscribeMonitor(); window.removeEventListener('pagehide', save); };
+  }, [privateNotices, autoReminders]);
 
   const settingsDialog = (
     <SettingsDialog open={settingsOpen} settings={settings} onChange={updateSettings} onClose={closeSettings} />
@@ -833,8 +879,10 @@ export function App(): ReactNode {
         interims={interims}
         joinedAt={joinedAt}
         roomStartedAt={roomStartedAt}
+        autoReminders={autoReminders}
+        privateNotices={privateNotices}
         panelTab={panelTab}
-        error={error}
+        error={reconnecting ? 'Connection interrupted. Reconnecting automatically — your history is preserved.' : recoveryWarning ? 'History is kept in this page only. Browser storage is unavailable; refreshing may lose it.' : error}
         leaving={phase === 'leaving'}
         onToggleMic={toggleMic}
         onToggleCamera={toggleCamera}
@@ -882,6 +930,8 @@ export function App(): ReactNode {
 function MeetingSurface(props: {
   whiteboard: ExcalidrawStore;
   onWhiteboardApi(api: ExcalidrawImperativeAPI | null): void;
+  privateNotices: PrivateNotices;
+  autoReminders: AutoReminders;
   roomCode: string;
   displayName: string;
   localStream: MediaStream | null;
@@ -971,20 +1021,24 @@ function MeetingSurface(props: {
           {(props.error || props.transcription.error) && (
             <ErrorNotice message={props.error ?? props.transcription.error?.message ?? 'Something went wrong.'} />
           )}
-          <MeetingControls
-            whiteboardOpen={whiteboardOpen}
-            onToggleWhiteboard={() => setWhiteboardOpen(open => !open)}
-            micEnabled={props.micEnabled}
-            cameraEnabled={props.cameraEnabled}
-            sharingScreen={Boolean(props.screenStream)}
-            canShareScreen={typeof navigator.mediaDevices?.getDisplayMedia === 'function'}
-            onToggleMic={props.onToggleMic}
-            onToggleCamera={props.onToggleCamera}
-            onToggleScreen={props.onToggleScreen}
-          />
-          <p className="stage-caption"><LockKeyhole size={13} /> Full-mesh WebRTC · direct between browsers</p>
+          <div className="meeting-footer">
+            <MeetingControls
+              whiteboardOpen={whiteboardOpen}
+              onToggleWhiteboard={() => setWhiteboardOpen(open => !open)}
+              micEnabled={props.micEnabled}
+              cameraEnabled={props.cameraEnabled}
+              sharingScreen={Boolean(props.screenStream)}
+              canShareScreen={typeof navigator.mediaDevices?.getDisplayMedia === 'function'}
+              onToggleMic={props.onToggleMic}
+              onToggleCamera={props.onToggleCamera}
+              onToggleScreen={props.onToggleScreen}
+            />
+          </div>
+          <PrivateNoticeToast store={props.privateNotices} onHistory={() => props.onPanelTab('private')} />
         </section>
         <SidePanel
+          autoReminders={props.autoReminders}
+          privateNotices={props.privateNotices}
           tab={props.panelTab}
           onTabChange={props.onPanelTab}
           messages={props.messages}

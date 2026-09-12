@@ -1,3 +1,5 @@
+> Implementation note for PR #2: the automatic private-reminder prototype uses stateless, per-participant Worker analysis of recent transcripts, without room-wide persistence or broadcasts. The architecture and exact privacy wording below describe the broader planned system. Current implementation behavior and user-facing privacy copy are documented in README; they take precedence for this prototype.
+
 # Product
 
 <!-- impeccable:product-schema 1 -->
@@ -45,6 +47,8 @@ Name: Weave In. "Keep the thread. Weave everyone in." The tagline is the product
 ## Capabilities and Constraints
 
 ### Shipped
+
+- Private, agent-authored reminders in a reserved page dock and a Private history tab. Evidence comes from this browser's meeting record. Reminders remain local, can be hidden or dismissed, expire, and are cleared on leaving. Follow-up stays in the existing assistant conversation. This is a delivery surface, not an implemented Groupthink detector or autonomous monitoring service.
 
 - Camera, microphone, screen share with live renegotiation, chat panel, per-speaker live captions on tiles, and a merged transcript panel.
 - Per-participant local transcription: each browser transcribes only its own microphone (browser echo cancellation keeps remote voices out) and streams interim and final text to everyone.

@@ -53,6 +53,38 @@ class FakeMixer implements SessionAudioMixer {
 }
 
 describe('TranscriptionSession', () => {
+  it('preserves a finalization error reported while stopping instead of reporting success', async () => {
+    const session = new TranscriptionSession({
+      workletUrl: 'worklet.js',
+      credential: { type: 'api-key', value: 'key' },
+      mixer: new FakeMixer(),
+      dependencies: {
+        randomUUID: () => 'finalization-error',
+        createTranscriber: ({ callbacks }) => ({
+          audioFormat: { sampleRate: 24_000, framesPerChunk: 2_400 },
+          async start() {
+            callbacks.onConnectionReady(1);
+            callbacks.onFinal('Retained final.', 1);
+          },
+          sendAudio() {},
+          async stop() {
+            callbacks.onFatalError('OPENAI_FINALIZATION_TIMEOUT', 'The transcript may be incomplete.');
+          },
+        }),
+      },
+    });
+    session.addAudioSource(fakeTrack());
+    await session.start({ provider: 'openai' });
+    const stopped = await session.stop();
+    expect(stopped).toMatchObject({ ok: false, code: 'OPENAI_FINALIZATION_TIMEOUT' });
+    expect(session.getState()).toMatchObject({
+      status: 'error',
+      error: { code: 'OPENAI_FINALIZATION_TIMEOUT' },
+      segments: [{ text: 'Retained final.' }],
+    });
+    await session.destroy();
+  });
+
   it.each(['gemini', 'openai'] as const)('normalizes %s output before notifying subscribers', async (provider) => {
     let callbacks: LiveTranscriptionCallbacks | undefined;
     const session = new TranscriptionSession({
