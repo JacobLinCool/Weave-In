@@ -4,10 +4,24 @@ async (page, origin = 'http://127.0.0.1:8788') => {
     context.setDefaultTimeout(15_000);
     // This UI harness uses local peer connectivity, not the external TURN service.
     await context.route('**/api/ice-servers', (route) => route.fulfill({ json: { ok: true, expiresAt: Date.now() + 86_400_000, iceServers: [{ urls: 'turn:127.0.0.1:9', username: 'test', credential: 'test' }] } }));
+    await context.route('**/api/transcription-token', route => route.fulfill({ json: { provider: 'openai', token: 'test' } }));
+    await context.routeWebSocket('wss://api.openai.com/**', socket => {
+      let commit = 0;
+      socket.onMessage(raw => {
+        const message = JSON.parse(String(raw));
+        if (message.type === 'session.update') socket.send(JSON.stringify({ type: 'session.updated' }));
+        if (message.type === 'input_audio_buffer.commit') {
+          const item_id = `dictation-${++commit}`;
+          socket.send(JSON.stringify({ type: 'input_audio_buffer.committed', item_id }));
+          socket.send(JSON.stringify({ type: 'conversation.item.input_audio_transcription.delta', item_id, delta: 'dictated-secret' }));
+          socket.send(JSON.stringify({ type: 'conversation.item.input_audio_transcription.completed', item_id, transcript: 'dictated-secret final.' }));
+        }
+      });
+    });
     await context.grantPermissions(['microphone', 'camera']);
     await context.addInitScript(() => {
       localStorage.setItem('weave-in:settings', JSON.stringify({ captionsEnabled: false, languageCodes: [], mode: 'VERBATIM' }));
-      window.__agentTest = { states: [], sends: [], sessions: [], incoming: [], peers: [], sockets: [], microphones: [], audible: 0, tools: {} };
+      window.__agentTest = { states: [], sends: [], sessions: [], incoming: [], peers: [], sockets: [], dictationFrames: 0, microphones: [], audible: 0, tools: {} };
       Object.defineProperty(navigator, 'modelContext', { configurable: true, value: {
         registerTool(tool) { window.__agentTest.tools[tool.name] = tool; },
         unregisterTool(name) { delete window.__agentTest.tools[name]; },
@@ -37,6 +51,7 @@ async (page, origin = 'http://127.0.0.1:8788') => {
       };
       const OriginalSocket = window.WebSocket;
       window.WebSocket = class extends OriginalSocket {
+        send(data) { if (this.url.includes('api.openai.com') && JSON.parse(data).type === 'input_audio_buffer.append') window.__agentTest.dictationFrames++; return super.send(data); }
         constructor(...args) { super(...args); window.__agentTest.sockets.push(this); this.addEventListener('message', (e) => { try { const v=JSON.parse(e.data); if(v.type==='agent-state') window.__agentTest.states.push(v.state); if(v.type==='welcome') window.__agentTest.you = v.self.peerId; } catch {} }); }
       };
       const originalSend = RTCDataChannel.prototype.send;
@@ -66,7 +81,7 @@ async (page, origin = 'http://127.0.0.1:8788') => {
           dc.onmessage=({data})=>{
             const event=JSON.parse(data); window.__agentTest.incoming.push(event.type);
             if(event.type==='response.item.create'){request=event.item?.content?.[0]?.text??request;if(request.startsWith('Background context only'))setTimeout(()=>{emit({type:'session.input_transcript.delta',delta:'voice-secret',start_ms:0,end_ms:1000});answer();},500);}
-            if(event.type==='response.create'){if(body.session.instructions.includes('prepares a suggestion silently'))setTimeout(answer,800);else answer();}
+            if(event.type==='response.create'){if(body.session.instructions.includes('prepares a suggestion silently'))setTimeout(answer,800);else setTimeout(answer,800);}
             if(event.type==='session.close'){gain.gain.value=0;emit({type:'session.output_transcript.delta',delta:' late.',start_ms:1000,end_ms:1200});setTimeout(()=>{emit({type:'session.closed',usage:{seconds:1},reason:'close_requested'});setTimeout(()=>{pc.close();osc.stop();void ac.close();},100);},50);}
           };
         };
@@ -99,18 +114,63 @@ async (page, origin = 'http://127.0.0.1:8788') => {
       if (await p.evaluate(() => window.__agentTest.sessions.length)) throw new Error('Live opened automatically on room entry');
     }
     await openConversation(guest);
-    await guest.getByRole('button', { name: 'Talk to Muse', exact: true }).click();
-    await guest.getByRole('button', { name: 'Stop', exact: true }).click();
+    const guestDraft = guest.getByRole('textbox', { name: 'Message Muse', exact: true });
+    await guest.getByRole('button', { name: 'Dictate message', exact: true }).click();
+    await guest.getByText('Recording', { exact: true }).waitFor();
+    await guest.evaluate(() => { window.__agentTest.microphones[0].gain.gain.value = .12; });
+    await guest.waitForFunction(() => window.__agentTest.dictationFrames > 0 && parseFloat(document.querySelector('.agent-dictation__level i').style.height) > 4);
+    await guest.locator('.agent-compose__input').screenshot({ path: 'output/playwright/muse-recording.png' });
+    await guest.setViewportSize({ width: 390, height: 844 });
+    await guest.locator('.agent-compose__input').screenshot({ path: 'output/playwright/muse-recording-mobile.png' });
+    await guest.setViewportSize({ width: 1440, height: 1000 });
+    await guest.getByRole('button', { name: 'Stop recording', exact: true }).click();
+    await guest.getByRole('button', { name: 'Dictate message', exact: true }).waitFor();
+    if (await guestDraft.inputValue() !== 'dictated-secret final.') throw new Error('Stop did not preserve the finalized draft');
+    if (await guest.evaluate(() => window.__agentTest.sessions.length)) throw new Error('Dictation started an agent reply before Send');
+    if (await guest.getByRole('log', { name: 'Muse transcript' }).innerText().then(t => t.includes('dictated-secret'))) throw new Error('Unsent draft entered conversation history');
+    await guestDraft.fill('Prefix');
+    await guest.evaluate(() => { window.__agentTest.dictationFrames = 0; });
+    await guest.getByRole('button', { name: 'Dictate message', exact: true }).click();
+    await guest.getByText('Recording', { exact: true }).waitFor();
+    await guest.waitForFunction(() => window.__agentTest.dictationFrames > 0);
+    await guest.locator('.agent-compose').getByRole('button', { name: 'Send', exact: true }).click();
+    await guest.getByRole('log', { name: 'Muse transcript' }).getByText('Prefix dictated-secret final.', { exact: true }).waitFor();
+    await guest.waitForFunction(() => document.querySelector('textarea[aria-label="Message Muse"]').value === '');
+    if (await page.locator('body').innerText().then(t => t.includes('dictated-secret'))) throw new Error('Dictation leaked to another participant');
+    await guest.evaluate(() => { window.__agentTest.microphones[0].gain.gain.value = 0; });
     await openConversation(page);
     if (await page.getByText('Only you can see this chat', { exact: true }).count()) throw new Error('Removed personal chat subtitle remains');
     if (await page.getByRole('button', { name: 'Expand panel', exact: true }).count()) throw new Error('Redundant panel expansion remains');
     if (await page.locator('.agent-personal').getByRole('button', { name: 'Stop', exact: true }).count()) throw new Error('Idle Chat shows Stop');
-    await page.getByRole('textbox', { name: 'Message Muse', exact: true }).fill('private-secret');
-    await page.locator('.agent-personal').getByRole('button', { name: 'Send', exact: true }).click();
+    const museInput = page.getByRole('textbox', { name: 'Message Muse', exact: true });
+    await museInput.fill('private-secret');
+    await museInput.press('Shift+Enter');
+    if (await museInput.inputValue() !== 'private-secret\n') throw new Error('Muse composer cannot insert a newline');
+    await museInput.fill('private-secret');
+    const voiceButton = page.locator('.agent-compose .agent-voice');
+    const sendButton = page.locator('.agent-compose .agent-send');
+    const voiceBox = await voiceButton.boundingBox(); const sendBox = await sendButton.boundingBox();
+    if (!voiceBox || !sendBox || voiceBox.x >= sendBox.x || voiceBox.y !== sendBox.y || voiceBox.height !== sendBox.height) throw new Error('Composer actions are not aligned');
+    if ((await voiceButton.innerText()).trim() || (await sendButton.innerText()).trim()) throw new Error('Composer actions should be icons only');
+    await page.locator('.agent-compose__input').screenshot({ path: 'output/playwright/muse-composer.png' });
+    await museInput.press('Enter');
+    const stopResponse = page.locator('.agent-compose').getByRole('button', { name: 'Stop response', exact: true });
+    await stopResponse.waitFor();
+    if (await stopResponse.locator('svg.lucide-square').count() !== 1) throw new Error('Pending response does not show a square');
+    await museInput.fill('Next draft');
+    if (await page.locator('.agent-compose').getByRole('button', { name: 'Send', exact: true }).count()) throw new Error('Editing a draft hides response Stop');
+    await page.locator('.agent-compose__input').screenshot({ path: 'output/playwright/muse-waiting.png' });
     await page.getByRole('log', { name: 'Muse transcript' }).getByText(/Private response/).waitFor();
     await page.getByRole('log', { name: 'Muse transcript' }).getByText(/late/).waitFor();
     if (await page.evaluate(() => window.__agentTest.sends.some(x => x.channel === 'weave-in' && /private-secret|Private response/.test(JSON.stringify(x.value))))) throw new Error('Private Chat leaked to peers');
     if (await guest.locator('body').innerText().then(t => /private-secret|Private response/.test(t))) throw new Error('Guest saw private Chat');
+
+    await page.locator('.agent-compose').getByRole('button', { name: 'Send', exact: true }).waitFor();
+    if (await museInput.inputValue() !== 'Next draft') throw new Error('Completed response discarded next draft');
+    await museInput.press('Enter');
+    await stopResponse.click();
+    await page.locator('.agent-compose').getByRole('button', { name: 'Send', exact: true }).waitFor();
+    if (await page.locator('.agent-compose').getByRole('button', { name: 'Stop response', exact: true }).count()) throw new Error('Stop did not end response');
 
     const reply = page.locator('.agent-line--assistant').filter({ hasText: 'Private response.' }).first();
     const sendReply = reply.getByRole('button', { name: 'Send to everyone', exact: true });
@@ -147,7 +207,7 @@ async (page, origin = 'http://127.0.0.1:8788') => {
     if (await touchSend.evaluate(el => getComputedStyle(el).opacity) !== '1' || (await touchSend.boundingBox()).height < 44) throw new Error('Touch Send is not visible and tappable');
     await touch.close();
     await sendReply.press('Enter');
-    await page.getByRole('button', { name: 'Stop', exact: true }).waitFor();
+    await page.locator('.agent-compose').getByRole('button', { name: 'Stop response', exact: true }).waitFor();
     await tab(guest, 'Transcript').click();
     await guest.getByText('Private response. late.', { exact: true }).waitFor();
     await guest.waitForFunction(() => window.__agentTest.audible > .01);
@@ -300,7 +360,7 @@ async (page, origin = 'http://127.0.0.1:8788') => {
     await page.getByRole('button', { name: 'Add Omni', exact: true }).waitFor();
     await tab(guest, 'Room').click();
     await guest.getByRole('button', { name: 'Add Omni', exact: true }).waitFor();
-    return { replySend: true, replyHover: true, replyKeyboard: true, replyTouch: true, selectedMessageOnly: true, automaticOmni: true, fullPanelSettings: true, backWithoutSaving: true, reminderControlsRemoved: true, groupRemoval: true, clients: 2, directMuseTab: true, groupInRoom: true, allMembersConfigureGroup: true, groupBorderGlow: true, injectedSystemSignal: true, automaticSystemSignal: false, editSettings: true, automaticChat: true, noLiveOnJoin: true, privateIsolation: true, privateRecovery: true, signalingRecovery: true, oneShotPublicSpeech: true, ownerAttribution: true, ownerMicOpen, omniRoomText: true, omniSilent: true, omniReplayDedup: true, mobileOverflow: false, provider: 'simulated GPT-Live WebRTC (no real provider call)', relay: 'mocked provisioning; local peer connectivity' };
+    return { replySend: true, replyHover: true, replyKeyboard: true, replyTouch: true, selectedMessageOnly: true, responseSquare: true, responseStop: true, dictationStopDraft: true, dictationSendFinalized: true, dictationPrivate: true, automaticOmni: true, fullPanelSettings: true, backWithoutSaving: true, reminderControlsRemoved: true, groupRemoval: true, clients: 2, directMuseTab: true, groupInRoom: true, allMembersConfigureGroup: true, groupBorderGlow: true, injectedSystemSignal: true, automaticSystemSignal: false, editSettings: true, automaticChat: true, noLiveOnJoin: true, privateIsolation: true, privateRecovery: true, signalingRecovery: true, oneShotPublicSpeech: true, ownerAttribution: true, ownerMicOpen, omniRoomText: true, omniSilent: true, omniReplayDedup: true, mobileOverflow: false, provider: 'simulated GPT-Live WebRTC (no real provider call)', relay: 'mocked provisioning; local peer connectivity' };
   } finally {
     await Promise.all([ownerContext, guestContext].map(context => context.close()));
   }

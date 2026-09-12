@@ -1,14 +1,20 @@
-import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type FormEvent, type ReactNode } from 'react';
 import { ArrowLeft, ArrowUp, Mic, Plus, Send, Settings, Square, Trash2, Volume2 } from 'lucide-react';
 import { parseAgentConfig, type AgentConfig, type AgentKind } from './contracts';
 import { AgentRuntime } from './runtime';
 import { defaultAgentConfig } from './config';
 export { defaultAgentConfig } from './config';
 import { Markdown } from '../markdown';
+import { Dictation } from './dictation';
 import './style.css';
 
 export function AgentPanel({ runtime, isHost, mode = 'personal' }: { runtime: AgentRuntime; isHost: boolean; mode?: 'personal' | 'group' }): ReactNode {
   const view = useSyncExternalStore(runtime.subscribe, runtime.snapshot);
+  const dictation = useMemo(() => new Dictation(runtime.ctx), [runtime]);
+  const dictated = useSyncExternalStore(dictation.subscribe, dictation.snapshot);
+  const draftPrefix = useRef('');
+  const dictating = dictated.status !== 'idle';
+  const dictationBusy = dictated.status === 'starting' || dictated.status === 'stopping';
   const conversation = useRef<HTMLDivElement>(null);
   const followLatest = useRef(true);
   const [sending, setSending] = useState(false);
@@ -18,12 +24,15 @@ export function AgentPanel({ runtime, isHost, mode = 'personal' }: { runtime: Ag
     document.addEventListener('keydown', dismiss);
     return () => document.removeEventListener('keydown', dismiss);
   }, []);
+  const responding = !dictating && (sending || view.personalActive);
   const [addingGroup, setAddingGroup] = useState(false);
   const [creating, setCreating] = useState<AgentKind | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
   const [text, setText] = useState('');
   const [error, setError] = useState<string | null>(null);
   const run = (action: () => Promise<void>) => { setError(null); void action().catch((cause: unknown) => setError(cause instanceof Error ? cause.message : 'Please try again.')); };
+  useEffect(() => () => { void dictation.cancel(); }, [dictation]);
+  useEffect(() => { if (dictated.text) setText([draftPrefix.current, dictated.text].filter(Boolean).join(' ')); }, [dictated.text]);
   const group = view.group;
   const panel = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => { if (panel.current) panel.current.scrollTop = 0; }, [creating, editing]);
@@ -32,18 +41,23 @@ export function AgentPanel({ runtime, isHost, mode = 'personal' }: { runtime: Ag
   }, [view.lines]);
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    if (!text.trim() || sending) return;
-    const value = text;
+    if (sending || view.personalActive || dictationBusy || (!dictating && !text.trim())) return;
     setSending(true);
     followLatest.current = true;
     run(async () => {
-      try { await runtime.ask(value); setText((current) => current === value ? '' : current); }
-      finally { setSending(false); }
+      try {
+        const value = dictating ? [draftPrefix.current, await dictation.stop()].filter(Boolean).join(' ') : text;
+        setText(value);
+        if (!value.trim()) return;
+        if (value.length > 4000) throw new Error('Keep the message under 4,000 characters.');
+        await runtime.ask(value);
+        setText((current) => current === value ? '' : current);
+      } finally { setSending(false); }
     });
   };
   return <div ref={panel} className={`agent-panel${mode === 'personal' ? ' agent-panel--personal' : ` agent-panel--group${group && ['preparing', 'raised', 'speaking'].includes(group.phase) ? ' agent-panel--active' : ''}`}`}>
     {!editing && !view.ready && mode === 'group' && group && <button onClick={() => run(() => runtime.enable())}><Volume2 size={16} /> Enable assistant audio on this device</button>}
-    {(error || view.error) && <p className="agent-error" role="alert">{error ?? view.error}</p>}
+    {(error || view.error || dictated.error) && <p className="agent-error" role="alert">{error ?? view.error ?? dictated.error}</p>}
     {!creating && !editing && mode !== 'personal' && <section className="agent-group" aria-label="Omni">
       <header className="agent-actions"><h3>Omni</h3>{group ? <><button aria-label="Omni settings" title="Omni settings" onClick={() => { setEditing(group.id); setCreating(null); }}><Settings size={18} /></button>{(isHost || group.owner === runtime.ctx.peerId) && <button aria-label="Remove Omni" title="Remove Omni" onClick={() => runtime.remove(group.id)}><Trash2 size={18} /></button>}</> : <button className="agent-action agent-add" aria-label={addingGroup ? 'Adding Omni' : 'Add Omni'} title="Add Omni" disabled={addingGroup} onClick={() => {
         setAddingGroup(true);
@@ -60,7 +74,7 @@ export function AgentPanel({ runtime, isHost, mode = 'personal' }: { runtime: Ag
     </section>}
     {creating && <AgentForm key={creating} initialConfig={defaultAgentConfig(creating)} onCancel={() => setCreating(null)} onSave={async (config) => { await runtime.create(config); setCreating(null); }} />}
     {!creating && !editing && mode !== 'group' && view.personal && <section className="agent-personal" aria-label="Muse">
-      <header className="agent-personal__heading"><div className="agent-actions"><h2>Muse</h2><button aria-label="Muse settings" title="Muse settings" onClick={() => setEditing(view.personal!.id)}><Settings size={18} /></button></div></header>
+      <header className="agent-personal__heading"><div className="agent-actions"><h2>Muse</h2><button aria-label="Muse settings" title="Muse settings" disabled={dictating} onClick={() => setEditing(view.personal!.id)}><Settings size={18} /></button></div></header>
       <div ref={conversation} className="agent-conversation" role="log" aria-label="Muse transcript" tabIndex={0} onScroll={(event) => {
         const node = event.currentTarget;
         followLatest.current = node.scrollHeight - node.scrollTop - node.clientHeight < 48;
@@ -69,21 +83,25 @@ export function AgentPanel({ runtime, isHost, mode = 'personal' }: { runtime: Ag
         {view.lines.map((line) => <article key={line.id} className={`agent-line agent-line--${line.role}`}>
           <header><strong>{line.role === 'user' ? 'You' : line.name}</strong>{line.audience === 'public' && <span>Shared with the room</span>}{line.playback === 'interrupted' && <span>Interrupted</span>}</header>
           {line.role === 'assistant' ? <Markdown text={line.text} /> : <p>{line.text}</p>}
-          {runtime.canSpeakReply(line.id) && <button className="agent-line__send" type="button" aria-label="Send to everyone" aria-describedby={`send-tip-${line.id}`} onMouseEnter={() => setTooltipDismissed(false)} onFocus={() => setTooltipDismissed(false)} onClick={() => run(() => runtime.speakReply(line.id))}><Send size={18} aria-hidden="true" />{!tooltipDismissed && <span id={`send-tip-${line.id}`} className="agent-line__tooltip" role="tooltip">Read aloud to everyone</span>}</button>}
+          {!dictating && runtime.canSpeakReply(line.id) && <button className="agent-line__send" type="button" aria-label="Send to everyone" aria-describedby={`send-tip-${line.id}`} onMouseEnter={() => setTooltipDismissed(false)} onFocus={() => setTooltipDismissed(false)} onClick={() => run(() => runtime.speakReply(line.id))}><Send size={18} aria-hidden="true" />{!tooltipDismissed && <span id={`send-tip-${line.id}`} className="agent-line__tooltip" role="tooltip">Read aloud to everyone</span>}</button>}
         </article>)}
       </div>
-      {view.publicPersonalSpeaking && <div className="agent-public-status"><p role="status">Speaking to everyone · {view.status}</p><button type="button" onClick={() => runtime.stopPersonal()}><Square size={14} aria-hidden="true" /> Stop</button></div>}
+      {view.publicPersonalSpeaking && <div className="agent-public-status"><p role="status">Speaking to everyone · {view.status}</p></div>}
       <form onSubmit={submit} className="agent-compose">
         {(view.personalActive || sending) && <p className="agent-note agent-compose__status" role="status">{sending ? 'Sending…' : view.status}{view.queued > 0 ? ` ${view.queued} queued.` : ''}</p>}
         <div className="agent-compose__input">
-          <textarea aria-label="Message Muse" value={text} onChange={(event) => setText(event.target.value)} onKeyDown={(event) => {
+          <textarea aria-label="Message Muse" readOnly={dictating} value={text} onChange={(event) => setText(event.target.value)} onKeyDown={(event) => {
             if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); }
-          }} maxLength={4000} rows={2} placeholder="Think it through with Muse…" />
+          }} maxLength={4000} rows={2} placeholder={dictating ? 'Listening…' : 'Think it through with Muse…'} />
           <div className="agent-compose__actions">
-            <button type="button" className="agent-voice" aria-pressed={view.voice} disabled={sending || (view.personalActive && !view.voice)} onClick={() => view.voice ? runtime.endVoice() : run(() => runtime.ask('', true))}><Mic size={16} /> {view.voice ? 'Finish speaking' : 'Talk to Muse'}</button>
-            {view.personalActive && !view.publicPersonalSpeaking && !text.trim()
-              ? <button className="agent-send" type="button" aria-label="Stop" title="Stop response" onClick={() => runtime.stopPersonal()}><Square size={16} /></button>
-              : <button className="agent-action agent-send" type="submit" aria-label="Send" title="Send message" disabled={!text.trim() || sending}><ArrowUp size={19} /></button>}
+            {dictating && <div className="agent-dictation" role="status"><span className="agent-dictation__level" aria-hidden="true">{[.45, .8, 1, .8, .45].map((scale, index) => <i key={index} style={{ height: `${4 + dictated.level * 20 * scale}px` }} />)}</span>{dictated.status === 'starting' ? 'Connecting…' : dictated.status === 'stopping' ? 'Finishing…' : 'Recording'}</div>}
+            <button type="button" className="agent-voice" aria-label={dictating ? 'Stop recording' : 'Dictate message'} title={dictating ? 'Stop recording and keep draft' : 'Dictate message'} disabled={sending || dictationBusy || (!dictating && view.personalActive)} onClick={() => {
+              if (dictating) run(async () => { const words = await dictation.stop(); setText([draftPrefix.current, words].filter(Boolean).join(' ')); });
+              else { draftPrefix.current = text.trimEnd(); run(() => dictation.start()); }
+            }}>{dictating ? <Square size={20} fill="currentColor" /> : <Mic size={22} />}</button>
+            {responding
+              ? <button className="agent-send" type="button" aria-label="Stop response" title="Stop response" disabled={sending} onClick={() => runtime.stopPersonal()}><Square size={20} fill="currentColor" aria-hidden="true" /></button>
+              : <button className="agent-send" type="submit" aria-label="Send" title="Send message" disabled={(!dictating && !text.trim()) || sending || dictationBusy}><ArrowUp size={24} aria-hidden="true" /></button>}
           </div>
         </div>
       </form>

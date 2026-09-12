@@ -109,13 +109,7 @@ async (page, origin = 'http://127.0.0.1:8788') => {
                 if (part.type === 'input_image') state.images.push({ call: step, imageUrl: part.image_url });
               }
               const text = event.item?.content?.[0]?.text;
-              if (!started && typeof text === 'string' && text.startsWith('Background context only')) {
-                started = true;
-                setTimeout(() => {
-                  emit({ type: 'session.input_transcript.delta', delta: 'private-voice-only: Read the uploaded reference and draw the release workflow on the whiteboard. Keep your reply private.', start_ms: 0, end_ms: 1000 });
-                  next();
-                }, 300);
-              }
+              if (!started && typeof text === 'string' && text.includes('Current explicit request:')) started = true;
             }
             if (event.type === 'response.create' && started && !state.complete && !state.errors.length) next();
             if (event.type === 'session.close') {
@@ -177,7 +171,8 @@ async (page, origin = 'http://127.0.0.1:8788') => {
     await page.getByRole('button', { name: 'Muse settings', exact: true }).click();
     if (await page.getByRole('checkbox', { name: 'Allow posting to Room (visible to everyone)', exact: true }).isChecked()) throw new Error('Room posting permission was enabled by default');
     await page.getByRole('button', { name: 'Back to Muse', exact: true }).click();
-    await page.getByRole('button', { name: 'Talk to Muse', exact: true }).click();
+    await page.getByRole('textbox', { name: 'Message Muse', exact: true }).fill('private-request-only: Read the uploaded reference and draw the release workflow on the whiteboard. Keep your reply private.');
+    await page.locator('.agent-compose').getByRole('button', { name: 'Send', exact: true }).click();
     await page.waitForFunction(() => window.__chatToolsTest.complete || window.__chatToolsTest.errors.length, null, { timeout: 60_000 });
     const errors = await page.evaluate(() => window.__chatToolsTest.errors);
     if (errors.length) throw new Error(errors.join('\n'));
@@ -217,7 +212,7 @@ async (page, origin = 'http://127.0.0.1:8788') => {
     const provider = await page.evaluate(() => {
       const state = window.__chatToolsTest;
       const tools = state.sessions[0].session.delegation.responses.tools;
-      return { names: tools.map(tool => tool.name), meetingLimit: tools.find(tool => tool.name === 'read_meeting')?.parameters?.properties?.limit?.maximum, calls: state.calls.map(call => call.name), imageCalls: state.images.map(image => image.call), imagesValid: state.images.every(image => /^data:image\/(jpeg|png);base64,/.test(image.imageUrl)), configs: state.states.at(-1).agents.filter(agent => agent.owner === state.you).map(agent => agent.config), peerLeak: state.sends.some(item => item.channel === 'weave-in' && /private-voice-only|private-reply-only/.test(JSON.stringify(item.value))) };
+      return { names: tools.map(tool => tool.name), meetingLimit: tools.find(tool => tool.name === 'read_meeting')?.parameters?.properties?.limit?.maximum, calls: state.calls.map(call => call.name), imageCalls: state.images.map(image => image.call), imagesValid: state.images.every(image => /^data:image\/(jpeg|png);base64,/.test(image.imageUrl)), configs: state.states.at(-1).agents.filter(agent => agent.owner === state.you).map(agent => agent.config), peerLeak: state.sends.some(item => item.channel === 'weave-in' && /private-request-only|private-reply-only/.test(JSON.stringify(item.value))) };
     });
     for (const required of ['read_meeting', 'read_shared_file', 'edit_whiteboard', 'capture_whiteboard']) {
       if (!provider.names.includes(required)) throw new Error(`GPT-Live was not initialized with ${required}`);
@@ -229,12 +224,10 @@ async (page, origin = 'http://127.0.0.1:8788') => {
     if (provider.names.includes('capture_screen_share')) throw new Error('Shared screen capture was enabled without opt-in');
     if (!provider.configs.some(config => config.kind === 'personal' && config.files && config.source === 'all' && config.chat && !config.screen && !config.roomMessages)) throw new Error('Personal default context permissions are incorrect');
     if (!provider.imagesValid || !provider.imageCalls.includes(3) || !provider.imageCalls.includes(6)) throw new Error('File or whiteboard image was not forwarded as provider input_image');
-    if (provider.peerLeak) throw new Error('Private voice conversation was sent to the guest');
+    if (provider.peerLeak) throw new Error('Private conversation was sent to the guest');
     await tab(guest, 'Transcript').click();
-    if (/private-voice-only|private-reply-only/.test(await guest.locator('body').innerText())) throw new Error('Guest saw private voice conversation');
-    await page.getByRole('button', { name: 'Finish speaking', exact: true }).click();
-    await page.getByRole('button', { name: 'Talk to Muse', exact: true }).waitFor();
-    return { clients: 2, calls: provider.calls, meetingLimit: provider.meetingLimit, guestFileTransfer: true, sharedImageAsProviderVision: true, guestBoardSync: true, boardAutoOpen: true, renderedBoardAsProviderVision: true, diagramInViewport: true, boardZoom: zoom, renderedDiagram, roomPostingDisabledByDefault: true, noSearchOrRawDownloadTools: true, privateVoiceIsolation: true, allParticipantContextDefault: true, screenOptInPreserved: true, provider: 'simulated GPT-Live WebRTC with real room and tool execution (no real provider call)' };
+    if (/private-request-only|private-reply-only/.test(await guest.locator('body').innerText())) throw new Error('Guest saw private conversation');
+    return { clients: 2, calls: provider.calls, meetingLimit: provider.meetingLimit, guestFileTransfer: true, sharedImageAsProviderVision: true, guestBoardSync: true, boardAutoOpen: true, renderedBoardAsProviderVision: true, diagramInViewport: true, boardZoom: zoom, renderedDiagram, roomPostingDisabledByDefault: true, noSearchOrRawDownloadTools: true, privateRequestIsolation: true, allParticipantContextDefault: true, screenOptInPreserved: true, provider: 'simulated GPT-Live WebRTC with real room and tool execution (no real provider call)' };
   } finally {
     await Promise.all([ownerContext, guestContext].map(context => context.close()));
   }
