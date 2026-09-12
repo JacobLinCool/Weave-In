@@ -143,19 +143,62 @@ describe('MeetingRoom Durable Object', () => {
     await expect(crossOrigin.json()).resolves.toEqual({ ok: false, code: 'INVALID_ORIGIN' });
   });
 
-  it('keeps invitation URLs out of search results without blocking social previews', async () => {
+  it('indexes public pages and keeps invitation and unknown URLs out of search results', async () => {
     const previewHtml = '<html><head><meta property="og:title" content="Weave In"></head></html>';
     const assetEnv = {
       ...tokenEnv(),
       ASSETS: { fetch: async () => new Response(previewHtml, { headers: { 'Content-Type': 'text/html' } }) } as unknown as Fetcher,
     };
-    const home = await worker.fetch(new Request('https://weave.nycu.ai/'), assetEnv);
-    expect(home.headers.get('X-Robots-Tag')).toBeNull();
+    for (const path of ['/', '/about', '/about/']) {
+      const page = await worker.fetch(new Request(`https://weave.nycu.ai${path}`), assetEnv);
+      expect(page.headers.get('X-Robots-Tag')).toBeNull();
+      expect(await page.text()).toContain('property="og:title"');
+    }
     for (const path of ['/?room=ABC123', '/nonexistent']) {
       const page = await worker.fetch(new Request(`https://weave.nycu.ai${path}`), assetEnv);
       expect(page.headers.get('X-Robots-Tag')).toBe('noindex, follow');
       expect(await page.text()).toBe(previewHtml);
     }
+    for (const path of ['/about?room=ABC123', '/about/?room=ABC123']) {
+      const page = await worker.fetch(new Request(`https://weave.nycu.ai${path}`), assetEnv);
+      expect(page.headers.get('X-Robots-Tag')).toBe('noindex, follow');
+      expect(await page.text()).toContain('content="About Weave In"');
+    }
+  });
+
+  it.each(['/about', '/about/'])('serves About metadata at %s while preserving app markup and security headers', async (path) => {
+    const previewHtml = '<html><head><title>Weave In</title>'
+      + '<link rel="canonical" href="https://weave.nycu.ai/">'
+      + '<meta name="description" content="Meeting app">'
+      + '<meta property="og:url" content="https://weave.nycu.ai/">'
+      + '<meta property="og:title" content="Weave In">'
+      + '<meta property="og:description" content="Meeting app">'
+      + '<meta name="twitter:title" content="Weave In">'
+      + '<meta name="twitter:description" content="Meeting app">'
+      + '<script type="application/ld+json">{"@type":"WebApplication","name":"Weave In"}</script>'
+      + '</head><body><div id="root"></div><script type="module" src="/assets/main.js"></script></body></html>';
+    const assetEnv = {
+      ...tokenEnv(),
+      ASSETS: { fetch: async () => new Response(previewHtml, { headers: { 'Content-Type': 'text/html' } }) } as unknown as Fetcher,
+    };
+    const response = await worker.fetch(new Request(`https://weave.nycu.ai${path}`), assetEnv);
+    expect(response.status).toBe(200);
+    expect(response.headers.get('X-Robots-Tag')).toBeNull();
+    expect(response.headers.get('Content-Security-Policy')).toContain("script-src 'self'");
+    const html = await response.text();
+    const description = 'Why we built Weave In: independent thinking, private conversations with Muse, teamwork with Omni, and shared work through Codex and WebMCP.';
+    expect(html).toContain('<title>About Weave In</title>');
+    expect(html).toContain('<link rel="canonical" href="https://weave.nycu.ai/about">');
+    expect(html).toContain('<meta property="og:url" content="https://weave.nycu.ai/about">');
+    expect(html).toContain('<meta property="og:title" content="About Weave In">');
+    expect(html).toContain('<meta name="twitter:title" content="About Weave In">');
+    expect(html).toContain(`<meta name="description" content="${description}">`);
+    expect(html).toContain(`<meta property="og:description" content="${description}">`);
+    expect(html).toContain(`<meta name="twitter:description" content="${description}">`);
+    expect(html).toContain('<script type="application/ld+json">{"@type":"WebApplication","name":"Weave In"}</script>');
+    expect(html).toContain('<div id="root"></div><script type="module" src="/assets/main.js"></script>');
+    const home = await worker.fetch(new Request('https://weave.nycu.ai/'), assetEnv);
+    expect(await home.text()).toBe(previewHtml);
   });
 
   it('opens an empty invitation as host through the public WebSocket route', async () => {

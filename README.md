@@ -2,6 +2,8 @@
 
 Keep the thread. Weave everyone in.
 
+![Top 5 of 30 finalist teams — 2026 Sea x OpenAI Regional Codex Hackathon Taiwan](docs/assets/hackathon-finalist.svg)
+
 [Open Weave In](https://weave.nycu.ai/)
 
 Weave In is a browser meeting app for thinking independently and contributing together. Up to eight participants share video, audio, screens, live captions, chat, files, and an editable whiteboard. No account is required.
@@ -49,6 +51,7 @@ packages/transcribe   Headless browser transcription core for Gemini and OpenAI
 | [Groupthink and intervention policy](apps/meeting/GROUPTHINK.md) | Implemented reminder and Omni policies, and limits of interpretation |
 | [Design](apps/meeting/DESIGN.md) | Visual system and current interface behavior |
 | [Verification](apps/meeting/VERIFICATION.md) | Automated checks, browser harnesses, and their evidence limits |
+| [Project narrative](apps/meeting/PROJECT-NARRATIVE.md) | English project story, rendered on the About page |
 | [Project narrative（繁體中文）](apps/meeting/PROJECT-NARRATIVE.zh-TW.md) | Product motivation and collaboration scenarios |
 | [Transcription package](packages/transcribe/README.md) | Public API, provider differences, lifecycle, and usage |
 

@@ -4,6 +4,7 @@ import { defineConfig } from 'vite';
 import { viteStaticCopy } from 'vite-plugin-static-copy';
 
 export default defineConfig({
+  build: { manifest: true },
   plugins: [
     {
       name: 'remove-excalidraw-hosted-demo-config',

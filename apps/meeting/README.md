@@ -4,7 +4,7 @@ Browser-native meetings with a personal **Muse** and a shared **Omni**. Muse giv
 
 The **Muse** tab opens the personal assistant conversation directly, with a settings button beside its name. Muse is configured automatically on join; its owner can edit instructions, language, sources and tool permissions without losing conversation history. The **Room** tab contains a persistent Omni status card above shared messages. Omni is created automatically with the room. After removal, the plus button to the right of its heading adds it again with default settings. Its settings button opens a full Room-panel settings page with Back to Room at the top. Personal settings similarly provide Back to Muse. Back discards unsaved edits. Any participant can change Group settings; the creator or host can remove it. The card border glows while preparing, awaiting approval or speaking and returns to normal when idle, stopped or waiting. Settings save only after room confirmation and stop work using old permissions.
 
-The landing page (`src/landing.tsx`) introduces the meeting and its assistants with a woven visual identity. Brand assets live in `src/brand.tsx` and `public/`.
+The landing page (`src/landing.tsx`) introduces the meeting and its assistants with a woven visual identity. The **About** links in its navigation and footer open `/about`, where `src/about.tsx` renders [PROJECT-NARRATIVE.md](PROJECT-NARRATIVE.md) directly. Brand assets live in `src/brand.tsx` and `public/`.
 
 From the repository root, use `pnpm dev` to start development and `pnpm check` for the complete automated gate. The dev command first builds the transcription workspace package, then prepares whiteboard assets and starts Vite. Rebuild the transcription package after changing its source during development. App-specific commands run from `apps/meeting`:
 
@@ -26,6 +26,8 @@ pnpm deploy:dry-run
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Current data flow, routes, protocols, storage and code ownership |
 | [VERIFICATION.md](VERIFICATION.md) | Reproducible checks, historical evidence and remaining verification |
 | [DESIGN.md](DESIGN.md) | Design system and current interaction surfaces |
+| [PROJECT-NARRATIVE.md](PROJECT-NARRATIVE.md) | English project story and source for the About page |
+| [PROJECT-NARRATIVE.zh-TW.md](PROJECT-NARRATIVE.zh-TW.md) | Original Traditional Chinese project story |
 
 ## The meeting
 

@@ -62,12 +62,17 @@ interface LandingProps {
 export function LandingSurface(props: LandingProps): ReactNode {
   return (
     <main className="landing">
+      <aside className="landing__recognition" aria-label="Hackathon recognition">
+        <strong>Top 5 of 30 finalist teams</strong>
+        <span>2026 Sea x OpenAI Regional Codex Hackathon Taiwan</span>
+      </aside>
       <header className="landing__header">
         <Brand />
         <nav className="landing__nav" aria-label="Page">
           <a href="#agents">Meet the agents</a>
           <a href="#whiteboard">Shared thinking</a>
           <a href="#data">Privacy</a>
+          <a className="landing__about-link" href="/about">About</a>
           <button className="icon-button icon-button--wide" type="button" onClick={props.onOpenSettings} aria-label="Settings">
             <Settings size={16} /><span>Settings</span>
           </button>
@@ -187,7 +192,10 @@ export function LandingSurface(props: LandingProps): ReactNode {
       </section>
       <footer className="landing__footer">
         <Brand compact />
-        <button className="landing__footer-link" type="button" onClick={props.onOpenSettings}>Caption languages and style</button>
+        <div className="landing__footer-links">
+          <a className="landing__footer-link" href="/about">About</a>
+          <button className="landing__footer-link" type="button" onClick={props.onOpenSettings}>Caption languages and style</button>
+        </div>
       </footer>
     </main>
   );

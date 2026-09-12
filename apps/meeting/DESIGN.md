@@ -37,6 +37,18 @@ typography:
     fontWeight: 500
     lineHeight: 1.05
     letterSpacing: "-0.025em"
+  about-heading:
+    fontFamily: "Jost Variable, Jost, Helvetica Neue, Arial, sans-serif"
+    fontSize: "44px"
+    fontWeight: 500
+    lineHeight: 1.15
+    letterSpacing: "-0.025em"
+  about-heading-mobile:
+    fontFamily: "Jost Variable, Jost, Helvetica Neue, Arial, sans-serif"
+    fontSize: "32px"
+    fontWeight: 500
+    lineHeight: 1.15
+    letterSpacing: "-0.025em"
   title:
     fontFamily: "Jost Variable, Jost, Helvetica Neue, Arial, sans-serif"
     fontSize: "20px"
@@ -52,6 +64,16 @@ typography:
     fontSize: "15.5px"
     fontWeight: 400
     lineHeight: 1.65
+  about-body:
+    fontFamily: "Jost Variable, Jost, Helvetica Neue, Arial, sans-serif"
+    fontSize: "18px"
+    fontWeight: 400
+    lineHeight: 1.8
+  about-body-mobile:
+    fontFamily: "Jost Variable, Jost, Helvetica Neue, Arial, sans-serif"
+    fontSize: "17px"
+    fontWeight: 400
+    lineHeight: 1.8
   body-compact:
     fontFamily: "Jost Variable, Jost, Helvetica Neue, Arial, sans-serif"
     fontSize: "13px"
@@ -239,9 +261,15 @@ The English narrative moves through the meeting problem and critical thinking, a
 
 The page uses a `min(1280px, 100%)` content width, fluid side gutters and a 76px header. On desktop, the hero places the headline and woven demonstration to the left of a 360–400px room panel. The room panel includes camera/microphone preview, display name, room creation, room-code entry, loading/errors and invite prefill.
 
+A full-width gold announcement strip above the navigation presents the team's advancement to the top five among 30 finalist teams at the 2026 Sea x OpenAI Regional Codex Hackathon Taiwan. The result and full event name use dark text in one centered row on desktop and wrap into stacked lines on smaller screens. This recognition sits outside the hero and product narrative.
+
 Following sections use a heading-and-content split with thin rules and generous vertical space. Agent roles are open rows, the workflow is numbered, and the whiteboard example is an illustrative SVG payment flow. **Codex draws** and **You refine** are native buttons with `aria-pressed`; changing the selection updates the diagram, accessible description and caption.
 
-At 1080px and below, the hero and sections stack. Invite visitors see the room form before the draft. At 720px and below, navigation links hide while Settings remains, gutters and draft geometry shrink, and the hero title becomes `clamp(38px, 11vw, 56px)`.
+At 1080px and below, the hero and sections stack. Invite visitors see the room form before the draft. At 720px and below, section navigation links hide while About and Settings remain, gutters and draft geometry shrink, and the hero title becomes `clamp(38px, 11vw, 56px)`. About is also available in the footer.
+
+### About
+
+`/about` and `/about/` present the English project narrative directly from `PROJECT-NARRATIVE.md`. The page keeps the indigo, cotton and Jost visual system in a single reading column up to 72ch wide. Its document heading is 44px on desktop and 32px at widths of 640px and below; body text is 18px, or 17px at the same breakpoint, with a 1.8 line height. These About typography roles support sustained reading. The full narrative retains one H1 and all 13 paragraphs in their original order. A compact header links to Home and marks About as the current page; the footer links to the room form at `/#start` and home. Navigation uses ordinary page links, and the About route loads independently of the meeting interface.
 
 ### Draft, selvedge and mark
 

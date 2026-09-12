@@ -6,6 +6,8 @@ This document describes the implemented meeting application. [README.md](README.
 
 React manages the room UI, peer media, local meeting record, shared Excalidraw board, personal **Muse**, shared **Omni**, and automatic private reminders. The Cloudflare Worker serves the app, provisions provider sessions and TURN credentials, and routes each room to a `MeetingRoom` Durable Object. The Durable Object coordinates membership, WebRTC signaling and assistant authority; it does not archive meeting content.
 
+`src/main.tsx` selects the public About page at `/about` and `/about/` before mounting the meeting app. Both routes load their UI on demand. `src/about.tsx` imports `PROJECT-NARRATIVE.md` as text and renders the complete English narrative with React Markdown. Ordinary links provide navigation and browser history; visiting About does not initialize the meeting app.
+
 ```mermaid
 flowchart LR
     B[Browser]
@@ -41,7 +43,8 @@ The API routes below enforce a matching `Origin`. JSON endpoints validate their 
 | `POST /api/private-analysis` | Uses `GEMINI_API_KEY` for bounded private reminder analysis; 64 KiB request limit and 30 requests per IP per minute. This endpoint validates the supplied records; it does not query a server transcript archive. |
 | WebSocket `/api/rooms/:room/connect` | Six-character room code; create/join identity, peer signaling, assistant commands and state. Requires a WebSocket upgrade. |
 | `POST /api/rooms/:room/agents/:id/live` | Accepts `{ epoch, request, session, sdp }`; requires the active socket's `X-Room-Token` and current runner. Validates epoch/request, Group phase/lease, models and tool declarations. Bounds input to 64 KiB, allows six initializations per connection per minute and sets a 20-second upstream timeout. Returns a session ID and WebRTC SDP answer. |
-| Other paths | Static assets with SPA routing and security headers; room invitation pages receive `X-Robots-Tag: noindex, follow`. |
+| `/about`, `/about/` | Public project narrative, with About-specific title, description, social metadata and canonical `/about` URL. |
+| Other paths | Static assets with SPA routing and security headers; room invitation and unknown pages receive `X-Robots-Tag: noindex, follow`. |
 
 Bindings are `ASSETS`, SQLite-backed `ROOMS`, and the three rate limiters in [wrangler.jsonc](wrangler.jsonc). There is no D1, R2 or KV meeting archive. `OPENAI_API_KEY` powers Muse and Omni independently of the selected caption provider. Private reminders require Gemini. TURN provisioning is required before a controller joins a room; failure is visible rather than silently using a hard-coded STUN list.
 

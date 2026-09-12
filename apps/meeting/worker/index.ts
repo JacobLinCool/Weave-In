@@ -445,6 +445,8 @@ function isLocalHostname(hostname: string): boolean {
 function withSecurityHeaders(response: Response, url: URL): Response {
   const headers = new Headers(response.headers);
   const isLocalDevelopment = isLocalHostname(url.hostname);
+  const isHtml = headers.get('Content-Type')?.includes('text/html');
+  const isAboutPage = url.pathname === '/about' || url.pathname === '/about/';
   headers.set(
     'Content-Security-Policy',
     isLocalDevelopment
@@ -459,10 +461,29 @@ function withSecurityHeaders(response: Response, url: URL): Response {
   headers.set('Referrer-Policy', 'no-referrer');
   headers.set('X-Content-Type-Options', 'nosniff');
   headers.set('X-Frame-Options', 'DENY');
-  if (headers.get('Content-Type')?.includes('text/html') && (url.searchParams.has('room') || url.pathname !== '/')) {
+  if (isHtml && (url.searchParams.has('room') || (url.pathname !== '/' && !isAboutPage))) {
     headers.set('X-Robots-Tag', 'noindex, follow');
   }
-  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+  const securedResponse = new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+  if (!isHtml || !isAboutPage) return securedResponse;
+
+  const title = 'About Weave In';
+  const canonical = 'https://weave.nycu.ai/about';
+  const description = 'Why we built Weave In: independent thinking, private conversations with Muse, teamwork with Omni, and shared work through Codex and WebMCP.';
+  return new HTMLRewriter()
+    .on('title', { element: (element) => { element.setInnerContent(title); } })
+    .on('link[rel="canonical"]', { element: (element) => { element.setAttribute('href', canonical); } })
+    .on('meta', {
+      element(element) {
+        const name = element.getAttribute('name') ?? element.getAttribute('property');
+        if (name === 'og:url') element.setAttribute('content', canonical);
+        if (name === 'og:title' || name === 'twitter:title') element.setAttribute('content', title);
+        if (name === 'description' || name === 'og:description' || name === 'twitter:description') {
+          element.setAttribute('content', description);
+        }
+      },
+    })
+    .transform(securedResponse);
 }
 
 function publicIdentity(value: PeerIdentity): PeerIdentity { return { peerId: value.peerId, name: value.name, isHost: value.isHost }; }
