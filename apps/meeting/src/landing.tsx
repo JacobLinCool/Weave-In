@@ -162,7 +162,7 @@ export function LandingSurface(props: LandingProps): ReactNode {
         <dl className="key">
           <div className="key__row">
             <dt><WovenChip colors={[THREAD_COLORS[1]!.hex, THREAD_COLORS[3]!.hex]} /> Between participants</dt>
-            <dd>Video, voice, screen share, chat, files, whiteboard edits, and captions travel over encrypted WebRTC connections between participants. Connections use a direct path when possible; Cloudflare TURN can relay encrypted packets when the network requires it. The relay handles connection metadata such as IP addresses and timing, but cannot read the encrypted content.</dd>
+            <dd>Video, voice, screen share, chat, files, whiteboard edits, and captions travel over encrypted WebRTC connections between participants. Connections use a direct path when possible; Cloudflare TURN can relay encrypted packets when the network requires it. The relay handles connection metadata such as IP addresses and timing.</dd>
           </div>
           <div className="key__row">
             <dt><WovenChip colors={[THREAD_COLORS[0]!.hex, '#F3EEE3']} /> To AI providers</dt>
@@ -170,7 +170,7 @@ export function LandingSurface(props: LandingProps): ReactNode {
           </div>
           <div className="key__row">
             <dt><WovenChip colors={['#303A6B', '#F3EEE3']} /> Our server</dt>
-            <dd>Our signaling Worker connects browsers, issues short-lived caption and TURN credentials, and initializes assistants. The room service stores assistant settings and coordination state. Meeting media and shared content use the participant connections; Cloudflare's TURN relay is a separate path. Automatic reminders send recent transcript text and previous reminder evidence through the Worker to an AI provider. The server does not store that analysis or private conversations. Analysis starts automatically; there is currently no pause switch.</dd>
+            <dd>Our signaling Worker connects browsers, issues short-lived caption and TURN credentials, and initializes assistants. The room service stores assistant settings and coordination state. Automatic reminders send recent transcript text and previous reminder evidence through the Worker to an AI provider.</dd>
           </div>
           <div className="key__row">
             <dt><WovenChip colors={[THREAD_COLORS[2]!.hex, '#F3EEE3']} /> In this browser</dt>
