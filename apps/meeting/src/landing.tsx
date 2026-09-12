@@ -166,11 +166,11 @@ export function LandingSurface(props: LandingProps): ReactNode {
           </div>
           <div className="key__row">
             <dt><WovenChip colors={[THREAD_COLORS[0]!.hex, '#F3EEE3']} /> To AI providers</dt>
-            <dd>Your microphone goes directly to your caption provider. Assistants receive their permitted context, conversation and tool results directly through OpenAI; private assistant conversations stay out of the public room.</dd>
+            <dd>Your microphone goes directly to your caption provider. Your browser sends permitted assistant context, conversation and tool results directly to the configured AI provider; private assistant conversations stay out of the public room.</dd>
           </div>
           <div className="key__row">
             <dt><WovenChip colors={['#303A6B', '#F3EEE3']} /> Our server</dt>
-            <dd>Our signaling Worker connects browsers, issues short-lived caption and TURN credentials, and initializes and coordinates assistants. It does not carry meeting media, chat, files, or whiteboard content. Cloudflare's TURN relay is a separate data path. Automatic reminders send recent transcript text and previous reminders through the Worker to Gemini. We do not store this analysis or private conversations. You can pause automatic reminders in Muse.</dd>
+            <dd>Our signaling Worker connects browsers, issues short-lived caption and TURN credentials, and initializes and coordinates assistants. It does not carry meeting media, chat, files, or whiteboard content. Cloudflare's TURN relay is a separate data path. Automatic reminders send recent transcript text and previous reminders through the Worker to an AI provider for analysis. We do not store this analysis or private conversations. You can pause automatic reminders in Muse.</dd>
           </div>
         </dl>
       </section>
