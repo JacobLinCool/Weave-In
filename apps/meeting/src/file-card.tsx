@@ -24,8 +24,9 @@ export function FileCard({ file, onDownload }: { file: SharedFile | undefined; o
         </div>
       </div>
       <div className="file-card__actions">
-        {supported && (file.blob || file.status !== 'unavailable') && <button
+        {supported && <button
           type="button" className="file-card__action" aria-haspopup="dialog"
+          disabled={!file.blob && file.status === 'unavailable'}
           onClick={() => { setPreviewOpen(true); if (canFetch) onDownload(file.id); }}
         ><Eye size={14} /> Preview</button>}
         {file.blob ? <button type="button" className="file-card__action file-card__action--icon" aria-label={`Save ${file.name}`} title="Save file" onClick={() => saveBlob(file.blob!, file.name)}><Download size={14} /></button>
@@ -54,7 +55,8 @@ function PreviewDialog({ file, kind, mime, onDownload, onClose }: { file: Shared
     element.showModal();
     return () => element.close();
   }, []);
-  return <dialog ref={dialog} className="preview-dialog" aria-label={`Preview ${file.name}`} onClose={onClose}>
+  return <dialog ref={dialog} className="preview-dialog" aria-label={`Preview ${file.name}`} onClose={onClose}
+    onKeyDown={event => event.stopPropagation()} onKeyUp={event => event.stopPropagation()}>
     <header className="preview-dialog__header">
       <div className="preview-dialog__title"><h2>{file.name}</h2><span className="file-card__meta">{formatBytes(file.size)}</span></div>
       {file.blob && <button type="button" className="file-card__action" onClick={() => saveBlob(file.blob!, file.name)}><Download size={14} /> Save</button>}
