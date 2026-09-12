@@ -49,6 +49,67 @@ it('shows a ready status when Muse exists and setup guidance only after it is re
   runtime.update(emptyAgentRoom(), Date.now());
   expect(runtime.snapshot().status).toBe('Create an assistant to start a conversation.');
 });
+
+it('automatically creates Muse with system signals enabled', async () => {
+  const { runtime, sendAgent } = setup();
+  const state = structuredClone(runtime.snapshot().room);
+  runtime.update(emptyAgentRoom(), Date.now());
+  const initializing = runtime.initializePersonal();
+  runtime.update(state, Date.now());
+  await initializing;
+  expect(sendAgent).toHaveBeenCalledWith(expect.objectContaining({ type: 'agent-create', config: expect.objectContaining({ system: true }) }));
+});
+
+it.each(['personal', 'group'] as const)('delivers new system signals once to an active %s session as background context', async (kind) => {
+  const { runtime } = setup();
+  await runtime.enable();
+  const state = structuredClone(runtime.snapshot().room);
+  const agent = state.agents[0]!;
+  agent.config.system = true;
+  agent.config.kind = kind;
+  if (kind === 'group') { agent.phase = 'preparing'; agent.request = 1; }
+  state.signal = { id: 1, at: Date.now(), by: 'owner', kind: 'manual' };
+  runtime.update(structuredClone(state), Date.now());
+  if (kind === 'personal') await runtime.ask('Review the meeting');
+  await Promise.resolve();
+  expect(calls.requests).toHaveBeenLastCalledWith(expect.stringContaining(JSON.stringify(state.signal)), expect.any(String));
+  calls.requests.mockClear(); calls.contexts.mockClear();
+
+  state.signal = { ...state.signal, id: 2 };
+  runtime.update(structuredClone(state), Date.now());
+  runtime.update(structuredClone(state), Date.now());
+  expect(calls.contexts).toHaveBeenCalledExactlyOnceWith(JSON.stringify({ systemSignal: state.signal }));
+  expect(calls.requests).not.toHaveBeenCalled();
+});
+
+it('does not forward system signals when Muse has opted out', async () => {
+  const { runtime } = setup();
+  const state = structuredClone(runtime.snapshot().room);
+  state.signal = { id: 1, at: Date.now(), by: 'owner', kind: 'manual' };
+  runtime.update(structuredClone(state), Date.now());
+  await runtime.ask('Private question');
+  await Promise.resolve();
+  expect(calls.requests.mock.calls[0]![0]).not.toContain('System signal');
+  state.signal.id++;
+  runtime.update(state, Date.now());
+  expect(calls.contexts).not.toHaveBeenCalled();
+});
+
+it('excludes system signals from approved public Muse speech even when enabled', async () => {
+  const { runtime } = setup();
+  const state = structuredClone(runtime.snapshot().room);
+  state.agents[0]!.config.system = true;
+  state.signal = { id: 1, at: Date.now(), by: 'owner', kind: 'manual' };
+  runtime.update(state, Date.now());
+  await runtime.speakForMe('Approved concern');
+  grantPersonal(runtime);
+  await Promise.resolve();
+  expect(calls.requests).toHaveBeenLastCalledWith('{}', expect.stringContaining('Approved concern'));
+  const next = structuredClone(runtime.snapshot().room);
+  next.signal!.id++;
+  runtime.update(next, Date.now());
+  expect(calls.contexts).not.toHaveBeenCalled();
+});
 it.each(['timeout', 'disconnect', 'close'] as const)('rejects unconfirmed creation on %s', async (failure) => {
   vi.useFakeTimers();
   const { runtime } = setup();

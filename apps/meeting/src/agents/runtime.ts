@@ -269,7 +269,10 @@ export class AgentRuntime {
     const group = this.#viewGroup();
     if (state.signal && state.signal.id !== this.#signal) {
       this.#signal = state.signal.id;
-      if (personal?.config.system && this.#operations.get('personal')?.audience === 'private') this.#operations.get('personal')?.live?.context(JSON.stringify({ systemSignal: state.signal }));
+      for (const op of this.#operations.values()) {
+        if (!this.#valid(op) || !op.agent.config.system || (op.agent.config.kind === 'personal' && op.audience === 'public')) continue;
+        op.live?.context(JSON.stringify({ systemSignal: state.signal }));
+      }
     }
     if (group?.runner === this.ctx.peerId && group.phase === 'raised' && !state.floor) this.approve();
     if (group?.runner === this.ctx.peerId && ['preparing', 'speaking'].includes(group.phase) && this.#ready) {

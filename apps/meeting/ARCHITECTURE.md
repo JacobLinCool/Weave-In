@@ -48,6 +48,8 @@ Joining a room automatically configures one personal Muse for that participant. 
 
 Background records update an active private session without requesting a reply. A direct text question, reminder discussion action, or **Talk** starts a bounded private interaction with permitted public context and personal conversation. Private records stay in the runtime and are excluded from WebMCP's meeting log and peer replay. Agent transcript fragments update stable IDs and receive fresh cursors; permission-filtered logs may contain sequence gaps.
 
+New Muse configurations receive system signals by default; existing configurations retain their saved permission. Signals currently come only from Omni's manual review action. The latest signal is included when a permitted session starts, and new signals update active Muse private sessions and Omni preparation as background context without requesting another response. Automatic private reminders do not generate room system signals. Owner-approved public Muse speech excludes these signals along with other background context.
+
 Private voice input temporarily disables the public microphone track and public captioning. A separate microphone clone feeds Live. Ending private voice restores the previous meeting microphone state. Output uses separate Web Audio nodes and peer tracks; it never feeds human transcription input. Audio activation can require a user gesture.
 
 ## Speaking for the owner
