@@ -64,7 +64,8 @@ export async function issueIceServers(
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${keySecret}` },
           body: JSON.stringify({ ttl: CREDENTIAL_LIFETIME_SECONDS }),
           signal: controller.signal,
-          redirect: 'error',
+          // workerd supports manual redirects; non-2xx responses are rejected below.
+          redirect: 'manual',
         },
       );
       if (!upstream.ok) {

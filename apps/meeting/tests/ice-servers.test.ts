@@ -55,8 +55,32 @@ describe('TURN credential endpoint', () => {
     expect(init?.method).toBe('POST');
     expect(new Headers(init?.headers).get('Authorization')).toBe(`Bearer ${TURN_KEY_SECRET}`);
     expect(JSON.parse(String(init?.body))).toEqual({ ttl: 86_400 });
-    expect(init?.redirect).toBe('error');
+    expect(init?.redirect).toBe('manual');
     expect(init?.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('uses request options supported by the actual Worker runtime', async () => {
+    const upstream = vi.fn<typeof fetch>(async (input, init) => {
+      // workerd rejects redirect: "error" while constructing a Request, before any network I/O.
+      const request = new Request(input, init);
+      expect(request.redirect).toBe('manual');
+      expect(request.method).toBe('POST');
+      return Response.json(cloudflareResponse);
+    });
+    const response = await issueIceServers(iceRequest(), iceEnv(), upstream);
+    expect(response.status).toBe(200);
+    expect(upstream).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([301, 302, 307, 308])('rejects an upstream %i without following its redirect', async (status) => {
+    const upstream = vi.fn<typeof fetch>(async (input, init) => {
+      expect(new Request(input, init).redirect).toBe('manual');
+      return Response.redirect('https://other.example/credentials', status);
+    });
+    const response = await issueIceServers(iceRequest(), iceEnv(), upstream);
+    await expectError(response, 502, 'ICE_PROVISIONING_FAILED');
+    expect(response.headers.has('Location')).toBe(false);
+    expect(upstream).toHaveBeenCalledTimes(1);
   });
 
   it('routes the API path to provisioning instead of serving the SPA', async () => {
