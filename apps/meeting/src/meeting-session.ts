@@ -1,3 +1,4 @@
+import { identifier, MAX_AGENT_TEXT, type AgentLine } from './agents/contracts';
 import type { ChatMessage, TranscriptLine } from './components';
 import type { MeetingLogEntry } from './meeting-log';
 import type { PrivateNoticeState } from './private-notices';
@@ -5,6 +6,7 @@ import { PEER_ID_PATTERN, ROOM_CODE_PATTERN } from './protocol';
 
 const KEY = 'weave-in:meeting-session:v1';
 const MAX_BYTES = 1_500_000;
+const MAX_PERSONAL_CHAT = 200;
 export const SESSION_TTL = 12 * 60 * 60 * 1000;
 export interface MeetingSession {
   version: 1;
@@ -19,6 +21,8 @@ export interface MeetingSession {
   messages: ChatMessage[];
   transcript: TranscriptLine[];
   notices: PrivateNoticeState;
+  /** Private conversation only; public agent history uses the meeting log. */
+  personalChat?: AgentLine[];
 }
 type StorageLike = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
 function storage(): StorageLike | null {
@@ -48,6 +52,15 @@ function row(v: unknown): boolean {
     text(v.text) &&
     typeof v.own === 'boolean'
   );
+}
+function privateChatLine(v: unknown): v is AgentLine {
+  return record(v) && identifier(v.id) && identifier(v.agentId) &&
+    typeof v.name === 'string' && v.name.length <= 40 &&
+    (v.role === 'user' || v.role === 'assistant') &&
+    (v.input === 'text' || v.input === 'speech') && v.audience === 'private' &&
+    typeof v.text === 'string' && v.text.length <= MAX_AGENT_TEXT &&
+    typeof v.at === 'string' && v.at.length <= 40 && Number.isFinite(Date.parse(v.at)) &&
+    ['not-played', 'playing', 'interrupted', 'finished'].includes(String(v.playback));
 }
 function logEntry(v: unknown): boolean {
   if (!record(v) || !Number.isSafeInteger(v.seq) || Number(v.seq) < 1 || !text(v.at)) return false;
@@ -94,6 +107,8 @@ export function loadMeetingSession(roomCode: string, source = storage(), now = D
       !Array.isArray(v.transcript) ||
       v.transcript.length > 1000 ||
       !v.transcript.every(row) ||
+      (v.personalChat !== undefined && (!Array.isArray(v.personalChat) ||
+        v.personalChat.length > MAX_PERSONAL_CHAT || !v.personalChat.every(privateChatLine))) ||
       !record(v.notices) ||
       typeof v.notices.hidden !== 'boolean' ||
       !Array.isArray(v.notices.notices) ||
@@ -101,7 +116,7 @@ export function loadMeetingSession(roomCode: string, source = storage(), now = D
     )
       return null;
     const entries = v.log;
-    if (entries.some((e, i) => i > 0 && e.seq !== entries[i - 1].seq + 1)) return null;
+    if (entries.some((e, i) => i > 0 && e.seq <= entries[i - 1].seq)) return null;
     if (
       !v.notices.notices.every(
         (n) =>
@@ -131,16 +146,23 @@ export function saveMeetingSession(value: MeetingSession, target = storage()): b
     log: value.log.slice(-2000),
     messages: value.messages.filter((m) => m.kind === 'text').slice(-1000),
     transcript: value.transcript.slice(-1000),
+    ...(value.personalChat === undefined ? {} : {
+      personalChat: value.personalChat.filter((line) => line.audience === 'private').slice(-MAX_PERSONAL_CHAT),
+    }),
   };
   try {
     let encoded = JSON.stringify(snapshot);
     while (
       encoded.length > MAX_BYTES &&
-      (snapshot.log.length > 100 || snapshot.messages.length > 100 || snapshot.transcript.length > 100)
+      (snapshot.log.length > 100 || snapshot.messages.length > 100 || snapshot.transcript.length > 100 ||
+        (snapshot.personalChat?.length ?? 0) > 20)
     ) {
       snapshot.log = snapshot.log.slice(-Math.max(100, Math.floor(snapshot.log.length / 2)));
       snapshot.messages = snapshot.messages.slice(-Math.max(100, Math.floor(snapshot.messages.length / 2)));
       snapshot.transcript = snapshot.transcript.slice(-Math.max(100, Math.floor(snapshot.transcript.length / 2)));
+      if (snapshot.personalChat) {
+        snapshot.personalChat = snapshot.personalChat.slice(-Math.max(20, Math.floor(snapshot.personalChat.length / 2)));
+      }
       encoded = JSON.stringify(snapshot);
     }
     if (encoded.length > MAX_BYTES) return false;

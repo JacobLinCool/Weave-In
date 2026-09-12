@@ -1,3 +1,6 @@
+import { emptyAgentRoom, LEASE_MS, type AgentRoomState } from '../src/agents/contracts';
+import { applyAgentCommand, reconcileAgents, type AgentMember } from '../src/agents/room';
+import { initializeLive } from './live';
 import { privateAnalysis } from './private-analysis';
 import { DurableObject } from 'cloudflare:workers';
 import { GEMINI_MODEL, OPENAI_MODEL, type TranscriptionProvider } from '@weave-in/transcribe';
@@ -23,9 +26,7 @@ export interface Env {
   ANALYSIS_RATE_LIMITER: RateLimit;
 }
 
-interface SocketAttachment extends PeerIdentity {
-  startedAt: number;
-}
+interface SocketAttachment extends PeerIdentity, AgentMember { startedAt: number; sessionToken: string; liveRequests: number[] }
 
 const GEMINI_TOKEN_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/auth_tokens';
 const OPENAI_TOKEN_ENDPOINT = 'https://api.openai.com/v1/realtime/client_secrets';
@@ -46,11 +47,11 @@ export default {
     if (url.pathname === '/api/transcription-token') {
       return issueTranscriptionToken(request, env);
     }
-    const match = /^\/api\/rooms\/([A-Z0-9]{6})\/connect$/u.exec(url.pathname);
+    const match = /^\/api\/rooms\/([A-Z0-9]{6})\/(connect|agents\/[\w-]{1,64}\/live)$/u.exec(url.pathname);
     if (match) {
       const code = match[1];
       if (!code || !ROOM_CODE_PATTERN.test(code)) return jsonError('INVALID_ROOM', 400);
-      if (request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') {
+      if (match[2] === 'connect' && request.headers.get('Upgrade')?.toLowerCase() !== 'websocket') {
         return jsonError('WEBSOCKET_REQUIRED', 426);
       }
       if (request.headers.get('Origin') !== url.origin) return jsonError('INVALID_ORIGIN', 403);
@@ -181,8 +182,49 @@ function openAiTokenRequest(apiKey: string): { url: string; init: RequestInit } 
 }
 
 export class MeetingRoom extends DurableObject<Env> {
+  #agents = emptyAgentRoom();
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+    ctx.blockConcurrencyWhile(async () => { this.#agents = await ctx.storage.get<AgentRoomState>('agents') ?? emptyAgentRoom(); });
+  }
+  async #publish(): Promise<void> {
+    const active = this.#activeSockets();
+    if (!active.length) {
+      this.#agents = emptyAgentRoom();
+      await this.ctx.storage.deleteAll();
+      await this.ctx.storage.deleteAlarm();
+      return;
+    }
+    reconcileAgents(this.#agents, active.map(({ attachment }) => attachment), Date.now(), () => crypto.randomUUID());
+    await this.ctx.storage.put('agents', this.#agents);
+    if (this.#agents.agents.length) await this.ctx.storage.setAlarm(Date.now() + 10_000);
+    if (!this.#agents.agents.length && !active.some(({ attachment }) => attachment.ready)) return;
+    for (const { socket, attachment } of active) {
+      const state: AgentRoomState = { ...this.#agents, agents: this.#agents.agents.map((agent) => agent.config.kind === 'personal' && agent.owner !== attachment.peerId
+        ? { ...agent, config: { ...agent.config, instructions: '', source: 'none', chat: false, system: false, screen: false, files: false } } : agent) };
+      this.#send(socket, { type: 'agent-state', state, serverNow: Date.now() });
+    }
+  }
+  override async alarm(): Promise<void> { await this.#publish(); }
+
   override async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
+    if (url.pathname.endsWith('/live')) {
+      if (request.method !== 'POST') return jsonError('METHOD_NOT_ALLOWED', 405);
+      if (request.headers.get('Origin') !== url.origin) return jsonError('INVALID_ORIGIN', 403);
+      const member = this.#activeSockets().find(({ attachment }) => attachment.sessionToken === request.headers.get('X-Room-Token'));
+      if (!member) return jsonError('NOT_A_ROOM_MEMBER', 403);
+      const id = url.pathname.split('/').at(-2);
+      const agent = this.#agents.agents.find((entry) => entry.id === id);
+      if (!agent || agent.runner !== member.attachment.peerId || (agent.config.kind === 'group' && (agent.leaseUntil <= Date.now() || !['preparing', 'speaking'].includes(agent.phase)))) return jsonError('NOT_AGENT_RUNNER', 403);
+      if (!this.env.OPENAI_API_KEY) return jsonError('GPT_LIVE_UNAVAILABLE', 503);
+      const now = Date.now();
+      const recent = member.attachment.liveRequests.filter((at) => at > now - 60_000);
+      if (recent.length >= 6) return jsonError('RATE_LIMITED', 429);
+      member.attachment.liveRequests = [...recent, now];
+      member.socket.serializeAttachment(member.attachment);
+      return initializeLive(request, structuredClone(agent), this.env.OPENAI_API_KEY);
+    }
     const action = url.searchParams.get('action');
     const rawName = url.searchParams.get('name') ?? '';
     const peerId = url.searchParams.get('peerId') ?? '';
@@ -206,17 +248,18 @@ export class MeetingRoom extends DurableObject<Env> {
     const pair = new WebSocketPair();
     const client = pair[0];
     const server = pair[1];
-    const identity: PeerIdentity = { peerId, name, isHost };
-    server.serializeAttachment({ ...identity, startedAt } satisfies SocketAttachment);
+    const identity: SocketAttachment = { peerId, name, startedAt, isHost, sessionToken: crypto.randomUUID(), joinedAt: Date.now(), heartbeat: Date.now(), ready: false, liveRequests: [] };
+    server.serializeAttachment(identity);
     this.ctx.acceptWebSocket(server, [`peer:${peerId}`]);
 
-    const peers = active.map(({ attachment }) => attachment);
-    this.#send(server, { type: 'welcome', self: identity, peers, startedAt, serverTime: Date.now() });
-    this.#broadcast({ type: 'peer-joined', peer: identity }, peerId);
+    const peers = active.map(({ attachment }) => publicIdentity(attachment));
+    this.#send(server, { type: 'welcome', self: publicIdentity(identity), peers, startedAt, serverTime: Date.now(), sessionToken: identity.sessionToken });
+    this.#broadcast({ type: 'peer-joined', peer: publicIdentity(identity) }, peerId);
+    await this.#publish();
     return new Response(null, { status: 101, webSocket: client });
   }
 
-  override webSocketMessage(socket: WebSocket, rawMessage: string | ArrayBuffer): void {
+  override async webSocketMessage(socket: WebSocket, rawMessage: string | ArrayBuffer): Promise<void> {
     const attachment = readAttachment(socket);
     if (!attachment) {
       socket.close(1008, 'Missing peer attachment');
@@ -237,6 +280,16 @@ export class MeetingRoom extends DurableObject<Env> {
     const message = parseClientMessage(raw);
     if (!message) {
       this.#send(socket, { type: 'error', code: 'INVALID_SIGNAL', message: 'Signaling message is invalid.' });
+      return;
+    }
+    if (message.type !== 'signal') {
+      try {
+        if (message.type === 'agent-ready') attachment.ready = message.ready;
+        if (message.type === 'agent-ready' || message.type === 'agent-heartbeat') attachment.heartbeat = Date.now();
+        applyAgentCommand(this.#agents, attachment, message, Date.now(), () => crypto.randomUUID());
+        socket.serializeAttachment(attachment);
+        await this.#publish();
+      } catch (error) { this.#send(socket, { type: 'error', code: 'AGENT_REJECTED', message: error instanceof Error ? error.message : 'Agent command failed.' }); }
       return;
     }
     const target = this.#activeSockets().find(({ attachment: peer }) => peer.peerId === message.target);
@@ -260,6 +313,7 @@ export class MeetingRoom extends DurableObject<Env> {
     socket.close(reserved ? 1000 : code, reserved ? '' : reason);
     if (!attachment) return;
     this.#broadcast({ type: 'peer-left', peerId: attachment.peerId }, attachment.peerId);
+    this.ctx.waitUntil(this.#publish());
     void wasClean;
   }
 
@@ -267,12 +321,13 @@ export class MeetingRoom extends DurableObject<Env> {
     const attachment = readAttachment(socket);
     if (attachment) this.#broadcast({ type: 'peer-left', peerId: attachment.peerId }, attachment.peerId);
     socket.close(1011, 'Signaling socket error');
+    this.ctx.waitUntil(this.#publish());
   }
 
   #activeSockets(): Array<{ socket: WebSocket; attachment: SocketAttachment }> {
     return this.ctx.getWebSockets().flatMap((socket) => {
       const attachment = readAttachment(socket);
-      return attachment ? [{ socket, attachment }] : [];
+      return attachment && socket.readyState === WebSocket.OPEN ? [{ socket, attachment }] : [];
     });
   }
 
@@ -303,7 +358,7 @@ function readAttachment(socket: WebSocket): SocketAttachment | null {
     !Number.isSafeInteger(candidate.startedAt) ||
     candidate.startedAt <= 0
   ) return null;
-  return { peerId: candidate.peerId, name: candidate.name, isHost: candidate.isHost, startedAt: candidate.startedAt };
+  return candidate as SocketAttachment;
 }
 
 function jsonError(code: string, status: number): Response {
@@ -357,3 +412,5 @@ function withSecurityHeaders(response: Response, url: URL): Response {
   }
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
+
+function publicIdentity(value: PeerIdentity): PeerIdentity { return { peerId: value.peerId, name: value.name, isHost: value.isHost }; }

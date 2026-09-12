@@ -56,6 +56,95 @@ describe('private analysis boundaries', () => {
       }),
     ).toBeNull();
   });
+  it('allows a dismissed concern to recur only for a linked substantive later development', () => {
+    const history = [
+      {
+        text: decision.text,
+        concernSeq: 1,
+        decisionSeq: 2,
+        concernText: input.records[0]!.text,
+        decisionText: input.records[1]!.text,
+      },
+    ];
+    const next = { ...input.records[1]!, seq: 3, at: 3, text: 'The deployment has started; traffic is moving now.' };
+    const recurring = { ...input, records: [...input.records, next], history };
+    const proposal = { ...decision, decisionSeq: 3, previousDecisionSeq: 2, developmentType: 'execution_started' };
+    expect(validateDecision(proposal, recurring)?.id).toBe('auto-1-3');
+    expect(validateDecision({ ...proposal, previousDecisionSeq: 0 }, recurring)).toBeNull();
+    expect(validateDecision({ ...proposal, developmentType: 'none' }, recurring)).toBeNull();
+    expect(validateDecision({ ...proposal, previousDecisionSeq: 99 }, recurring)).toBeNull();
+    expect(validateDecision({ ...proposal, decisionSeq: 2 }, recurring)).toBeNull();
+    expect(
+      validateDecision(proposal, {
+        ...recurring,
+        records: [...input.records, { ...next, text: 'LET US APPROVE THE FRIDAY LAUNCH!' }],
+      }),
+    ).toBeNull();
+    const latest = { ...history[0]!, decisionSeq: 3, decisionText: next.text };
+    const fourth = { ...next, seq: 4, at: 4, text: 'Expand rollout to all customers.' };
+    expect(
+      validateDecision(
+        { ...proposal, decisionSeq: 4 },
+        {
+          ...recurring,
+          records: [...recurring.records, fourth],
+          history: [latest, ...history],
+        },
+      ),
+    ).toBeNull();
+    expect(
+      validateDecision(
+        { ...proposal, decisionSeq: 4, previousDecisionSeq: 3, developmentType: 'changed_scope' },
+        {
+          ...recurring,
+          records: [...recurring.records, fourth],
+          history: [latest, ...history],
+        },
+      )?.id,
+    ).toBe('auto-1-4');
+  });
+  it('does not evade recurrence checks by restating the same concern under a new seq', () => {
+    const history = [
+      {
+        text: decision.text,
+        concernSeq: 1,
+        decisionSeq: 2,
+        concernText: input.records[0]!.text,
+        decisionText: input.records[1]!.text,
+      },
+    ];
+    const records = [
+      { ...input.records[0]!, seq: 3, at: 3 },
+      { ...input.records[1]!, seq: 4, at: 4 },
+    ];
+    expect(validateDecision({ ...decision, concernSeq: 3, decisionSeq: 4 }, { ...input, records, history })).toBeNull();
+    const paraphrase = { ...records[0]!, text: 'Have we checked disconnect recovery?' };
+    const linked = { ...decision, concernSeq: 3, decisionSeq: 4, previousDecisionSeq: 2, developmentType: 'none' };
+    expect(validateDecision(linked, { ...input, records: [paraphrase, records[1]!], history })).toBeNull();
+  });
+  it('accepts bounded structured and legacy history and rejects malformed event evidence', () => {
+    const history = {
+      text: decision.text,
+      concernSeq: 1,
+      decisionSeq: 2,
+      concernText: input.records[0]!.text,
+      decisionText: input.records[1]!.text,
+    };
+    expect(parseAnalysisInput({ ...input, history: [history, 'legacy reminder'] }).history).toEqual([
+      history,
+      'legacy reminder',
+    ]);
+    for (const invalid of [
+      null,
+      [],
+      { ...history, concernSeq: 0 },
+      { ...history, decisionSeq: 1 },
+      { ...history, decisionText: '' },
+      { ...history, concernText: 'x'.repeat(2001) },
+    ]) {
+      expect(() => parseAnalysisInput({ ...input, history: [invalid] })).toThrow();
+    }
+  });
   it('rejects malformed, oversized and duplicate records', () => {
     expect(() => parseAnalysisInput({ ...input, records: [input.records[0], input.records[0]] })).toThrow();
     expect(() =>
@@ -80,13 +169,14 @@ describe('private analysis boundaries', () => {
         Response.json({ candidates: [{ content: { parts: [{ text: JSON.stringify(decision) }] } }] }),
       );
     expect(await analyze(input, 'secret', upstream)).toEqual({
-      id: 'auto-1',
+      id: 'auto-1-2',
       text: decision.text,
       evidenceSeqs: [1, 2],
     });
     expect(String(upstream.mock.calls[0]?.[0])).toContain('batchEmbedContents');
     const generation = JSON.parse(String(upstream.mock.calls[1]?.[1]?.body));
     expect(JSON.parse(generation.contents[0].parts[0].text).records).toHaveLength(2);
+    expect(JSON.parse(generation.contents[0].parts[0].text).you).toBe('alice');
   });
   it('rejects cross-origin, oversized and throttled requests before calling the model', async () => {
     const upstream = vi.fn<typeof fetch>();

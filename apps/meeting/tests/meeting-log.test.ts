@@ -38,4 +38,23 @@ describe('meeting log', () => {
     expect(log.length).toBe(0);
     expect(log.append({ kind: 'presence', at: 'd', participant: alice, event: 'left' }).seq).toBe(1);
   });
+  it('preserves cursor gaps from agent updates through recovery and permission filtering', () => {
+    const log = new MeetingLog();
+    const line = { id: 'line_1', agentId: 'agent_1', name: 'Chat', role: 'assistant' as const,
+      input: 'text' as const, audience: 'private' as const, text: 'Draft', at: '2026-09-12T00:00:00Z', playback: 'not-played' as const };
+    log.append({ kind: 'presence', at: line.at, participant: alice, event: 'joined' });
+    log.upsertAgent(line, alice.peerId);
+    log.append({ kind: 'chat', at: line.at, sender: alice, text: 'Public', agent: null });
+    log.upsertAgent({ ...line, text: 'Final' }, alice.peerId);
+    const recovered = new MeetingLog();
+    recovered.restore(log.snapshot());
+    expect(recovered.read(1, 1)).toMatchObject({ entries: [{ seq: 3, text: 'Public' }], nextCursor: 3, hasMore: true });
+    expect(recovered.read(3).entries).toMatchObject([{ seq: 4, text: 'Final' }]);
+    expect(recovered.read().entries.filter((entry) => entry.kind === 'transcript')).toHaveLength(1);
+    const publicLog = recovered.filtered((entry) => entry.kind !== 'transcript');
+    expect(publicLog.read(1)).toMatchObject({ entries: [{ seq: 3 }], nextCursor: 4, hasMore: false });
+    expect(publicLog.read(4)).toEqual({ entries: [], nextCursor: 4, hasMore: false });
+    expect(recovered.append({ kind: 'presence', at: line.at, participant: alice, event: 'left' }).seq).toBe(5);
+  });
+
 });

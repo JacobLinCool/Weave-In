@@ -1,3 +1,4 @@
+import type { AgentLine } from '../src/agents/contracts';
 import { describe, expect, it } from 'vitest';
 import { loadMeetingSession, saveMeetingSession, SESSION_TTL, type MeetingSession } from '../src/meeting-session';
 import { MeetingLog } from '../src/meeting-log';
@@ -43,6 +44,10 @@ function fixture(): MeetingSession {
     notices: notices.getSnapshot(),
   };
 }
+function chatLine(id = 'line_1'): AgentLine {
+  return { id, agentId: 'chat_1', name: 'Chat', role: 'assistant', input: 'text', audience: 'private',
+    text: 'We still need to address your concern.', at: '2026-09-12T00:00:00Z', playback: 'not-played' };
+}
 describe('same-tab room recovery', () => {
   it('restores identity, text, evidence and dismissed/hidden state only for the same room', () => {
     const s = storage();
@@ -86,6 +91,19 @@ describe('same-tab room recovery', () => {
       recovered.append({ kind: 'presence', at: 'a', participant: { peerId: 'a', name: 'Alice' }, event: 'joined' }).seq,
     ).toBe(2501);
   });
+  it('accepts cursor gaps after agent updates but rejects duplicate or reordered entries', () => {
+    const s = storage();
+    const value = fixture();
+    const entry = value.log[0]!;
+    value.log = [{ ...entry, seq: 2 }, { ...entry, seq: 5 }];
+    saveMeetingSession(value, s);
+    expect(loadMeetingSession('ABCDEF', s, 2000)?.log.map((row) => row.seq)).toEqual([2, 5]);
+    for (const seq of [1, 2]) {
+      value.log = [{ ...entry, seq: 2 }, { ...entry, seq }];
+      saveMeetingSession(value, s);
+      expect(loadMeetingSession('ABCDEF', s, 2000)).toBeNull();
+    }
+  });
   it('expires restored active reminders without resurfacing dismissed ones', () => {
     const notices = new PrivateNotices();
     const value = fixture();
@@ -94,4 +112,39 @@ describe('same-tab room recovery', () => {
     notices.restore({ ...value.notices, notices: value.notices.notices.map((n) => ({ ...n, status: 'active' })) });
     expect(notices.getSnapshot().notices[0]?.status).toBe('expired');
   });
+  it('recovers private Chat in its original tab and room, bounds history, and omits public lines', () => {
+    const s = storage();
+    const value = fixture();
+    value.personalChat = Array.from({ length: 205 }, (_, index) => chatLine(`line_${index}`));
+    value.personalChat.push({ ...chatLine('public_line'), audience: 'public' });
+    expect(saveMeetingSession(value, s)).toBe(true);
+    const restored = loadMeetingSession('ABCDEF', s, 2000);
+    expect(restored?.personalChat).toHaveLength(200);
+    expect(restored?.personalChat?.[0]?.id).toBe('line_5');
+    expect(restored?.personalChat?.at(-1)?.id).toBe('line_204');
+    expect(loadMeetingSession('ZZZZZZ', s, 2000)).toBeNull();
+    expect(loadMeetingSession('ABCDEF', storage(), 2000)).toBeNull();
+  });
+  it('rejects malformed private Chat checkpoints, including a public audience', () => {
+    const invalid = [null, { ...chatLine(), audience: 'public' }, { ...chatLine(), role: 'system' },
+      { ...chatLine(), id: '' }, { ...chatLine(), at: 'invalid' }, { ...chatLine(), playback: 'unknown' },
+      { ...chatLine(), text: 'x'.repeat(4001) }];
+    for (const line of invalid) {
+      const source = { ...storage(), getItem: () => JSON.stringify({ ...fixture(), personalChat: [line] }) };
+      expect(loadMeetingSession('ABCDEF', source, 2000)).toBeNull();
+    }
+  });
+  it('trims private Chat along with other history to stay within the checkpoint budget', () => {
+    const s = storage();
+    const value = fixture();
+    value.personalChat = Array.from({ length: 200 }, (_, index) => ({ ...chatLine(`line_${index}`), text: 'x'.repeat(4000) }));
+    const entry = value.log[0]!;
+    value.log = Array.from({ length: 1000 }, (_, index) => ({ ...entry, seq: index + 1, text: 'x'.repeat(2000) }));
+    expect(saveMeetingSession(value, s)).toBe(true);
+    const restored = loadMeetingSession('ABCDEF', s, 2000);
+    expect(restored).not.toBeNull();
+    expect(restored?.personalChat?.length).toBeLessThan(200);
+    expect(restored?.personalChat?.at(-1)?.id).toBe('line_199');
+  });
+
 });

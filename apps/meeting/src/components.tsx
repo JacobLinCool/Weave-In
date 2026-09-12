@@ -1,5 +1,5 @@
 import type { AutoReminders } from './auto-reminders';
-import { PrivateNoticeHistory } from './private-notice-ui';
+import { PrivateNoticeHistory, type NoticeActions } from './private-notice-ui';
 import type { PrivateNotices } from './private-notices';
 import type { TranscriptionStatus } from '@weave-in/transcribe';
 import {
@@ -64,6 +64,9 @@ export interface TranscriptLine {
   text: string;
   at: string;
   own: boolean;
+  agent?: string;
+  agentRole?: 'user' | 'assistant';
+  playback?: string;
 }
 
 export interface LiveInterim {
@@ -283,6 +286,9 @@ export function MeetingControls({
 }
 
 export function SidePanel({
+  agentPanel,
+  groupPanel,
+  noticeActions,
   autoReminders,
   privateNotices,
   tab,
@@ -296,6 +302,9 @@ export function SidePanel({
   onShareFiles,
   onDownloadFile,
 }: {
+  agentPanel?: ReactNode;
+  groupPanel?: ReactNode;
+  noticeActions: NoticeActions;
   autoReminders: AutoReminders;
   privateNotices: PrivateNotices;
   tab: SidePanelTab;
@@ -315,15 +324,15 @@ export function SidePanel({
     <aside className="side-panel" aria-label="Meeting panel">
       <div className="side-panel__tabs" role="tablist">
         <button role="tab" type="button" aria-selected={tab === 'chat'} className={tab === 'chat' ? 'is-active' : ''} onClick={() => onTabChange('chat')}>
-          <MessageSquare size={15} /> Chat{messages.length > 0 && <em>{messages.length}</em>}
+          <MessageSquare size={15} /> Room{messages.length > 0 && <em>{messages.length}</em>}
         </button>
         <button role="tab" type="button" aria-selected={tab === 'transcript'} className={tab === 'transcript' ? 'is-active' : ''} onClick={() => onTabChange('transcript')}>
           <Captions size={15} /> Transcript{transcript.length > 0 && <em>{transcript.length}</em>}
         </button>
-        <button data-private-tab role="tab" type="button" aria-selected={tab === 'private'} className={tab === 'private' ? 'is-active' : ''} onClick={() => onTabChange('private')}>Private{unread && <span className="private-unread" aria-label="Unread reminders" />}</button>
+        <button data-private-tab role="tab" type="button" aria-selected={tab === 'private'} className={tab === 'private' ? 'is-active' : ''} onClick={() => onTabChange('private')}>Chat{unread && <span className="private-unread" aria-label="Unread reminders" />}</button>
       </div>
-      {tab === 'private' ? <PrivateNoticeHistory store={privateNotices} monitor={autoReminders} /> : tab === 'chat'
-        ? <ChatPanel messages={messages} files={files} joinedAt={joinedAt} onSend={onSendChat} onShareFiles={onShareFiles} onDownloadFile={onDownloadFile} />
+      {tab === 'private'  ? <div className="personal-chat-panel"><PrivateNoticeHistory store={privateNotices} monitor={autoReminders} {...noticeActions} />{!noticeState.hidden && agentPanel}</div> : tab === 'chat'
+        ? <div className="room-chat-panel">{groupPanel}<ChatPanel messages={messages} files={files} joinedAt={joinedAt} onSend={onSendChat} onShareFiles={onShareFiles} onDownloadFile={onDownloadFile} /></div>
         : <TranscriptPanel transcript={transcript} interims={interims} joinedAt={joinedAt} />}
     </aside>
   );
@@ -507,7 +516,7 @@ function ChatPanel({
             <header>
               <strong style={{ color: message.color }}>
                 {message.kind === 'text' && message.agent !== null
-                  ? <><Bot size={12} aria-hidden="true" /> {message.own ? 'Your agent' : `${message.name}'s agent`}</>
+                  ? <><Bot size={12} aria-hidden="true" /> {message.agent === 'Omni' && message.name === 'Omni' ? 'Omni' : message.own ? 'Your agent' : `${message.name}'s agent`}</>
                   : message.own ? 'You' : message.name}
               </strong>
               {message.kind === 'text' && message.agent && <span className="chat-agent-tag">{message.agent}</span>}
@@ -581,7 +590,7 @@ function TranscriptPanel({
   joinedAt: string | null;
 }): ReactNode {
   const live = Object.entries(interims).filter(([, interim]) => interim.text);
-  const list = useAutoScroll([transcript.length, live.map(([, interim]) => interim.text).join('\n')]);
+  const list = useAutoScroll([transcript.map((line) => line.text).join('\n'), live.map(([, interim]) => interim.text).join('\n')]);
   const divider = joinDividerIndex(transcript, joinedAt);
   return (
     <ol ref={list} className="panel-list" data-testid="transcript-list">
@@ -596,6 +605,7 @@ function TranscriptPanel({
           data-before-join={divider !== null && index < divider ? 'true' : undefined}
         >
           <header><strong style={{ color: line.color }}>{line.own ? 'You' : line.name}</strong><time dateTime={line.at}>{formatTime(line.at)}</time></header>
+          {line.agent && <span className="data-label">{line.agentRole === 'assistant' ? 'AI assistant' : 'To assistant'} · {line.playback}</span>}
           <p>{line.text}</p>
         </li>
       ))}
@@ -640,7 +650,7 @@ function useAutoScroll(dependencies: unknown[]): React.RefObject<HTMLOListElemen
   const ref = useRef<HTMLOListElement>(null);
   useEffect(() => {
     const element = ref.current;
-    if (element) element.scrollTop = element.scrollHeight;
+    if (element && element.scrollHeight - element.scrollTop - element.clientHeight < 160) element.scrollTop = element.scrollHeight;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, dependencies);
   return ref;

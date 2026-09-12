@@ -7,103 +7,51 @@ import {
   type OpenAiLiveDependencies,
 } from '../src/openai-live';
 
-class MockDataChannel extends EventTarget {
-  readyState: RTCDataChannelState = 'connecting';
+class MockSocket extends EventTarget {
+  readyState = 0;
   readonly sent: string[] = [];
-
-  send(data: string): void {
-    this.sent.push(data);
-  }
-
-  open(): void {
-    this.readyState = 'open';
-    this.dispatchEvent(new Event('open'));
-  }
-
-  message(value: object): void {
-    this.dispatchEvent(new MessageEvent('message', { data: JSON.stringify(value) }));
-  }
-
-  close(): void {
-    if (this.readyState === 'closed') return;
-    this.readyState = 'closed';
-    this.dispatchEvent(new Event('close'));
-  }
-}
-
-class MockPeerConnection extends EventTarget {
-  connectionState: RTCPeerConnectionState = 'new';
-  readonly channel = new MockDataChannel();
-  readonly localDescriptions: RTCSessionDescriptionInit[] = [];
-  readonly remoteDescriptions: RTCSessionDescriptionInit[] = [];
-  readonly transceivers: { kind: string; direction: RTCRtpTransceiverDirection | undefined }[] = [];
-
-  addTransceiver(kind: string, init: RTCRtpTransceiverInit): void {
-    this.transceivers.push({ kind, direction: init.direction });
-  }
-
-  createDataChannel(): RTCDataChannel {
-    return this.channel as unknown as RTCDataChannel;
-  }
-
-  async createOffer(): Promise<RTCSessionDescriptionInit> {
-    const audio = this.transceivers.some((entry) => entry.kind === 'audio');
-    return { type: 'offer', sdp: `v=0\r\n${audio ? 'm=audio 9 UDP/TLS/RTP/SAVPF 111\r\n' : ''}m=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\n` };
-  }
-
-  async setLocalDescription(description: RTCSessionDescriptionInit): Promise<void> {
-    this.localDescriptions.push(description);
-  }
-
-  async setRemoteDescription(description: RTCSessionDescriptionInit): Promise<void> {
-    this.remoteDescriptions.push(description);
-    this.connectionState = 'connected';
-  }
-
-  close(): void {
-    this.connectionState = 'closed';
-  }
+  send(data: string): void { this.sent.push(data); }
+  open(): void { this.readyState = 1; this.dispatchEvent(new Event('open')); }
+  message(value: object): void { this.dispatchEvent(new MessageEvent('message', { data: JSON.stringify(value) })); }
+  close(): void { if (this.readyState === 3) return; this.readyState = 3; this.dispatchEvent(new Event('close')); }
 }
 
 describe('OpenAiLiveTranscriber', () => {
-  it('accepts direct API keys and redacts credentials from setup failures', async () => {
-    const apiKeyPeer = new MockPeerConnection();
-    const apiKeyRequests: RequestInit[] = [];
-    const apiKeyClient = new OpenAiLiveTranscriber({
-      credential: { type: 'api-key', value: 'standard-secret-key' },
-      options: { ...DEFAULT_OPTIONS, provider: 'openai', customVocabulary: [] },
-      callbacks: callbacks(),
-      dependencies: dependenciesFor(apiKeyPeer, async (_input, init) => {
-        apiKeyRequests.push(init);
-        return new Response('answer', { status: 200 });
-      }),
-    });
-    const apiKeyStarting = apiKeyClient.start();
-    await vi.waitFor(() => expect(apiKeyRequests).toHaveLength(1));
-    apiKeyPeer.channel.open();
-    apiKeyPeer.channel.message({ type: 'session.updated' });
-    await apiKeyStarting;
-    expect(apiKeyRequests[0]?.headers).toMatchObject({
-      Authorization: 'Bearer standard-secret-key',
-    });
-    await apiKeyClient.stop();
-
-    const peer = new MockPeerConnection();
-    const token = 'ephemeral-private-token';
+  it.each(['api-key', 'ephemeral-token'] as const)('uses a credential protocol for %s and redacts provider errors', async (type) => {
+    const socket = new MockSocket();
+    const connect = vi.fn(() => socket as unknown as WebSocket);
+    const token = 'private-token';
     const client = new OpenAiLiveTranscriber({
-      credential: { type: 'ephemeral-token', value: token },
+      credential: { type, value: token },
       options: { ...DEFAULT_OPTIONS, provider: 'openai', customVocabulary: [] },
       callbacks: callbacks(),
-      dependencies: dependenciesFor(peer, async () =>
-        new Response(`Rejected ${token}`, { status: 401 }),
-      ),
+      dependencies: { ...dependenciesFor(socket), createWebSocket: connect },
     });
-    await expect(client.start()).rejects.not.toThrow(new RegExp(token, 'u'));
+    const starting = client.start();
+    const rejected = expect(starting).rejects.toThrow('Rejected [redacted]');
+    await vi.waitFor(() => expect(connect).toHaveBeenCalledWith(
+      'wss://api.openai.com/v1/realtime?intent=transcription',
+      ['realtime', `openai-insecure-api-key.${token}`],
+    ));
+    socket.open();
+    socket.message({ type: 'error', error: { message: `Rejected ${token}` } });
+    await rejected;
+    expect(socket.readyState).toBe(3);
+  });
+
+  it('redacts a credential if native WebSocket construction throws', async () => {
+    const socket = new MockSocket();
+    const client = new OpenAiLiveTranscriber({
+      credential: { type: 'api-key', value: 'private-key' },
+      options: { ...DEFAULT_OPTIONS, provider: 'openai', customVocabulary: [] },
+      callbacks: callbacks(),
+      dependencies: { ...dependenciesFor(socket), createWebSocket: () => { throw new Error('Invalid protocol private-key'); } },
+    });
+    await expect(client.start()).rejects.toThrow('Invalid protocol [redacted]');
   });
 
   it('streams 24 kHz PCM and reconciles delta and completion events by item order', async () => {
-    const peer = new MockPeerConnection();
-    const observedRequests: RequestInit[] = [];
+    const peer = new MockSocket();
     const observed = callbacks();
     const client = new OpenAiLiveTranscriber({
       credential: { type: 'ephemeral-token', value: 'ephemeral-token' },
@@ -115,23 +63,14 @@ describe('OpenAiLiveTranscriber', () => {
         customVocabulary: ['WebMCP'],
       },
       callbacks: observed,
-      dependencies: dependenciesFor(peer, async (_input, init) => {
-        observedRequests.push(init);
-        return new Response('test-answer', { status: 200 });
-      }),
+      dependencies: dependenciesFor(peer),
     });
 
     expect(client.audioFormat).toEqual({ sampleRate: 24_000, framesPerChunk: 2_400 });
     const starting = client.start();
-    await vi.waitFor(() => expect(observedRequests).toHaveLength(1));
-    expect(observedRequests[0]?.body).toMatch(/^m=audio /mu);
-    expect(peer.transceivers).toEqual([{ kind: 'audio', direction: 'recvonly' }]);
-    expect(observedRequests[0]?.headers).toEqual({
-      Authorization: 'Bearer ephemeral-token',
-      'Content-Type': 'application/sdp',
-    });
-    peer.channel.open();
-    const update = JSON.parse(peer.channel.sent[0] ?? '{}');
+    await Promise.resolve(); await Promise.resolve();
+    peer.open();
+    const update = JSON.parse(peer.sent[0] ?? '{}');
     expect(update).toMatchObject({
       type: 'session.update',
       session: {
@@ -150,39 +89,40 @@ describe('OpenAiLiveTranscriber', () => {
       },
     });
     expect(update.session.audio.input.turn_detection).toBeNull();
-    peer.channel.message({ type: 'session.updated' });
+    peer.message({ type: 'session.updated' });
     await starting;
 
     client.sendAudio(new Uint8Array([0, 1, 255]).buffer);
-    expect(JSON.parse(peer.channel.sent.at(-1) ?? '{}')).toEqual({
+    expect(JSON.parse(peer.sent.at(-1) ?? '{}')).toEqual({
       type: 'input_audio_buffer.append',
       audio: 'AAH/',
     });
-    for (let index = 0; index < 19; index += 1) client.sendAudio(new ArrayBuffer(4_800));
-    expect(JSON.parse(peer.channel.sent.at(-1) ?? '{}').type).toBe('input_audio_buffer.append');
+    // Quiet speech is still sent even below the endpoint detector threshold.
+    client.sendAudio(new Int16Array(2_400).fill(100).buffer);
+    expect(JSON.parse(peer.sent.at(-1) ?? '{}').type).toBe('input_audio_buffer.append');
+    for (let index = 0; index < 40; index += 1) client.sendAudio(new Int16Array(2_400).fill(4_000).buffer);
+    expect(peer.sent.filter(raw => JSON.parse(raw).type === 'input_audio_buffer.commit')).toHaveLength(0);
+    for (let index = 0; index < 7; index += 1) client.sendAudio(new ArrayBuffer(4_800));
+    expect(JSON.parse(peer.sent.at(-1) ?? '{}').type).toBe('input_audio_buffer.append');
     client.sendAudio(new ArrayBuffer(4_800));
-    expect(JSON.parse(peer.channel.sent.at(-1) ?? '{}')).toEqual({ type: 'input_audio_buffer.commit' });
-    client.sendAudio(new Int16Array(2_400).fill(4_000).buffer);
-    for (let index = 0; index < 3; index += 1) client.sendAudio(new ArrayBuffer(4_800));
-    expect(JSON.parse(peer.channel.sent.at(-1) ?? '{}').type).toBe('input_audio_buffer.append');
-    client.sendAudio(new ArrayBuffer(4_800));
-    expect(JSON.parse(peer.channel.sent.at(-1) ?? '{}')).toEqual({ type: 'input_audio_buffer.commit' });
+    expect(JSON.parse(peer.sent.at(-1) ?? '{}')).toEqual({ type: 'input_audio_buffer.commit' });
+    sendTurn(client);
 
-    peer.channel.message({ type: 'input_audio_buffer.committed', item_id: 'first' });
-    peer.channel.message({ type: 'input_audio_buffer.committed', item_id: 'second' });
-    peer.channel.message({
+    peer.message({ type: 'input_audio_buffer.committed', item_id: 'first' });
+    peer.message({ type: 'input_audio_buffer.committed', item_id: 'second' });
+    peer.message({
       type: 'conversation.item.input_audio_transcription.delta',
       item_id: 'first',
       delta: 'First partial',
     });
-    peer.channel.message({
+    peer.message({
       type: 'conversation.item.input_audio_transcription.completed',
       item_id: 'second',
       transcript: 'Second final.',
     });
     expect(observed.onFinal).not.toHaveBeenCalled();
     expect(observed.onInterim).toHaveBeenLastCalledWith('First partial\nSecond final.');
-    peer.channel.message({
+    peer.message({
       type: 'conversation.item.input_audio_transcription.completed',
       item_id: 'first',
       transcript: 'First final.',
@@ -192,11 +132,11 @@ describe('OpenAiLiveTranscriber', () => {
       'Second final.',
     ]);
     await client.stop();
-    expect(peer.connectionState).toBe('closed');
+    expect(peer.readyState).toBe(3);
   });
 
   it('requests a fresh ephemeral token during scheduled rotation', async () => {
-    const peers = [new MockPeerConnection(), new MockPeerConnection()];
+    const peers = [new MockSocket(), new MockSocket()];
     const scheduled = new Map<number, { callback: () => void; delay: number }>();
     const tokens: string[] = [];
     let peerIndex = 0;
@@ -206,10 +146,9 @@ describe('OpenAiLiveTranscriber', () => {
       value: `token-${connection}`,
     }));
     const dependencies: OpenAiLiveDependencies = {
-      createPeerConnection: () => peers[peerIndex++] as unknown as RTCPeerConnection,
-      fetch: async (_input, init) => {
-        tokens.push(String((init.headers as Record<string, string>).Authorization));
-        return new Response('answer', { status: 200 });
+      createWebSocket: (_url, protocols) => {
+        tokens.push(protocols[1]!);
+        return peers[peerIndex++] as unknown as WebSocket;
       },
       setTimeout: (callback, delay) => {
         timerId += 1;
@@ -227,8 +166,8 @@ describe('OpenAiLiveTranscriber', () => {
     });
     const starting = client.start();
     await vi.waitFor(() => expect(tokens).toHaveLength(1));
-    peers[0]?.channel.open();
-    peers[0]?.channel.message({ type: 'session.updated' });
+    peers[0]?.open();
+    peers[0]?.message({ type: 'session.updated' });
     await starting;
 
     const rotation = [...scheduled.values()].find(
@@ -236,13 +175,10 @@ describe('OpenAiLiveTranscriber', () => {
     );
     rotation?.callback();
     await vi.waitFor(() => expect(tokens).toHaveLength(2));
-    for (const peer of peers) {
-      expect(peer.localDescriptions[0]?.sdp).toMatch(/^m=audio /mu);
-    }
-    peers[1]?.channel.open();
-    peers[1]?.channel.message({ type: 'session.updated' });
+    peers[1]?.open();
+    peers[1]?.message({ type: 'session.updated' });
     await vi.waitFor(() => expect(credential).toHaveBeenCalledTimes(2));
-    expect(tokens).toEqual(['Bearer token-1', 'Bearer token-2']);
+    expect(tokens).toEqual(['openai-insecure-api-key.token-1', 'openai-insecure-api-key.token-2']);
     await client.stop();
   });
 });
@@ -253,26 +189,26 @@ describe('OpenAI finalization', () => {
 
   it('waits for an already committed item without an ID before rotating, then publishes new finals', async () => {
     const { client, peers, observed } = await startFinalizationTest();
-    client.sendAudio(new ArrayBuffer(96_000));
+    sendTurn(client);
     await vi.advanceTimersByTimeAsync(OPENAI_ROTATION_INTERVAL_MS);
     expect(peers).toHaveLength(1);
-    expect(peers[0]!.channel.readyState).toBe('open');
+    expect(peers[0]!.readyState).toBe(1);
     await vi.advanceTimersByTimeAsync(1_200);
     expect(peers).toHaveLength(1);
 
     // Audio arriving while the old connection drains is sent on the new one.
-    client.sendAudio(new ArrayBuffer(96_000));
+    sendTurn(client);
     complete(peers[0]!, 'old', 'Old final.');
     await vi.advanceTimersByTimeAsync(0);
     expect(peers).toHaveLength(2);
     expect(observed.onFinal).toHaveBeenCalledWith('Old final.', 1);
     ready(peers[1]!);
-    expect(peers[1]!.channel.sent.map((raw) => JSON.parse(raw).type))
-      .toEqual(['session.update', 'input_audio_buffer.append', 'input_audio_buffer.commit']);
+    expect(peers[1]!.sent.map((raw) => JSON.parse(raw).type))
+      .toEqual(['session.update', 'input_audio_buffer.append', 'input_audio_buffer.append', 'input_audio_buffer.commit']);
 
     // Late old-connection events must not reintroduce items or fail the new one.
-    peers[0]!.channel.message({ type: 'conversation.item.input_audio_transcription.delta', item_id: 'stale', delta: 'stale' });
-    peers[0]!.channel.dispatchEvent(new Event('error'));
+    peers[0]!.message({ type: 'conversation.item.input_audio_transcription.delta', item_id: 'stale', delta: 'stale' });
+    peers[0]!.dispatchEvent(new Event('error'));
     complete(peers[1]!, 'new', 'New final.');
     expect(observed.onFinal.mock.calls).toEqual([['Old final.', 1], ['New final.', 2]]);
     expect(observed.onFatalError).not.toHaveBeenCalled();
@@ -284,7 +220,7 @@ describe('OpenAI finalization', () => {
     const { client, peers, observed } = await startFinalizationTest();
     client.sendAudio(new ArrayBuffer(4_800));
     await vi.advanceTimersByTimeAsync(OPENAI_ROTATION_INTERVAL_MS);
-    expect(peers[0]!.channel.sent.filter((raw) => JSON.parse(raw).type === 'input_audio_buffer.commit')).toHaveLength(1);
+    expect(peers[0]!.sent.filter((raw) => JSON.parse(raw).type === 'input_audio_buffer.commit')).toHaveLength(1);
     await vi.advanceTimersByTimeAsync(1_000);
     expect(peers).toHaveLength(1);
     complete(peers[0]!, 'silent', '');
@@ -297,22 +233,22 @@ describe('OpenAI finalization', () => {
 
   it('keeps stop idempotent and waits for the final committed audio', async () => {
     const { client, peers, observed } = await startFinalizationTest();
-    client.sendAudio(new ArrayBuffer(96_000));
+    sendTurn(client);
     const stopping = client.stop();
     expect(client.stop()).toBe(stopping);
     await vi.advanceTimersByTimeAsync(1_200);
-    expect(peers[0]!.channel.readyState).toBe('open');
+    expect(peers[0]!.readyState).toBe(1);
     complete(peers[0]!, 'last', 'Last final.');
     await stopping;
     expect(observed.onFinal).toHaveBeenCalledWith('Last final.', 1);
-    expect(peers[0]!.channel.readyState).toBe('closed');
+    expect(peers[0]!.readyState).toBe(3);
     expect(observed.onFatalError).not.toHaveBeenCalled();
     expect(vi.getTimerCount()).toBe(0);
   });
 
   it('does not reopen when stop interrupts rotation finalization', async () => {
     const { client, peers, credential } = await startFinalizationTest();
-    client.sendAudio(new ArrayBuffer(96_000));
+    sendTurn(client);
     await vi.advanceTimersByTimeAsync(OPENAI_ROTATION_INTERVAL_MS);
     const stopping = client.stop();
     complete(peers[0]!, 'last', 'Last final.');
@@ -320,7 +256,7 @@ describe('OpenAI finalization', () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(peers).toHaveLength(1);
     expect(credential).toHaveBeenCalledTimes(1);
-    expect(peers[0]!.channel.readyState).toBe('closed');
+    expect(peers[0]!.readyState).toBe(3);
     expect(vi.getTimerCount()).toBe(0);
   });
 
@@ -337,18 +273,15 @@ describe('OpenAI finalization', () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it('aborts in-flight setup when stop interrupts reconnection', async () => {
-    const answer = Promise.withResolvers<Response>();
-    const { client, peers, fetcher, observed } = await startFinalizationTest();
-    fetcher.mockImplementationOnce(() => answer.promise);
+  it('cancels a connecting WebSocket when stop interrupts reconnection', async () => {
+    const { client, peers, observed } = await startFinalizationTest();
     await vi.advanceTimersByTimeAsync(OPENAI_ROTATION_INTERVAL_MS);
     expect(peers).toHaveLength(2);
-    const request = fetcher.mock.calls[1]![1];
+    expect(peers[1]!.readyState).toBe(0);
     await client.stop();
-    expect(request.signal?.aborted).toBe(true);
-    answer.resolve(new Response('late-answer'));
+    expect(peers[1]!.readyState).toBe(3);
+    peers[1]!.message({ type: 'session.updated' });
     await vi.advanceTimersByTimeAsync(0);
-    expect(peers[1]!.remoteDescriptions).toEqual([]);
     expect(observed.onConnectionReady).toHaveBeenCalledTimes(1);
     expect(observed.onFatalError).not.toHaveBeenCalled();
     expect(vi.getTimerCount()).toBe(0);
@@ -356,7 +289,7 @@ describe('OpenAI finalization', () => {
 
   it.each(['rotation', 'stop'])('reports a bounded finalization timeout during %s', async (operation) => {
     const { client, peers, observed } = await startFinalizationTest();
-    client.sendAudio(new ArrayBuffer(96_000));
+    sendTurn(client);
     let stopping: Promise<void> | undefined;
     if (operation === 'rotation') await vi.advanceTimersByTimeAsync(OPENAI_ROTATION_INTERVAL_MS);
     else stopping = client.stop();
@@ -368,7 +301,7 @@ describe('OpenAI finalization', () => {
     expect(observed.onFinal).not.toHaveBeenCalled();
     expect(peers).toHaveLength(1);
     await client.stop();
-    expect(peers[0]!.channel.readyState).toBe('closed');
+    expect(peers[0]!.readyState).toBe(3);
     expect(vi.getTimerCount()).toBe(0);
   });
 
@@ -377,23 +310,23 @@ describe('OpenAI finalization', () => {
     ['conversation.item.input_audio_transcription.failed', 'OPENAI_TRANSCRIPTION_FAILED'],
   ])('handles %s while draining instead of waiting forever', async (type, code) => {
     const { client, peers, observed } = await startFinalizationTest();
-    client.sendAudio(new ArrayBuffer(96_000));
+    sendTurn(client);
     await vi.advanceTimersByTimeAsync(OPENAI_ROTATION_INTERVAL_MS);
-    peers[0]!.channel.message({ type, item_id: 'failed', error: { message: 'Rejected test-token' } });
+    peers[0]!.message({ type, item_id: 'failed', error: { message: 'Rejected test-token' } });
     await vi.advanceTimersByTimeAsync(0);
     expect(observed.onFatalError).toHaveBeenCalledExactlyOnceWith(code, 'Rejected [redacted]');
     expect(peers).toHaveLength(1);
-    const sent = peers[0]!.channel.sent.length;
+    const sent = peers[0]!.sent.length;
     client.sendAudio(new ArrayBuffer(4_800));
-    expect(peers[0]!.channel.sent).toHaveLength(sent);
+    expect(peers[0]!.sent).toHaveLength(sent);
     await client.stop();
     expect(vi.getTimerCount()).toBe(0);
   });
 
   it('does not count duplicate completions toward other outstanding commits', async () => {
     const { client, peers, observed } = await startFinalizationTest();
-    client.sendAudio(new ArrayBuffer(96_000));
-    client.sendAudio(new ArrayBuffer(96_000));
+    sendTurn(client);
+    sendTurn(client);
     complete(peers[0]!, 'first', 'First final.');
     await vi.advanceTimersByTimeAsync(OPENAI_ROTATION_INTERVAL_MS);
     complete(peers[0]!, 'first', 'First final.');
@@ -410,21 +343,19 @@ describe('OpenAI finalization', () => {
 });
 
 async function startFinalizationTest() {
-  const peers: MockPeerConnection[] = [];
+  const peers: MockSocket[] = [];
   const observed = callbacks();
   const credential = vi.fn(async () => ({ type: 'ephemeral-token' as const, value: 'test-token' }));
-  const fetcher = vi.fn(async (_input: string, _init: RequestInit) => new Response('answer'));
   const client = new OpenAiLiveTranscriber({
     credential,
     options: { ...DEFAULT_OPTIONS, provider: 'openai' },
     callbacks: observed,
     dependencies: {
-      createPeerConnection: () => {
-        const peer = new MockPeerConnection();
+      createWebSocket: () => {
+        const peer = new MockSocket();
         peers.push(peer);
-        return peer as unknown as RTCPeerConnection;
+        return peer as unknown as WebSocket;
       },
-      fetch: fetcher,
       setTimeout: (callback, delay) => setTimeout(callback, delay),
       clearTimeout: (timer) => clearTimeout(timer),
     },
@@ -433,26 +364,29 @@ async function startFinalizationTest() {
   await vi.advanceTimersByTimeAsync(0);
   ready(peers[0]!);
   await starting;
-  return { client, peers, observed, credential, fetcher };
+  return { client, peers, observed, credential };
 }
 
-function ready(peer: MockPeerConnection): void {
-  peer.channel.open();
-  peer.channel.message({ type: 'session.updated' });
+function sendTurn(client: OpenAiLiveTranscriber): void {
+  client.sendAudio(new Int16Array(2_400).fill(4_000).buffer);
+  client.sendAudio(new ArrayBuffer(38_400));
 }
 
-function complete(peer: MockPeerConnection, itemId: string, text: string): void {
-  peer.channel.message({ type: 'input_audio_buffer.committed', item_id: itemId });
-  peer.channel.message({ type: 'conversation.item.input_audio_transcription.completed', item_id: itemId, transcript: text });
+function ready(peer: MockSocket): void {
+  peer.open();
+  peer.message({ type: 'session.updated' });
+}
+
+function complete(peer: MockSocket, itemId: string, text: string): void {
+  peer.message({ type: 'input_audio_buffer.committed', item_id: itemId });
+  peer.message({ type: 'conversation.item.input_audio_transcription.completed', item_id: itemId, transcript: text });
 }
 
 function dependenciesFor(
-  peer: MockPeerConnection,
-  fetcher: (input: string, init: RequestInit) => Promise<Response>,
+  peer: MockSocket,
 ): OpenAiLiveDependencies {
   return {
-    createPeerConnection: () => peer as unknown as RTCPeerConnection,
-    fetch: fetcher,
+    createWebSocket: () => peer as unknown as WebSocket,
     setTimeout: (callback, delay) => {
       if (delay < 1_000) queueMicrotask(callback);
       return 1;

@@ -1,4 +1,5 @@
 # Configure one (or both). Gemini is preferred when both are set unless TRANSCRIPTION_PROVIDER overrides it.
 GEMINI_API_KEY=replace-with-a-server-side-gemini-api-key
+# Agents always require OPENAI_API_KEY, even when captions use Gemini.
 #OPENAI_API_KEY=replace-with-a-server-side-openai-api-key
 #TRANSCRIPTION_PROVIDER=gemini

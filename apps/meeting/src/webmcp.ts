@@ -239,10 +239,9 @@ export function createMeetingTools(context: MeetingToolsContext): ToolDefinition
           format: { type: 'string', enum: ['jpeg', 'png'], default: 'jpeg', description: 'jpeg is smaller; png keeps small text crisp.' },
           quality: {
             type: 'number',
-            minimum: 0.1,
+            // GPT-Live currently rejects fractional literals in tool schemas. Execution still validates the range.
             maximum: 1,
-            default: DEFAULT_CAPTURE_QUALITY,
-            description: 'JPEG quality from 0.1 to 1.',
+            description: 'JPEG quality from 0.1 to 1; defaults to 0.8.',
           },
         },
         additionalProperties: false,

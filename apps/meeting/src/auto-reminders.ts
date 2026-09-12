@@ -66,7 +66,7 @@ export class AutoReminders {
     const log = context.log();
     const records = log
       .read(Math.max(0, log.head - 100), 100)
-      .entries.filter((r): r is Extract<MeetingLogEntry, { kind: 'transcript' }> => r.kind === 'transcript')
+      .entries.filter((r): r is Extract<MeetingLogEntry, { kind: 'transcript' }> => r.kind === 'transcript' && !r.agent)
       .map((r) => ({
         seq: r.seq,
         at: Date.parse(r.at),
@@ -77,11 +77,33 @@ export class AutoReminders {
       .filter((r) => Number.isFinite(r.at))
       .sort((a, b) => a.at - b.at || a.seq - b.seq)
       .slice(-40);
-    while (records.length > 2 && new TextEncoder().encode(JSON.stringify(records)).length > 48000) records.shift();
+    const history = this.notices
+      .getSnapshot()
+      .notices.filter((n) => n.id.startsWith('auto-'))
+      .slice(0, 20)
+      .map((n) => {
+        const [concern, decision] = n.evidence;
+        // Preserve full original evidence: a truncated sentence could hide what changed.
+        return concern && decision
+          ? {
+              text: n.text,
+              concernSeq: concern.seq,
+              decisionSeq: decision.seq,
+              concernText: concern.text.slice(0, 2000),
+              decisionText: decision.text.slice(0, 2000),
+            }
+          : n.text;
+      });
+    const bodySize = () => new TextEncoder().encode(JSON.stringify({ you: context.you(), records, history })).length;
+    // The endpoint caps requests at 64 KiB. Keep recent history first, then trim old
+    // transcript context; bounded history is best effort, as with room recovery.
+    while (history.length > 1 && new TextEncoder().encode(JSON.stringify(history)).length > 24000) history.pop();
+    while (records.length > 2 && bodySize() > 60000) records.shift();
+    if (bodySize() > 60000) return;
     const latest = Math.max(0, ...records.map((r) => r.seq));
     const fresh = log
       .read(Math.max(this.#cursor, log.head - 100), 100)
-      .entries.some((r) => !('replayed' in r && r.replayed) && r.kind === 'transcript');
+      .entries.some((r) => !('replayed' in r && r.replayed) && r.kind === 'transcript' && !r.agent);
     if (
       !fresh ||
       records.length < 2 ||
@@ -102,11 +124,7 @@ export class AutoReminders {
         body: JSON.stringify({
           you: context.you(),
           records,
-          history: this.notices
-            .getSnapshot()
-            .notices.filter((n) => n.id.startsWith('auto-'))
-            .slice(0, 20)
-            .map((n) => n.text),
+          history,
         }),
         signal: AbortSignal.any([abort.signal, AbortSignal.timeout(45000)]),
       });
@@ -114,7 +132,7 @@ export class AutoReminders {
       const result = (await response.json()) as { notice: unknown };
       if (generation !== this.#generation || abort.signal.aborted) return;
       // A newer turn could answer the concern while the model was running. Re-evaluate it instead of showing stale advice.
-      const changed = log.read(latest, 100).entries.some((r) => r.kind === 'transcript');
+      const changed = log.read(latest, 100).entries.some((r) => r.kind === 'transcript' && !r.agent);
       if (!changed && result.notice) {
         this.notices.show(result.notice, log, now);
         this.#nextCheck = now + 120000;

@@ -65,6 +65,42 @@ describe('automatic private monitoring', () => {
     }
   });
 
+  it('does not treat private Chat or public agent speech as a human concern', async () => {
+    const log = new MeetingLog();
+    const request = vi.fn<typeof fetch>(async () => Response.json({ notice: null }));
+    const monitor = new AutoReminders(new PrivateNotices(), request);
+    monitor.start({ log: () => log, you: () => 'alice' });
+    const agent = {
+      id: 'line-1',
+      agentId: 'chat',
+      name: 'Chat',
+      role: 'assistant' as const,
+      input: 'speech' as const,
+      audience: 'private' as const,
+      text: 'Private concern',
+      at: new Date().toISOString(),
+      playback: 'finished' as const,
+    };
+    try {
+      log.upsertAgent(agent, 'alice');
+      log.upsertAgent({ ...agent, id: 'line-2', audience: 'public', text: 'Public agent decision' }, 'alice');
+      await monitor.check(1000);
+      expect(request).not.toHaveBeenCalled();
+      log.append({
+        kind: 'transcript',
+        at: agent.at,
+        speaker: { peerId: 'alice', name: 'Alice' },
+        text: 'Human concern',
+      });
+      log.append({ kind: 'transcript', at: agent.at, speaker: { peerId: 'bob', name: 'Bob' }, text: 'Human decision' });
+      await monitor.check(2000);
+      expect(JSON.parse(String(request.mock.calls[0]?.[1]?.body)).records.map((r: { text: string }) => r.text)).toEqual(
+        ['Human concern', 'Human decision'],
+      );
+    } finally {
+      monitor.stop();
+    }
+  });
   it('runs without MCP and does not add notices to the shared log; skips unchanged text and cools down', async () => {
     const f = setup();
     try {
@@ -81,6 +117,44 @@ describe('automatic private monitoring', () => {
       await f.monitor.check(122000);
       expect(f.request).toHaveBeenCalledTimes(2);
       expect(f.notices.getSnapshot().notices[0]?.status).toBe('dismissed');
+    } finally {
+      f.monitor.stop();
+    }
+  });
+  it('sends dismissed event evidence and accepts a later decision without periodic re-notification', async () => {
+    const request = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        Response.json({ notice: { id: 'auto-1-2', text: 'Check recovery before launch.', evidenceSeqs: [1, 2] } }),
+      )
+      .mockResolvedValueOnce(
+        Response.json({
+          notice: { id: 'auto-1-3', text: 'Deployment started; can we pause to check recovery?', evidenceSeqs: [1, 3] },
+        }),
+      );
+    const f = setup(request);
+    try {
+      await f.monitor.check(1000);
+      f.notices.collapse('auto-1-2');
+      f.notices.dismiss('auto-1-2');
+      await f.monitor.check(200000);
+      expect(request).toHaveBeenCalledTimes(1);
+      f.say('Deployment has started; we are sending production traffic.');
+      await f.monitor.check(201000);
+      const body = JSON.parse(String(request.mock.calls[1]?.[1]?.body));
+      expect(body.history).toEqual([
+        {
+          text: 'Check recovery before launch.',
+          concernSeq: 1,
+          decisionSeq: 2,
+          concernText: 'What happens to data when the connection drops?',
+          decisionText: 'Let us approve Friday launch.',
+        },
+      ]);
+      expect(f.notices.getSnapshot().notices.map((n) => [n.id, n.status])).toEqual([
+        ['auto-1-3', 'active'],
+        ['auto-1-2', 'dismissed'],
+      ]);
     } finally {
       f.monitor.stop();
     }

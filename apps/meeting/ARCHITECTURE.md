@@ -1,129 +1,104 @@
 # Architecture
 
-How the groupthink analysis attaches to the existing meeting. `PRODUCT.md` says why, `GROUPTHINK.md` says what is measured, this file says where the code goes.
+The browser runs a personal **Chat**, a shared **Omni**, and automatic private reminder monitoring. Chat normally replies privately and can speak publicly only for a specific owner-approved reminder. Omni publishes brief public text, without audio or an approval prompt. The broader room-wide analysis model in `GROUPTHINK.md` remains a proposal.
 
-## The decision that shapes everything
+## Data and authority
 
-Analysis runs **server-side, in the room's Durable Object**. Finalized utterances leave the browser.
-
-This was a deliberate trade. The alternative — analysing in the host's browser — would have preserved the original "nothing touches our server" claim, but it puts the whole engine behind one participant's network, loses all state when they refresh, and gives every peer a slightly different answer. Server-side analysis gives one consistent view, survives reconnection, and makes the post-meeting report possible at all.
-
-What it costs: the privacy claim narrows from "nothing" to "no media". `PRODUCT.md` § Brand Commitments defines the exact wording, and every surface making the old claim is now carrying a false statement that must be fixed.
-
-What it does **not** cost, contrary to first assumption: **the CSP does not change.** Browsers only ever talk to the same origin for analysis — utterances go out over the signaling WebSocket that already exists, results come back over the same socket. The embedding and generation calls are made from the Durable Object, server to server. `connect-src 'self'` already covers it.
-
-## Data flow
-
-```
-speaker's browser
-  ├─ local STT (unchanged)          → interim + final text
-  ├─ voice-activity.ts (extended)   → speaking start/stop/overlap events
-  ├─ data channel  → peers          → captions, transcript, chat   [unchanged, P2P]
-  └─ signaling WS  → MeetingRoom    → utterance + activity          [NEW]
-
-MeetingRoom (Durable Object)
-  ├─ persist utterance to ctx.storage.sql
-  ├─ batch → embedding API (server-side fetch)
-  ├─ feed packages/groupthink → derived state → detectors
-  ├─ on fire + policy pass → generation API → intervention text
-  └─ broadcast `analysis` / `intervention` to every socket in the room   [NEW]
-
-every browser
-  ├─ Insights panel   (new SidePanelTab)
-  ├─ stage card       (intervention)
-  ├─ The Hand         (radar, per participant)
-  └─ The Trace        (semantic path over time)
+```mermaid
+sequenceDiagram
+    participant C as Browser
+    participant R as Worker / Room DO
+    participant O as OpenAI Live
+    participant G as Gemini
+    participant P as Other participants
+    C->>R: Join room; configure personal Chat
+    R-->>C: Agent identity, runner, epoch and room token
+    C->>R: Authorized Live settings and SDP
+    R->>O: Initialize session using server key
+    O-->>C: Direct session via SDP answer relayed by Worker
+    C->>O: Permitted private context or approved public text
+    O-->>C: Response and tool requests
+    C->>P: Approved Chat speech or Omni public text
+    C->>R: Bounded human transcript and reminder evidence
+    R->>G: Embeddings and structured private analysis
+    G-->>R: Evidence-linked decision
+    R-->>C: Private reminder only for concern author
 ```
 
-Media, chat, and live captions never enter this path. They stay peer-to-peer exactly as they are today.
+The Worker receives assistant settings, connection descriptions and room coordination. Conversation context and allowed screen/file tool results for Live go directly from the browser to OpenAI. Automatic analysis is a separate path: its bounded transcript and reminder evidence pass through the Worker to Gemini, without Worker persistence. Private conversations and reminders never enter shared room transports unless the owner explicitly approves the selected reminder for a public turn. API keys remain Worker secrets.
 
-## Why the signaling socket and not a new endpoint
+`POST /api/rooms/:room/agents/:id/live` accepts `{ epoch, request, session, sdp }`, requires the current socket's `X-Room-Token`, and returns `{ session: { id }, transport: { type: "webrtc", sdp } }`. It validates runner, lease, phase and allowed models/tools, bounds the request to 64 KiB, and limits each connection to six initializations per minute. Provider initialization times out after 20 seconds. Room tokens never appear in peer lists.
 
-The Durable Object already holds an open, authenticated, origin-checked WebSocket to every participant, with hibernation handled. Utterances are a few hundred bytes. Adding message types to the existing socket costs one `switch` arm; adding an HTTP endpoint costs auth, rate limiting, and room-membership checks that the socket already solved.
+## Code ownership
 
-`MAX_SIGNAL_FRAME_BYTES` (64 KiB) is far above what an utterance needs, and `MAX_TRANSCRIPT_CHARACTERS` (4 000) already bounds the text.
+| File | Responsibility |
+| --- | --- |
+| `src/agents/contracts.ts`, `config.ts` | Settings, defaults, wire validation, models, epochs and floor checks |
+| `src/agents/room.ts` | Identity, runner leases, public-turn coordination and takeover |
+| `worker/index.ts`, `worker/live.ts` | Socket identity, durable coordination and provider initialization |
+| `src/agents/live.ts`, `tools.ts` | Live transport, Responses delegation and scoped meeting tools |
+| `src/agents/audio.ts`, `runtime.ts` | Context, personal approval, transcript routing, microphone and playback gates |
+| `src/agents/panel.tsx`, `private-notice-ui.tsx` | Unified Chat discussion/reminders, Omni and floating reminder cards |
+| `src/auto-reminders.ts`, `worker/private-analysis.ts` | Automatic monitoring, semantic retrieval and recurrence validation |
+| `src/private-notices.ts`, `meeting-session.ts` | Reminder lifecycle and same-tab room checkpoints |
 
-## Protocol additions
+## Configuration and private Chat
 
-All in `src/protocol.ts`. Note that `parseClientMessage` currently hard-rejects anything whose `type` is not `'signal'` — it needs to become a switch, and every new arm needs the same defensive validation the existing one has. Untrusted input from a peer reaches this function directly.
+Joining a room automatically configures one personal Chat for that participant. This does not start a continuously running Live session or make a spoken announcement. Public sources default to all participants, public chat is included, and screen/file permissions are separately controlled and off by default. Direct owner requests are always included. Sources and tools are immutable for an agent's lifetime; remove and recreate it to change them. Markdown instructions cannot grant permissions.
 
-```ts
-// client → server (added to ClientMessage union)
-| { type: 'utterance'; id: string; text: string; at: string; durationMs: number }
-| { type: 'activity'; startedAt: string; endedAt: string; overlapped: string[] }
-| { type: 'agenda'; text: string }   // host only; DO must verify isHost
+Background records update an active private session without requesting a reply. A direct text question, reminder discussion action, or **Talk to Chat** starts a bounded private interaction with permitted public context and personal conversation. Private records stay in the runtime and are excluded from WebMCP's meeting log and peer replay. Agent transcript fragments update stable IDs and receive fresh cursors; permission-filtered logs may contain sequence gaps.
 
-// server → client (added to ServerMessage union)
-| { type: 'analysis'; state: AnalysisSnapshot }       // throttled, ~every 5s
-| { type: 'intervention'; intervention: Intervention }
-```
+Private voice input temporarily disables the public microphone track and public captioning. A separate microphone clone feeds Live. Ending private voice restores the previous meeting microphone state. Output uses separate Web Audio nodes and peer tracks; it never feeds human transcription input. Audio activation can require a user gesture.
 
-```ts
-interface AnalysisSnapshot {
-  dispersion: number;            // D(W)
-  entropy: number;               // H, airtime distribution
-  driftDistance: number;
-  hands: Record<string, number[]>;   // peerId → six axes
-  trace: Array<{ peerId: string; at: string; xyz: [number, number, number] }>;
-  active: Array<{ signal: SignalKind; severity: number; at: string }>;
-}
+## Speaking for the owner
 
-interface Intervention {
-  id: string;
-  signal: 'convergence' | 'drift' | 'float' | 'echo';
-  kind: 'counterpoint' | 'refocus' | 'invite' | 'deepen';
-  text: string;
-  evidenceUtteranceIds: string[];
-  at: string;
-}
-```
+**Speak for me** grants one turn for the selected reminder. The runtime starts a fresh session with only that approved text and a constrained speaking instruction; personal history, background context and tools are excluded. Modest elaboration is allowed without new positions, promises or private information. Public transcripts identify the owner's Chat. No persistent public audience selector is available.
 
-`PeerMessage` is **not** extended. Analysis is not peer-to-peer — it comes from the room, to everyone, identically. Keeping that boundary clean is what makes "the group sees what the room sees" true rather than aspirational.
+The owner's meeting microphone remains in its existing state. Local voice activity on an enabled microphone revokes queued public permission and stops the current Chat turn; it never resumes without a new approval. Detection is level-based, so noisy rooms still require listening evaluation. A Stop action remains available. Speech targets 15–20 seconds, with a 20-second runtime limit after audible output starts. Approval is also invalidated by stop, disconnect or removal; it is not carried into a replacement session.
 
-## Package layout
+## Public Omni
 
-```
-packages/transcribe   Live transcription core                        [exists, unchanged]
-packages/groupthink   Detection engine — pure, no I/O, no network     [NEW]
-apps/meeting          UI + Worker + Durable Object
-```
+There is one shared Omni per room, created by a participant. Its compact, expandable settings sit inside the Room chat panel. A manual **Trigger review** asks it to prepare a public suggestion using allowed public context. The published text is capped at 240 characters and appears in shared Room chat labelled Omni. Its public agent-line records replay to late joiners through agent history; restored or replayed suggestions are deduplicated. Omni neither plays nor broadcasts audio, and there is no human approval step for its text publication.
 
-`packages/groupthink` mirrors what `packages/transcribe` got right: a headless core with an explicit contract, no framework dependency, and tests that run without a browser or a network. It takes the event log and thresholds in, and returns derived state and fired signals out. Embedding vectors are passed *in* — the package never calls an API, which is what lets the whole detection model be tested deterministically with fixture conversations.
+The existing room protocol retains `idle → preparing → raised → speaking → idle` names and `agent-approve` for coordination compatibility. For Omni these are preparation/publication states: the current runner advances them automatically, publishes text with a valid grant, and releases the floor. They are not a user-facing request to speak. Human speech is not parsed as approval. Public turns still use room-authorized floor IDs and epochs; the old Group voice workflow is not the current product behavior.
 
-This split is also the honest answer to "what did you actually build" at judging: a detection engine, with a meeting app around it.
+## Takeover, reconnection and cleanup
 
-## Durable Object storage
+The Durable Object stores assistant configuration and coordination, not meeting content. Ready browsers heartbeat every 10 seconds; a 30-second lease expiry or disconnect can transfer Omni to another ready browser. The replacement uses its own public record and may lack earlier history. No interrupted audio is replayed. Epochs, current grants, and bounded recently closed grants constrain delayed transcript handling and replay.
 
-`new_sqlite_classes: ["MeetingRoom"]` is already in `wrangler.jsonc`, so SQLite is available and currently unused — the DO persists nothing today.
+A lost signaling connection retries the same room and participant identity with 1–10 second backoff. The page preserves media and local history, stops assistant operations and monitoring while disconnected, then resumes room coordination and monitoring after reconnecting. Peers replay their own history with duplicate suppression. Closing a socket does not invoke Leave or clear the meeting UI.
 
-```sql
-utterances (id TEXT PRIMARY KEY, peer_id, text, at INTEGER, duration_ms, embedding BLOB)
-activity   (peer_id, started_at INTEGER, ended_at INTEGER, overlapped TEXT)
-signals    (id TEXT PRIMARY KEY, signal, severity REAL, at INTEGER, evidence TEXT)
-interventions (id TEXT PRIMARY KEY, signal, kind, text, at INTEGER,
-               dispersion_before REAL, entropy_before REAL,
-               dispersion_after REAL, entropy_after REAL)
-```
+`meeting-session.ts` checkpoints the current room in sessionStorage: up to 1,000 text messages, 1,000 finalized transcript rows, 2,000 log entries, 50 reminders, and up to 200 private Chat lines, plus identity, local timer and monitoring state. Reminders preserve evidence, read/collapse/dismiss state and visibility. Refresh/rejoin and deliberate Leave/rejoin can restore the same room within 12 hours of its last save. Different rooms replace the checkpoint. Private Chat text restores into the personal runtime after refresh/rejoin; the optional checkpoint field also accepts older saves without it. Active Live sessions, queued approvals, file bodies and screen sharing are not checkpointed. Restoring text never restarts speech. Storage failures preserve live memory and show a recovery warning.
 
-The `_before` / `_after` columns on `interventions` are the effect measurement from `GROUPTHINK.md` § 6. They are the most persuasive number in the demo. Write them from the first commit rather than retrofitting under time pressure.
+Leave/remove immediately stops input, playback and pending tool work. The final participant leaving clears room coordination. A returning browser's checkpoint is separate from that server lifecycle and is not a durable room archive.
 
-Everything is deleted when the room closes, per `PRODUCT.md` § Operating Context.
+## Automatic private reminder delivery
 
-## Server-side AI calls
+`private-notices.ts` stores reminders separately from the meeting log. WebMCP's optional `show_private_notice` validates and copies cited evidence; `read_private_notices` reads local history. These tools remain available, but automatic monitoring does not require an external assistant or special browser.
 
-Made from the Durable Object with `env.OPENAI_API_KEY`, which already exists for transcription tokens.
+`auto-reminders.ts` checks every five seconds for new finalized human speech, with at least 30 seconds between analyses. It excludes chat, interims, agent lines and replay-only changes. Requests contain up to 40 utterances and 20 historical automatic events, trimmed to byte budgets below the endpoint's 64 KiB limit. Gemini embeddings retrieve related speech and neighbors; structured Gemini generation evaluates the bounded context for an explicit, important unresolved concern bypassed by a later concrete decision. Only its author can receive the reminder. Answered or withdrawn concerns, unclear transcription, ordinary agreement, and missing topics do not qualify.
 
-- **Embeddings.** Batch finalized utterances rather than calling per-utterance; the detectors run on window updates, not on every word. Cache by utterance id — an utterance is embedded exactly once. Verify the current embedding model and its dimension count against the provider docs before wiring it; do not hardcode a dimension the model does not return.
-- **Generation.** Only on an intervention that has passed the full policy gate in `GROUPTHINK.md` § 6. At most five per meeting, so cost is negligible and latency is not on any hot path.
-- Both are ordinary server-to-server `fetch` calls. No ephemeral tokens, no CSP entries, no browser involvement.
+Event IDs combine concern and decision sequence numbers. Original evidence remains in reminder history after dismissal or collapse. A recurring concern requires a newer substantive commitment, execution starting, or changed scope, linked to its most recent previous decision. Validation rejects the same/older decision, normalized repeated text and invalid links. Semantic paraphrase detection still depends on Gemini's classification. A 120-second cooldown limits frequency; time passing never creates an event. New human speech while analysis runs makes the result stale. Pause cancels/discards work; Hide changes display only. Provider errors back off for 60 seconds.
 
-## Frontend additions
+The silent card floats at the stage's lower left without resizing the video or controls. It collapses after 15 seconds of unattended display; hover, keyboard focus and insufficient space pause that timer. Chat combines its history/evidence and private discussion. Collapse is not dismissal or approval. No shared room corpus, embedding cache, all-detector package, or persistent report is introduced.
+
+## Verification boundaries
+
+Run `pnpm check` for type checking, tests, build and Worker dry-run. Focused tests cover permissions, recurrence, stale results, approval isolation, interruption and signaling recovery. Browser/provider observations in `VERIFICATION.md` include historical PR #6 behavior; earlier Group voice or persistent public-mode results do not certify this revised policy. Fresh browser checks must exercise silent Omni publication, owner-approved Chat speech, interruption without resume, and recovery. Human microphone/listening evaluation remains necessary for real-room voice behavior.
+
+Input accounting uses UTF-8 bytes and item counts. Background context cannot consume the foreground reserve, and file pages/screens are bounded. No undocumented provider reset/delete events are used.
+
+## Proposed room-wide analysis (not implemented)
+
+The following analysis visualizations and build order are future design work, not the current reminder or assistant behavior. They do not imply a server-side meeting archive exists.
+
+### Frontend additions
 
 - `SidePanelTab` becomes `'chat' | 'transcript' | 'insights'`.
 - The Trace needs **incremental PCA**, not t-SNE or UMAP. t-SNE and UMAP re-fit on every update and the points jump between frames, which destroys the one thing the visualisation is for — showing a *path*. PCA is stable, cheap, and incremental. Fit on the first window, then project.
 - No charting library is needed or wanted. The radar is an SVG polygon over six axes; the Trace is projected points and a polyline. Both are a few dozen lines and both need to obey the design system exactly, which a chart library will fight. `DESIGN.md` § The Insight Surfaces specifies them.
 
-## Build order
+### Proposed build order
 
 The dependency chain is real; skipping ahead produces a demo with nothing to show.
 
@@ -137,11 +112,3 @@ The dependency chain is real; skipping ahead produces a demo with nothing to sho
 8. **Post-meeting report.** Reads `interventions` incl. the `_after` columns.
 
 Whiteboard is not on this list. See `PRODUCT.md` § Explicitly deferred.
-
-## Private reminder delivery and automatic prototype (implemented)
-
-`private-notices.ts` holds one per-tab store independent of `MeetingLog` and shared transports. `meeting-session.ts` checkpoints it with local text history in sessionStorage for room recovery. `show_private_notice` validates and copies evidence from the local log; `read_private_notices` exposes delivery status to the connected agent. `private-notice-ui.tsx` subscribes to this store for the compact dock and history panel. A local timer expires active reminders; leaving clears live state and invalidates registered tool handles; the tab keeps a recovery checkpoint for rejoining.
-
-PR #2 now also includes a scoped automatic detector, as requested for the private-reminder experiment. `auto-reminders.ts` polls new local finalized speech and calls the same-origin `/api/private-analysis` Worker endpoint. `worker/private-analysis.ts` embeds bounded speech context and uses structured Gemini generation to check for an unresolved explicit objection bypassed by a later decision. Only the objection author can receive the result. The controller handles cooldown, history, pausing, stale results and error backoff; no assistant session is needed.
-
-This intentionally differs from the larger proposed build order above: no DO transcript persistence, room-wide detector package, global broadcast, reporting, or embedding cache is introduced. Analysis is stateless and per participant, with bounded context and repeated embedding costs. It does not implement all of the group-wide design. The current data flow and privacy copy are documented in README; the room-wide storage/deletion promises above describe the future design, not this implementation.
