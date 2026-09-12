@@ -17,23 +17,24 @@ function Evidence({ notice }: { notice: PrivateNotice }) {
   );
 }
 
-function Monitoring({ monitor }: { monitor: AutoReminders }) {
+function Monitoring({ monitor, hidden, onToggleHidden }: {
+  monitor: AutoReminders;
+  hidden: boolean;
+  onToggleHidden(): void;
+}) {
   const monitoring = useSyncExternalStore(monitor.subscribe, monitor.getSnapshot);
   return (
-    <div className="private-monitor" aria-label="Automatic reminders">
-      <span role="status">
-        {monitoring.status === 'checking'
-          ? 'Checking discussion…'
-          : monitoring.status === 'unavailable'
-            ? 'Auto reminders unavailable · retrying'
-            : monitoring.status === 'paused'
-              ? 'Auto reminders paused'
-              : 'Auto reminders on'}
-      </span>
-      <button type="button" onClick={() => monitor.setEnabled(!monitoring.enabled)}>
-        {monitoring.enabled ? 'Pause' : 'Resume'}
-      </button>
-    </div>
+    <>
+      <div className="private-monitor" aria-label="Private reminder controls">
+        <button type="button" onClick={() => monitor.setEnabled(!monitoring.enabled)}>
+          {monitoring.enabled ? 'Pause reminders' : 'Resume reminders'}
+        </button>
+        <button type="button" aria-pressed={hidden} onClick={onToggleHidden}>
+          {hidden ? 'Show private content' : 'Hide private content'}
+        </button>
+      </div>
+      {monitoring.status === 'unavailable' && <p role="status">Reminders unavailable · retrying</p>}
+    </>
   );
 }
 
@@ -175,29 +176,12 @@ export function PrivateNoticeHistory({ store, monitor }: { store: PrivateNotices
   }, [state, store]);
   return (
     <div className="private-notice-history" role="tabpanel" aria-label="Private reminders">
-      <Monitoring monitor={monitor} />
-      <p>
-        Saved in this tab for room recovery for up to 12 hours since the last save. Screen sharing can reveal this
-        content.
-      </p>
-      <button type="button" aria-pressed={state.hidden} onClick={() => store.setHidden(!state.hidden)}>
-        {state.hidden ? 'Show private content' : 'Hide private content'}
-      </button>
+      <Monitoring monitor={monitor} hidden={state.hidden} onToggleHidden={() => store.setHidden(!state.hidden)} />
       {state.hidden ? (
         <p>Private content hidden.</p>
       ) : (
         <>
-          <p>
-            Automatic detection sends recent transcript text and previous automatic reminders to Gemini through our
-            server. Our server does not store them. Reminders are delivered only to the person who raised the concern.
-            Pause stops analysis; Hide only hides private content. No assistant connection is required.
-          </p>
-          {!state.notices.length && (
-            <p>
-              No reminders yet. Automatic reminders appear when an unresolved concern you raised is bypassed during a
-              decision.
-            </p>
-          )}
+          {!state.notices.length && <p>No reminders yet.</p>}
           {state.notices.map((notice) => (
             <article key={notice.id}>
               <header>
