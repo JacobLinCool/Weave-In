@@ -137,3 +137,25 @@ Local artifacts are under repository-root `output/playwright/` (ignored, not bun
 - Merge validation: integrated main through 4e6ed7b, preserving TURN, identity recovery, creation cancellation and bounded reminder scrolling. Plus and settings use the same 18px icon and button sizing. Full pnpm check passed (77 transcription tests + 338 meeting tests), including build and deployment dry run; the two-browser harness passed exact button-size equality. Evidence: output/playwright/merge-check.log and merge-browser.log. Browser provisioning is mocked for local peer connectivity; this is not a TURN relay test.
 
 - Final integration includes main 20ebf3a (Muse voice/whiteboard tools). `pnpm check` passed with 77 transcription + 366 meeting tests (443 total). Both browser harnesses passed: agent controls/sizing and voice-driven meeting retrieval, peer file/image transfer, shared-whiteboard edits/capture and attributed Room posting. GPT-Live and TURN provisioning were simulated; room/tool execution was real. Evidence: merge-check.log, merge-browser.log and merge-tools-browser.log under output/playwright/.
+
+## Automatic Group review (2026-09-12)
+
+Integrated main through `55d70d7`; source verification at `3c79f5c`. Omni is created by the room and automatically reviews fresh finalized public discussion. Manual signal/approval commands are removed.
+
+`pnpm check` passed: 77 transcription tests + 418 meeting tests (495 total), type checks, production builds, bundle checks and Worker deployment dry-run. No deployment was performed.
+
+The complete two-browser harness passed against the built Worker served by Miniflare: automatic Group review from ordinary chat input, private Muse isolation, dictation/response controls, silent Omni publication, settings/removal, room recovery and public replay deduplication. The harness simulates GPT-Live for this broad integration test.
+
+The focused scenarios below used real GPT-Live and its reasoning backend, normal Room UI chat and actual peer delivery. Each case used a new local room; the invitation case had three participants. No review control command or model response was injected. Every intervention was received by the other browser, and measured assistant audio remained zero.
+
+| Scenario | Observed public output |
+| --- | --- |
+| convergence | Before approving, how will we address the unresolved duplicate-charge failure and the risk that customers could be charged twice? |
+| drift | Our stated goal was to choose PostgreSQL or MySQL for the billing database. Shall we return to that decision now? |
+| float | Bob, what is your view on the proposed Friday launch date? |
+| echo | Before adopting Vendor X, what concrete evidence on its cost or reliability supports this choice? |
+| none | No publication; kind=none. |
+
+These are behavioral samples, not a general detection-accuracy estimate. Human microphones, noisy rooms, cross-device TURN and production deployment were not part of this check.
+
+Local evidence: `output/playwright/integrated-group-check.log`, `integrated-agents-browser.log`, and `integrated-real-group.log`. The harness supports `{ groupOnly: true, scenario, realProvider: true }` to repeat each real-provider case.
