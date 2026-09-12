@@ -1,6 +1,6 @@
 # Architecture
 
-The browser runs a personal **Chat**, a shared **Omni**, and automatic private reminder monitoring. Chat normally replies privately and can speak publicly only for a specific owner-approved reminder. Omni publishes brief public text, without audio or an approval prompt. The broader room-wide analysis model in `GROUPTHINK.md` remains a proposal.
+The browser runs a personal **Muse**, a shared **Omni**, and automatic private reminder monitoring. Muse normally replies privately and can speak publicly only for a specific owner-approved reminder. Omni publishes brief public text, without audio or an approval prompt. The broader room-wide analysis model in `GROUPTHINK.md` remains a proposal.
 
 ## Data and authority
 
@@ -11,14 +11,14 @@ sequenceDiagram
     participant O as OpenAI Live
     participant G as Gemini
     participant P as Other participants
-    C->>R: Join room; configure personal Chat
+    C->>R: Join room; configure personal Muse
     R-->>C: Agent identity, runner, epoch and room token
     C->>R: Authorized Live settings and SDP
     R->>O: Initialize session using server key
     O-->>C: Direct session via SDP answer relayed by Worker
     C->>O: Permitted private context or approved public text
     O-->>C: Response and tool requests
-    C->>P: Approved Chat speech or Omni public text
+    C->>P: Approved Muse speech or Omni public text
     C->>R: Bounded human transcript and reminder evidence
     R->>G: Embeddings and structured private analysis
     G-->>R: Evidence-linked decision
@@ -38,23 +38,23 @@ The Worker receives assistant settings, connection descriptions and room coordin
 | `worker/index.ts`, `worker/live.ts` | Socket identity, durable coordination and provider initialization |
 | `src/agents/live.ts`, `tools.ts` | Live transport, Responses delegation and scoped meeting tools |
 | `src/agents/audio.ts`, `runtime.ts` | Context, personal approval, transcript routing, microphone and playback gates |
-| `src/agents/panel.tsx`, `private-notice-ui.tsx` | Unified Chat discussion/reminders, Omni and floating reminder cards |
+| `src/agents/panel.tsx`, `private-notice-ui.tsx` | Unified Muse discussion/reminders, Omni and floating reminder cards |
 | `src/auto-reminders.ts`, `worker/private-analysis.ts` | Automatic monitoring, semantic retrieval and recurrence validation |
 | `src/private-notices.ts`, `meeting-session.ts` | Reminder lifecycle and same-tab room checkpoints |
 
-## Configuration and private Chat
+## Configuration and private Muse
 
-Joining a room automatically configures one personal Chat for that participant. This does not start a continuously running Live session or make a spoken announcement. Public sources default to all participants, public chat is included, and screen/file permissions are separately controlled and off by default. Direct owner requests are always included. Sources and tools are immutable for an agent's lifetime; remove and recreate it to change them. Markdown instructions cannot grant permissions.
+Joining a room automatically configures one personal Muse for that participant. This does not start a continuously running Live session or make a spoken announcement. Public sources default to all participants, public chat is included, and screen/file permissions are separately controlled and off by default. Direct owner requests are always included. Sources and tools are immutable for an agent's lifetime; remove and recreate it to change them. Markdown instructions cannot grant permissions.
 
-Background records update an active private session without requesting a reply. A direct text question, reminder discussion action, or **Talk to Chat** starts a bounded private interaction with permitted public context and personal conversation. Private records stay in the runtime and are excluded from WebMCP's meeting log and peer replay. Agent transcript fragments update stable IDs and receive fresh cursors; permission-filtered logs may contain sequence gaps.
+Background records update an active private session without requesting a reply. A direct text question, reminder discussion action, or **Talk** starts a bounded private interaction with permitted public context and personal conversation. Private records stay in the runtime and are excluded from WebMCP's meeting log and peer replay. Agent transcript fragments update stable IDs and receive fresh cursors; permission-filtered logs may contain sequence gaps.
 
 Private voice input temporarily disables the public microphone track and public captioning. A separate microphone clone feeds Live. Ending private voice restores the previous meeting microphone state. Output uses separate Web Audio nodes and peer tracks; it never feeds human transcription input. Audio activation can require a user gesture.
 
 ## Speaking for the owner
 
-**Speak for me** grants one turn for the selected reminder. The runtime starts a fresh session with only that approved text and a constrained speaking instruction; personal history, background context and tools are excluded. Modest elaboration is allowed without new positions, promises or private information. Public transcripts identify the owner's Chat. No persistent public audience selector is available.
+**Speak for me** grants one turn for the selected reminder. The runtime starts a fresh session with only that approved text and a constrained speaking instruction; personal history, background context and tools are excluded. Modest elaboration is allowed without new positions, promises or private information. Public transcripts identify the owner's Muse. No persistent public audience selector is available.
 
-The owner's meeting microphone remains in its existing state. Local voice activity on an enabled microphone revokes queued public permission and stops the current Chat turn; it never resumes without a new approval. Detection is level-based, so noisy rooms still require listening evaluation. A Stop action remains available. Speech targets 15–20 seconds, with a 20-second runtime limit after audible output starts. Approval is also invalidated by stop, disconnect or removal; it is not carried into a replacement session.
+The owner's meeting microphone remains in its existing state. Local voice activity on an enabled microphone revokes queued public permission and stops the current Muse turn; it never resumes without a new approval. Detection is level-based, so noisy rooms still require listening evaluation. A Stop action remains available. Speech targets 15–20 seconds, with a 20-second runtime limit after audible output starts. Approval is also invalidated by stop, disconnect or removal; it is not carried into a replacement session.
 
 ## Public Omni
 
@@ -68,7 +68,7 @@ The Durable Object stores assistant configuration and coordination, not meeting 
 
 A lost signaling connection retries the same room and participant identity with 1–10 second backoff. The page preserves media and local history, stops assistant operations and monitoring while disconnected, then resumes room coordination and monitoring after reconnecting. Peers replay their own history with duplicate suppression. Closing a socket does not invoke Leave or clear the meeting UI.
 
-`meeting-session.ts` checkpoints the current room in sessionStorage: up to 1,000 text messages, 1,000 finalized transcript rows, 2,000 log entries, 50 reminders, and up to 200 private Chat lines, plus identity, local timer and monitoring state. Reminders preserve evidence, read/collapse/dismiss state and visibility. Refresh/rejoin and deliberate Leave/rejoin can restore the same room within 12 hours of its last save. Different rooms replace the checkpoint. Private Chat text restores into the personal runtime after refresh/rejoin; the optional checkpoint field also accepts older saves without it. Active Live sessions, queued approvals, file bodies and screen sharing are not checkpointed. Restoring text never restarts speech. Storage failures preserve live memory and show a recovery warning.
+`meeting-session.ts` checkpoints the current room in sessionStorage: up to 1,000 text messages, 1,000 finalized transcript rows, 2,000 log entries, 50 reminders, and up to 200 private Muse lines, plus identity, local timer and monitoring state. Reminders preserve evidence, read/collapse/dismiss state and visibility. Refresh/rejoin and deliberate Leave/rejoin can restore the same room within 12 hours of its last save. Different rooms replace the checkpoint. Private Muse text restores into the personal runtime after refresh/rejoin; the optional checkpoint field also accepts older saves without it. Active Live sessions, queued approvals, file bodies and screen sharing are not checkpointed. Restoring text never restarts speech. Storage failures preserve live memory and show a recovery warning.
 
 Leave/remove immediately stops input, playback and pending tool work. The final participant leaving clears room coordination. A returning browser's checkpoint is separate from that server lifecycle and is not a durable room archive.
 
@@ -80,11 +80,11 @@ Leave/remove immediately stops input, playback and pending tool work. The final 
 
 Event IDs combine concern and decision sequence numbers. Original evidence remains in reminder history after dismissal or collapse. A recurring concern requires a newer substantive commitment, execution starting, or changed scope, linked to its most recent previous decision. Validation rejects the same/older decision, normalized repeated text and invalid links. Semantic paraphrase detection still depends on Gemini's classification. A 120-second cooldown limits frequency; time passing never creates an event. New human speech while analysis runs makes the result stale. Pause cancels/discards work; Hide changes display only. Provider errors back off for 60 seconds.
 
-The silent card floats at the stage's lower left without resizing the video or controls. It collapses after 15 seconds of unattended display; hover, keyboard focus and insufficient space pause that timer. Chat combines its history/evidence and private discussion. Collapse is not dismissal or approval. No shared room corpus, embedding cache, all-detector package, or persistent report is introduced.
+The silent card floats at the stage's lower left without resizing the video or controls. It collapses after 15 seconds of unattended display; hover, keyboard focus and insufficient space pause that timer. Muse combines its history/evidence and private discussion. Collapse is not dismissal or approval. No shared room corpus, embedding cache, all-detector package, or persistent report is introduced.
 
 ## Verification boundaries
 
-Run `pnpm check` for type checking, tests, build and Worker dry-run. Focused tests cover permissions, recurrence, stale results, approval isolation, interruption and signaling recovery. Browser/provider observations in `VERIFICATION.md` include historical PR #6 behavior; earlier Group voice or persistent public-mode results do not certify this revised policy. Fresh browser checks must exercise silent Omni publication, owner-approved Chat speech, interruption without resume, and recovery. Human microphone/listening evaluation remains necessary for real-room voice behavior.
+Run `pnpm check` for type checking, tests, build and Worker dry-run. Focused tests cover permissions, recurrence, stale results, approval isolation, interruption and signaling recovery. Browser/provider observations in `VERIFICATION.md` include historical PR #6 behavior; earlier Group voice or persistent public-mode results do not certify this revised policy. Fresh browser checks must exercise silent Omni publication, owner-approved Muse speech, interruption without resume, and recovery. Human microphone/listening evaluation remains necessary for real-room voice behavior.
 
 Input accounting uses UTF-8 bytes and item counts. Background context cannot consume the foreground reserve, and file pages/screens are bounded. No undocumented provider reset/delete events are used.
 

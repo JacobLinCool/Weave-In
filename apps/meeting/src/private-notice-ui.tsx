@@ -118,7 +118,7 @@ function TimedNotice({
     <section
       ref={card}
       className="private-notice-toast"
-      aria-label="Private reminder from Chat"
+      aria-label="Private reminder from Muse"
       style={{ bottom: position.bottom, visibility: position.fits ? 'visible' : 'hidden' }}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
@@ -129,7 +129,7 @@ function TimedNotice({
     >
       <div className="private-notice-dock__heading">
         <span>
-          <LockKeyhole size={13} /> Chat · Only you
+          <LockKeyhole size={13} /> Muse · Only you
         </span>
         <button
           type="button"
@@ -192,16 +192,18 @@ function ReminderActions({ notice, onSpeak, onDiscuss }: { notice: PrivateNotice
 
 export function PrivateNoticeHistory({ store, monitor, ...actions }: { store: PrivateNotices; monitor: AutoReminders } & NoticeActions) {
   const state = useSyncExternalStore(store.subscribe, store.getSnapshot);
+  const [expanded, setExpanded] = useState(() => state.notices.some((notice) => !notice.read));
   useEffect(() => {
-    if (!state.hidden) store.markRead(state.notices.filter((n) => !n.read).map((n) => n.id));
-  }, [state, store]);
+    if (!state.hidden && expanded) store.markRead(state.notices.filter((n) => !n.read).map((n) => n.id));
+  }, [state, store, expanded]);
   return (
     <div className="private-notice-history" role="tabpanel" aria-label="Private reminders">
       <Monitoring monitor={monitor} hidden={state.hidden} onToggleHidden={() => store.setHidden(!state.hidden)} />
       {state.hidden ? (
         <p>Private content hidden.</p>
       ) : (
-        <>
+        <details className="private-reminder-list" open={expanded} onToggle={(event) => setExpanded(event.currentTarget.open)}>
+          <summary>Private reminders · {state.notices.length}{state.notices.some((notice) => !notice.read) ? ' · New' : ''}</summary>
           {!state.notices.length && <p>No reminders yet.</p>}
           {state.notices.map((notice) => (
             <article key={notice.id}>
@@ -221,7 +223,7 @@ export function PrivateNoticeHistory({ store, monitor, ...actions }: { store: Pr
               )}
             </article>
           ))}
-        </>
+        </details>
       )}
     </div>
   );

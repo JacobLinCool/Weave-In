@@ -250,9 +250,9 @@ describe('public record provenance and incremental context', () => {
 });
 
 
-it('creates personal Chat without opening microphone or requiring audio readiness', () => {
+it('creates personal Muse without opening microphone or requiring audio readiness', () => {
   const state = emptyAgentRoom(); const owner = { ...member('owner'), ready: false };
-  applyAgentCommand(state, owner, { type: 'agent-create', config: { ...config, kind: 'personal', name: 'Chat', audience: 'private' } }, 1_000, () => 'chat');
-  expect(state.agents[0]).toMatchObject({ owner: 'owner', config: { name: 'Chat', audience: 'private' } });
+  applyAgentCommand(state, owner, { type: 'agent-create', config: { ...config, kind: 'personal', name: 'Muse', audience: 'private' } }, 1_000, () => 'chat');
+  expect(state.agents[0]).toMatchObject({ owner: 'owner', config: { name: 'Muse', audience: 'private' } });
   expect(state.floor).toBeNull();
 });

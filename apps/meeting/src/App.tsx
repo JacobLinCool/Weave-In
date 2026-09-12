@@ -958,7 +958,7 @@ export function App(): ReactNode {
     agentRef.current = runtime; setAgentRuntime(runtime);
     const saveConversation = runtime.subscribe(() => { personalChatRef.current = runtime.snapshot().lines; checkpointRef.current(); });
     void runtime.initializePersonal().catch((cause: unknown) => {
-      if (agentRef.current === runtime) setError(cause instanceof Error ? cause.message : 'Chat could not initialize.');
+      if (agentRef.current === runtime) setError(cause instanceof Error ? cause.message : 'Muse could not initialize.');
     });
     if (agentStateRef.current) runtime.update(agentStateRef.current.state, agentStateRef.current.now);
     for (const [peer, participant] of Object.entries(participantsRef.current)) for (const stream of Object.values(participant.streams)) runtime.remoteStream(peer, stream);
@@ -987,7 +987,7 @@ export function App(): ReactNode {
             activeSince ??= performance.now();
             if (performance.now() - activeSince >= 100) agentRuntime.ownerStartedSpeaking();
           });
-        } catch { setError('Speech interruption is unavailable. Use Stop in Chat to interrupt your assistant.'); }
+        } catch { setError('Speech interruption is unavailable. Use Stop in Muse to interrupt your assistant.'); }
       } else if (!agentRuntime.snapshot().publicPersonalSpeaking && stop) {
         const cleanup = stop; stop = undefined; cleanup(); activeSince = null;
       }
@@ -1005,12 +1005,12 @@ export function App(): ReactNode {
     return (
       <>
       <MeetingSurface
-        groupPanel={agentRuntime ? <details><summary>Omni · Public suggestions</summary><AgentPanel runtime={agentRuntime} mode="group" isHost={selfRef.current?.isHost ?? false} /></details> : null}
+        groupPanel={agentRuntime ? <AgentPanel runtime={agentRuntime} mode="group" isHost={selfRef.current?.isHost ?? false} /> : null}
         noticeActions={{
-          onSpeak: async (text) => { if (!agentRuntime) throw new Error('Chat is reconnecting. Please try again.'); await agentRuntime.speakForMe(text); },
-          onDiscuss: async (text) => { if (!agentRuntime) throw new Error('Chat is reconnecting. Please try again.'); await agentRuntime.discussReminder(text); setPanelTab('private'); },
+          onSpeak: async (text) => { if (!agentRuntime) throw new Error('Muse is reconnecting. Please try again.'); await agentRuntime.speakForMe(text); },
+          onDiscuss: async (text) => { if (!agentRuntime) throw new Error('Muse is reconnecting. Please try again.'); await agentRuntime.discussReminder(text); setPanelTab('private'); },
         }}
-        agentPanel={agentRuntime ? <AgentPanel runtime={agentRuntime} mode="personal" isHost={selfRef.current?.isHost ?? false} /> : null}
+        agentPanel={agentRuntime ? (reminders) => <AgentPanel runtime={agentRuntime} mode="personal" reminders={reminders} isHost={selfRef.current?.isHost ?? false} /> : undefined}
         whiteboard={whiteboard}
         onWhiteboardApi={onWhiteboardApi}
         roomCode={roomCode}
@@ -1077,7 +1077,7 @@ export function App(): ReactNode {
 }
 
 function MeetingSurface(props: {
-  agentPanel: ReactNode;
+  agentPanel: ((reminders: ReactNode) => ReactNode) | undefined;
   groupPanel: ReactNode;
   noticeActions: NoticeActions;
   whiteboard: ExcalidrawStore;
