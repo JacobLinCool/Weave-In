@@ -4,6 +4,62 @@ import { cloneOptions, DEFAULT_OPTIONS } from '../src/contracts';
 import { queryTranscriptState, TranscriptStore } from '../src/transcript-store';
 
 describe('TranscriptStore', () => {
+  it('normalizes interim and final text before snapshots, queries, and segmentation', () => {
+    const store = new TranscriptStore();
+    store.begin({
+      sessionId: 'traditional',
+      options: { ...cloneOptions(DEFAULT_OPTIONS), languageCodes: ['cmn-Hant-TW', 'en-US'] },
+      audioSourceCount: 1,
+    });
+    store.setInterim(' 这个软件\n很好。 ');
+    expect(store.snapshot().interim).toBe('這個軟件 很好。');
+    expect(store.query().interim).toBe('這個軟件 很好。');
+    const appended = store.appendFinal('这个软件很好。'.repeat(80), 2);
+    expect(appended.length).toBeGreaterThan(1);
+    expect(appended.map((segment) => segment.text).join('')).toBe('這個軟件很好。'.repeat(80));
+    expect(store.query().segments).toEqual(appended);
+    expect(store.snapshot().segments).toEqual(appended);
+    expect(store.snapshot().interim).toBe('');
+  });
+
+  it('recomputes the script preference when starting another session', () => {
+    const store = new TranscriptStore();
+    for (const languageCodes of [
+      ['cmn-Hant-TW'], ['cmn-Hant-TW', 'cmn-Hans-CN'], [], ['cmn-Hant-TW'],
+    ]) {
+      store.begin({
+        sessionId: 'restart',
+        options: { ...cloneOptions(DEFAULT_OPTIONS), languageCodes },
+        audioSourceCount: 1,
+      });
+      const expected = languageCodes.length === 1 ? '這個軟件' : '这个软件';
+      store.setInterim('这个软件');
+      expect(store.query().interim).toBe(expected);
+      expect(store.appendFinal('这个软件', 1)[0]?.text).toBe(expected);
+    }
+  });
+
+  it('keeps converted supplementary characters intact at segment boundaries', () => {
+    const store = new TranscriptStore();
+    store.begin({
+      sessionId: 'unicode',
+      options: { ...cloneOptions(DEFAULT_OPTIONS), languageCodes: ['cmn-Hant-TW'] },
+      audioSourceCount: 1,
+    });
+    const segments = store.appendFinal('a'.repeat(255) + '㓆汉', 1);
+    expect(segments.map((segment) => segment.text)).toEqual(['a'.repeat(255), '𠗣漢']);
+    expect(segments.every((segment) => segment.text.isWellFormed())).toBe(true);
+  });
+
+  it('uses the language preference from restored state for new text', () => {
+    const initial = new TranscriptStore().snapshot();
+    initial.options.languageCodes = ['cmn-Hant-TW'];
+    const store = new TranscriptStore(undefined, initial);
+    store.setInterim('汉语');
+    expect(store.query().interim).toBe('漢語');
+    expect(store.appendFinal('汉语', 1)[0]?.text).toBe('漢語');
+  });
+
   it('keeps a stable cursor and remains readable after stop', () => {
     const store = new TranscriptStore(() => new Date('2026-08-27T00:00:00.000Z'));
     store.begin({
