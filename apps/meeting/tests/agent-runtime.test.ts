@@ -338,23 +338,21 @@ it.each(['timeout', 'disconnect', 'close'] as const)('rejects unconfirmed creati
   runtime.close();
   expect(vi.getTimerCount()).toBe(0);
 });
-it('ignores legacy persistent public mode and keeps personal transcripts private', async () => {
+it('keeps personal transcript updates private without requesting a public floor', async () => {
   const { runtime, publicLine, broadcast, sendAgent } = setup();
   await runtime.ask('private question');
   const callback = calls.lives[0]!;
   callback.transcript('assistant', 'private', 0, 500);
-  runtime.setAudience('public');
   callback.transcript('assistant', ' final', 500, 1000);
   expect(runtime.snapshot().lines.at(-1)).toMatchObject({ audience: 'private', text: 'private final', playback: 'not-played' });
   expect(publicLine).not.toHaveBeenCalled(); expect(broadcast).not.toHaveBeenCalled();
   expect(sendAgent).not.toHaveBeenCalledWith({ type: 'agent-floor', id: 'personal' });
 });
-it('freezes private input audience before audio enable completes', async () => {
+it('keeps input private while audio enable completes', async () => {
   let release!: () => void;
   calls.enable.mockImplementationOnce(() => new Promise<void>((resolve) => { release = resolve; }));
   const { runtime, publicLine, broadcast, sendAgent } = setup();
   const pending = runtime.ask('Submitted privately while audio resumes');
-  runtime.setAudience('public');
   release(); await pending;
   expect(runtime.snapshot().lines[0]).toMatchObject({ audience: 'private' });
   expect(sendAgent).not.toHaveBeenCalledWith({ type: 'agent-floor', id: 'personal' });

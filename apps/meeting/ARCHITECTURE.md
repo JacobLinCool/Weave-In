@@ -1,116 +1,127 @@
 # Architecture
 
-The browser runs a personal **Muse**, a shared **Omni**, and automatic private reminder monitoring. Muse normally replies privately and can speak publicly only for a specific owner-approved reminder. Omni publishes brief public text, without audio or an approval prompt. Automatic four-scenario Group review is described in `GROUPTHINK.md`.
+This document describes the implemented meeting application. [README.md](README.md) covers setup and operation, [GROUPTHINK.md](GROUPTHINK.md) defines the current intervention policy, and [VERIFICATION.md](VERIFICATION.md) distinguishes automated coverage from recorded browser/provider observations.
 
-## Data and authority
+## Components and data flow
+
+React manages the room UI, peer media, local meeting record, shared Excalidraw board, personal **Muse**, shared **Omni**, and automatic private reminders. The Cloudflare Worker serves the app, provisions provider sessions and TURN credentials, and routes each room to a `MeetingRoom` Durable Object. The Durable Object coordinates membership, WebRTC signaling and assistant authority; it does not archive meeting content.
 
 ```mermaid
-sequenceDiagram
-    participant C as Browser
-    participant R as Worker / Room DO
-    participant O as OpenAI Live
-    participant G as Gemini
-    participant P as Other participants
-    C->>R: Join room; configure personal Muse
-    R-->>C: Agent identity, runner, epoch and room token
-    C->>R: Authorized Live settings and SDP
-    R->>O: Initialize session using server key
-    O-->>C: Direct session via SDP answer relayed by Worker
-    C->>O: Permitted private context or approved public text
-    O-->>C: Response and tool requests
-    C->>P: Approved Muse speech or Omni public text
-    C->>R: Bounded human transcript and reminder evidence
-    R->>G: Embeddings and structured private analysis
-    G-->>R: Evidence-linked decision
-    R-->>C: Private reminder only for concern author
+flowchart LR
+    B[Browser]
+    P[Other participants]
+    W[Cloudflare Worker]
+    D[MeetingRoom Durable Object]
+    O[OpenAI Live + reasoning backend]
+    C[Caption provider: Gemini or OpenAI]
+    G[Gemini private analysis]
+    T[Cloudflare TURN]
+    B <-->|Media and peer data| P
+    B <-->|Encrypted relay when needed| T
+    T <-->|Encrypted relay| P
+    B <-->|Signaling and agent commands| W
+    W <-->|Room authority| D
+    W -->|Session setup with server key| O
+    B <-->|Permitted context, tools and assistant audio| O
+    B <-->|Local microphone and captions| C
+    B -->|Bounded speech and reminder evidence| W
+    W <-->|Embeddings and structured decision| G
 ```
 
-The Worker receives assistant settings, connection descriptions and room coordination. Conversation context and allowed screen/file tool results for Live go directly from the browser to OpenAI. Automatic analysis is a separate path: its bounded transcript and reminder evidence pass through the Worker to Gemini, without Worker persistence. Private conversations and reminders never enter shared room transports unless the owner explicitly approves the selected reminder for a public turn. API keys remain Worker secrets.
+API keys stay in Worker secrets. After initialization, caption audio goes directly to its provider, and Live context, tool results, private conversations and assistant audio go directly between the browser and OpenAI. Automatic reminder analysis is a separate request through the Worker to Gemini. Peer media and data-channel messages do not flow through the signaling Worker; TURN can relay encrypted WebRTC traffic.
 
-`POST /api/rooms/:room/agents/:id/live` accepts `{ epoch, request, session, sdp }`, requires the current socket's `X-Room-Token`, and returns `{ session: { id }, transport: { type: "webrtc", sdp } }`. It validates runner, lease, phase and allowed models/tools, bounds the request to 64 KiB, and limits each connection to six initializations per minute. Provider initialization times out after 20 seconds. Room tokens never appear in peer lists.
+## Worker routes and bindings
 
-## Code ownership
+The API routes below enforce a matching `Origin`. JSON endpoints validate their content type. Credential and analysis responses are not cacheable.
 
-| File | Responsibility |
+| Route | Responsibility and controls |
 | --- | --- |
-| `src/agents/contracts.ts`, `config.ts` | Settings, defaults, wire validation, models, epochs and floor checks |
-| `src/agents/room.ts` | Identity, runner leases, public-turn coordination and takeover |
-| `worker/index.ts`, `worker/live.ts` | Socket identity, durable coordination and provider initialization |
-| `src/agents/live.ts`, `tools.ts` | Live transport, Responses delegation and scoped meeting tools |
-| `src/agents/audio.ts`, `runtime.ts` | Context, personal approval, transcript routing, microphone and playback gates |
-| `src/agents/panel.tsx`, `private-notice-ui.tsx` | Unified Muse discussion/reminders, Omni and floating reminder cards |
-| `src/auto-reminders.ts`, `worker/private-analysis.ts` | Automatic monitoring, semantic retrieval and recurrence validation |
-| `src/private-notices.ts`, `meeting-session.ts` | Reminder lifecycle and same-tab room checkpoints |
+| `POST /api/ice-servers` | Accepts `{}`; uses `TURN_KEY_ID` and `TURN_KEY_SECRET` to issue a validated 24-hour ICE configuration. Eight-second upstream deadline, 1 KiB request limit, 20 requests per IP per minute. Port 53 candidates are removed. |
+| `POST /api/transcription-token` | Issues an ephemeral Gemini or OpenAI caption token; 20 requests per IP per minute. `TRANSCRIPTION_PROVIDER` selects a configured provider explicitly; otherwise Gemini is preferred when both keys exist. |
+| `POST /api/private-analysis` | Uses `GEMINI_API_KEY` for bounded private reminder analysis; 64 KiB request limit and 30 requests per IP per minute. This endpoint validates the supplied records; it does not query a server transcript archive. |
+| WebSocket `/api/rooms/:room/connect` | Six-character room code; create/join identity, peer signaling, assistant commands and state. Requires a WebSocket upgrade. |
+| `POST /api/rooms/:room/agents/:id/live` | Accepts `{ epoch, request, session, sdp }`; requires the active socket's `X-Room-Token` and current runner. Validates epoch/request, Group phase/lease, models and tool declarations. Bounds input to 64 KiB, allows six initializations per connection per minute and sets a 20-second upstream timeout. Returns a session ID and WebRTC SDP answer. |
+| Other paths | Static assets with SPA routing and security headers; room invitation pages receive `X-Robots-Tag: noindex, follow`. |
 
-## Configuration and private Muse
+Bindings are `ASSETS`, SQLite-backed `ROOMS`, and the three rate limiters in [wrangler.jsonc](wrangler.jsonc). There is no D1, R2 or KV meeting archive. `OPENAI_API_KEY` powers Muse and Omni independently of the selected caption provider. Private reminders require Gemini. TURN provisioning is required before a controller joins a room; failure is visible rather than silently using a hard-coded STUN list.
 
-Joining a room automatically configures one personal Muse for that participant. This does not start a continuously running Live session or make a spoken announcement. Public sources default to all participants, public chat is included, and shared files are enabled by default, while shared-screen capture requires opt-in. Direct owner requests are always included. The owner can edit sources and tools through the settings button; saving preserves identity and conversation history while stopping old sessions. Markdown instructions cannot grant permissions.
+## Membership and peer transport
 
-Background records update an active private session without requesting a reply. A direct text question, reminder discussion action, or **Talk** starts a bounded private interaction with permitted public context and personal conversation. Private records stay in the runtime and are excluded from WebMCP's meeting log and peer replay. Agent transcript fragments update stable IDs and receive fresh cursors; permission-filtered logs may contain sequence gaps.
+`protocol.ts` defines validated signaling and peer messages. A room permits eight participants in a full mesh. Each controller provisions one ICE configuration shared by its peers, renews it before expiry and restarts ICE when replacing credentials. Perfect negotiation handles camera, microphone and screen tracks. Recovery gives a transient peer disconnect five seconds before attempting ICE restart, with at most three attempts per outage.
 
-New Muse configurations receive system signals by default; existing configurations retain their saved permission. Signals come from validated automatic Omni review results (convergence, drift, float or echo). The latest signal is included when a permitted session starts, and new signals update active Muse private sessions and Omni preparation as background context without requesting another response. Automatic private reminders do not generate room system signals. Owner-approved public Muse speech excludes these signals along with other background context.
+Socket attachments retain identity, host status, room start time, readiness, heartbeat and a private session token through Durable Object hibernation. Valid messages renew connection activity; idle connections expire after 90 seconds, checked at admission and by a ten-second alarm. When no host remains, the next join becomes host. If guests remain, the timer survives; after the room becomes fully empty, the next meeting starts a new timer. Duplicate identity during an initial join gets one fresh-identity retry with copied local history cleared. Signaling reconnection retains the existing identity and uses 1–10 second backoff.
 
-Private voice input temporarily disables the public microphone track and public captioning. A separate microphone clone feeds Live. Ending private voice restores the previous meeting microphone state. Output uses separate Web Audio nodes and peer tracks; it never feeds human transcription input. Audio activation can require a user gesture.
+The `weave-in` data channel carries human chat/captions, media state, file announcements, native Excalidraw elements and authorized public assistant records. Signaling frames are limited to 64 KiB and peer messages to 16 KiB. Files use dedicated `file:<transfer id>` channels, 64 KiB chunks and back-pressure, with a 300 MiB per-file offer limit. Each participant transcribes only its own microphone; speaker identity comes from the sending peer, not diarization. Echo cancellation reduces remote playback entering that microphone but does not guarantee perfect acoustic isolation.
 
-## Speaking for the owner
+On a new peer channel, each browser replays up to 400 of its own chat/final-caption entries and re-announces its files. Each history batch has at most 200 entries and remains within the peer-message byte limit. Public assistant history uses separate floor proofs. Peers do not relay another author's human history; an absent author's uncached content cannot be recovered from the server. Received file bodies remain in browser memory, including after the sharing peer leaves.
 
-**Speak for me** grants one turn for the selected reminder. The runtime starts a fresh session with only that approved text and a constrained speaking instruction; personal history, background context and tools are excluded. Modest elaboration is allowed without new positions, promises or private information. Public transcripts identify the owner's Muse. No persistent public audience selector is available.
+## Local state and shared board
 
-The owner's meeting microphone remains in its existing state. Local voice activity on an enabled microphone revokes queued public permission and stops the current Muse turn; it never resumes without a new approval. Detection is level-based, so noisy rooms still require listening evaluation. A Stop action remains available. Speech targets 15–20 seconds, with a 20-second runtime limit after audible output starts. Approval is also invalidated by stop, disconnect or removal; it is not carried into a replacement session.
+`meeting-log.ts` records finalized captions, chat, file metadata and presence. Its revision cursor supports incremental reads; updates to an assistant transcript's stable ID receive new cursors. Replayed entries retain their original timestamps and are marked as replayed, while sequence numbers describe local arrival/update order. Permission-filtered logs can contain cursor gaps.
 
-## Public Omni
+`ExcalidrawStore` holds up to 1,000 native scene records, including deletion tombstones. It validates supported rendering fields and message size, merges by version with the lower nonce winning equal-version conflicts, and replays the scene to new peers. Local undo/redo refuses an edit whose affected elements have since changed remotely. The rendered board and assistant tools use this same store. `WhiteboardStore` in `whiteboard-model.ts` remains an internal compact edit planner for tool operations, which are converted into native scene edits; it is not a second peer transport. Mermaid `flowchart`/`graph` imports create editable native elements, including subgraphs; arbitrary Mermaid diagram families and image import fallback are unsupported. Fonts and document-reader assets are served locally and checked by the build.
 
-There is one shared Omni per room, created automatically when the room starts. Its persistent status card sits at the top of Room chat; after removal, the plus button can add it again. Every participant can configure it; the creator or host can remove it. `src/agents/group.ts` defines the four intervention policies, evidence validation and shared limits. The runtime watches finalized public captions/chat and current human voice activity. New records after warm-up and a quiet interval send a fenced `agent-review` from the elected runner. No manual-trigger command exists. GPT-Live's reasoning backend evaluates context and returns a structured decision and question in one pass. Invalid, low-confidence or stale decisions are discarded. It can retrieve older public context through existing read tools; public posting and whiteboard mutation tools are unavailable during review.
+`meeting-session.ts` checkpoints one room in sessionStorage within a serialized JSON limit of 1,500,000 UTF-16 code units: up to 1,000 text chat rows, 1,000 finalized transcript rows, 2,000 log entries, 50 reminders and 200 private Muse lines, plus identity and local timer state. Histories may be trimmed further to fit. Saves expire after 12 hours; joining a different room replaces them. Refresh/rejoin or Leave/rejoin can restore the same tab's text. Active Live connections, approval state, file bodies, board state and screen sharing are not checkpointed. A connected peer can restore the current board after rejoin. Storage errors preserve live memory and display a recovery warning.
 
-The state machine is `idle → preparing → raised → speaking → idle`: preparing means review, raised means waiting for quiet, and speaking is the existing public text grant. `agent-raised` carries only the validated scenario and public evidence identifiers; `agent-publish` is restricted to the current runner and advances publication automatically. The Durable Object persists 30-second review throttling, 120-second intervention cooldown, a five-intervention room cap, and duplicate-event evidence keys. Configuration changes/removal cannot reset room limits. A public floor occupied by Muse is not preempted. Results overtaken by new discussion or waiting more than 30 seconds are discarded. Public text is capped at 240 characters, labelled Omni, shared over the existing peer channel and replayed with grant proofs. No Group audio or human approval parsing remains.
+The Durable Object persists assistant configuration, runner epochs, current floor, approval, replay grants and Group review limits under `agents`. It stores no transcript, file body, board scene, private conversation or reminder history. When the last connection leaves or expires, it clears coordination storage and its alarm. The tab checkpoint has an independent lifecycle.
 
-## Takeover, reconnection and cleanup
+## Muse interaction and permissions
 
-The Durable Object stores assistant configuration and coordination, not meeting content. Ready browsers heartbeat every 10 seconds; a 30-second lease expiry or disconnect can transfer Omni to another ready browser. The replacement uses its own public record and may lack earlier history. No interrupted audio is replayed. Epochs, current grants, and bounded recently closed grants constrain delayed transcript handling and replay.
+Joining configures one personal Muse for the participant without starting a Live connection. Defaults include all available public transcript sources, Room chat, system signals and shared-file access; screen capture and Room posting default to off. Settings changes retain private conversation but increment the epoch and stop operations using previous permissions. Only the owner can control their personal assistant.
 
-A lost signaling connection retries the same room and participant identity with 1–10 second backoff. The page preserves media and local history, stops assistant operations and monitoring while disconnected, then resumes room coordination and monitoring after reconnecting. Peers replay their own history with duplicate suppression. Closing a socket does not invoke Leave or clear the meeting UI.
+Typed requests and submitted dictation start private interactions. Dictation first pauses public microphone/captions, transcribes privately into an editable draft, then restores the meeting microphone on stop or send. Stopping dictation alone does not ask Muse a question. **Live** opens a continuous private voice conversation with interruption and tools; **End**, disconnect, leave or changed settings closes it. Private Live temporarily isolates the microphone from the meeting and restores its previous state on close. It never resumes automatically. Muse conversations have no fixed application duration timeout, but provider limits and the application's input budget still apply.
 
-`meeting-session.ts` checkpoints the current room in sessionStorage: up to 1,000 text messages, 1,000 finalized transcript rows, 2,000 log entries, 50 reminders, and up to 200 private Muse lines, plus identity, local timer and monitoring state. Reminders preserve evidence, read/collapse/dismiss state and visibility. Refresh/rejoin and deliberate Leave/rejoin can restore the same room within 12 hours of its last save. Different rooms replace the checkpoint. Private Muse text restores into the personal runtime after refresh/rejoin; the optional checkpoint field also accepts older saves without it. Active Live sessions, queued approvals, file bodies and screen sharing are not checkpointed. Restoring text never restarts speech. Storage failures preserve live memory and show a recovery warning.
+`scopedTools` filters records and declarations by configuration and rechecks active-session permissions when executing asynchronous work. Personal tools are `read_meeting`, `read_shared_file`, `capture_screen_share`, `edit_whiteboard`, `capture_whiteboard` and `send_chat_message`, subject to permission. Whiteboard mutations and Room posts require an active owner interaction; the model is instructed to perform them only when explicitly requested. Posting additionally requires `roomMessages: true`, enforced in the client and Worker. The runtime gate establishes that an owner interaction is active; interpreting the user's requested action remains model behavior.
 
-Leave/remove immediately stops input, playback and pending tool work. The final participant leaving clears room coordination. A returning browser's checkpoint is separate from that server lifecycle and is not a durable room archive.
+Browser WebMCP is a separate optional adapter over shared implementations. It exposes eight tools, including `download_file`, `show_private_notice` and `read_private_notices`; Muse uses `read_shared_file` instead of the raw download tool and does not receive private-notice tools. Built-in assistants do not require browser WebMCP support.
 
-## Automatic private reminder delivery
+Live uses `gpt-live-1` with the `gpt-5.6-terra` Responses delegation backend (`agents/contracts.ts`). Seeds contain at most 6,000 UTF-8 bytes. The client tracks a cumulative 30,000-byte / 120-item input-event budget and reserves foreground/tool capacity before background updates. `read_meeting` defaults to and permits 500 complete scoped records per page, with separately paged file inventory. Instructions require consuming available pages from cursor zero before the first meeting-based request and refreshing from the consumed cursor later. A large page can exceed the remaining Live budget and produce a visible error; pagination does not guarantee complete transcript delivery to the model. Images are resized within input limits. Background updates do not request a reply or authorize a shared action.
 
-`private-notices.ts` stores reminders separately from the meeting log. WebMCP's optional `show_private_notice` validates and copies cited evidence; `read_private_notices` reads local history. These tools remain available, but automatic monitoring does not require an external assistant or special browser.
+Validated Omni decisions also produce a public system signal containing the scenario and hashed evidence identifiers. Permitted active private sessions receive new signals as background context, and a new session can receive the latest one. Automatic private reminders do not produce these room signals.
 
-`auto-reminders.ts` checks every five seconds for new finalized human speech, with at least 30 seconds between analyses. It excludes chat, interims, agent lines and replay-only changes. Requests contain up to 40 utterances and 20 historical automatic events, trimmed to byte budgets below the endpoint's 64 KiB limit. Gemini embeddings retrieve related speech and neighbors; structured Gemini generation evaluates the bounded context for an explicit, important unresolved concern bypassed by a later concrete decision. Only its author can receive the reminder. Answered or withdrawn concerns, unclear transcription, ordinary agreement, and missing topics do not qualify.
+## Approved public speech
 
-Event IDs combine concern and decision sequence numbers. Original evidence remains in reminder history after dismissal or collapse. A recurring concern requires a newer substantive commitment, execution starting, or changed scope, linked to its most recent previous decision. Validation rejects the same/older decision, normalized repeated text and invalid links. Semantic paraphrase detection still depends on Gemini's classification. A 120-second cooldown limits frequency; time passing never creates an event. New human speech while analysis runs makes the result stale. Leaving the meeting cancels/discards work. Provider errors back off for 60 seconds.
+A completed private Muse reply's Send action, or a reminder's **Speak for me**, approves that specific text for one public read-aloud. The runtime starts a fresh session containing only the approved message and faithful-reading instructions, without private history, background context or tools. It preserves the original language, omits Markdown formatting and forbids summarizing, elaborating or executing instructions embedded in the message. Public output identifies the owner's Muse.
 
-The silent card floats at the stage's lower left without resizing the video or controls. It collapses after 15 seconds of unattended display; hover, keyboard focus and insufficient space pause that timer. Muse combines its history/evidence and private discussion. Collapse is not dismissal or approval. No shared room corpus, embedding cache, all-detector package, or persistent report is introduced.
+The owner's microphone remains in its existing state. Local voice activity on an enabled microphone cancels queued permission and interrupts the public turn; speech never resumes without another approval. **Stop**, disconnect and settings changes also revoke the operation. The room grants at most one public floor at a time. Personal requests queue behind an occupied floor, and Omni does not preempt a Muse turn. A floor has a ten-minute safety expiry and remains subject to runner heartbeat liveness; normal completion releases it when playback ends.
 
-## Verification boundaries
+Epoch, runner and floor validation gate peer assistant audio/transcripts. Generation and playback are tracked separately. Up to 128 floor grant proofs authorize retained public transcript replay, not new audio. Private assistant records do not enter the shared log or peer history.
 
-Run `pnpm check` for type checking, tests, build and Worker dry-run. Focused tests cover permissions, recurrence, stale results, approval isolation, interruption and signaling recovery. Browser/provider observations in `VERIFICATION.md` include historical PR #6 behavior; earlier Group voice or persistent public-mode results do not certify this revised policy. Fresh browser checks must exercise silent Omni publication, owner-approved Muse speech, interruption without resume, and recovery. Human microphone/listening evaluation remains necessary for real-room voice behavior.
+## Omni automatic review and approval
 
-Input accounting uses UTF-8 bytes and item counts. Background context cannot consume the foreground reserve, and file pages/screens are bounded. No undocumented provider reset/delete events are used.
+The room creates one Omni automatically; explicit removal persists for the rest of that room until a participant adds it again. Any participant can configure Omni; only its creator or host can remove it. The oldest ready, recently heartbeating participant runs it. Heartbeats are every ten seconds and the runner lease is 30 seconds. Runner replacement increments the epoch, discards approval and uses the replacement browser's available public history.
 
-## Proposed room-wide analysis (not implemented)
+The runtime checks every two seconds, only while the runner is connected, foregrounded, ready and able to monitor speech activity. It needs at least four public discussion records, fresh non-replayed human input and 1.5 seconds of quiet. Chat and finalized human captions qualify; interim captions and voice activity prevent quiet, while assistant output and replay alone never trigger review. The review uses up to 40 recent discussion records plus the first three available discussion anchors. Earlier public context may be retrieved through permitted reading tools.
 
-The following analysis visualizations and build order are future design work, not the current reminder or assistant behavior. They do not imply a server-side meeting archive exists.
+The lifecycle is `idle → preparing → raised → speaking → idle`, with `waiting` when no runner is available:
 
-### Frontend additions
+1. The current runner sends `agent-review`; the authority enforces 30-second review spacing, a 120-second intervention cooldown, an available public floor and a five-intervention room cap.
+2. A silent, bounded review asks the reasoning backend for one structured counterpoint, refocus, invitation or deepening question, or abstention. `group.ts` validates severity, current participants, 2–8 evidence records including one among the latest four, and text of at most 240 characters. Preparation times out after 55 seconds. No public output is permitted during preparation.
+3. A valid fresh result becomes `agent-raised`. The question stays on the runner; shared state contains only the scenario and evidence hashes. **Allow Omni to speak** or a fresh local finalized “Omni, go ahead” / “Omni，請發言” caption sends `agent-approve` for the exact agent/epoch/request. Typed chat and replay cannot approve. The anchored matcher also accepts the Traditional Chinese assistant-name variant in `group.ts`.
+4. After approval, the runner still waits for quiet and an available floor, then sends `agent-publish`. A fresh session reads only the approved question aloud, with no tools or background context. Audio and transcripts use the existing public peer transport. `agent-published` records the intervention when output begins; `agent-finish` releases the floor.
 
-- `SidePanelTab` becomes `'chat' | 'transcript' | 'insights'`.
-- The Trace needs **incremental PCA**, not t-SNE or UMAP. t-SNE and UMAP re-fit on every update and the points jump between frames, which destroys the one thing the visualisation is for — showing a *path*. PCA is stable, cheap, and incremental. Fit on the first window, then project.
-- No charting library is needed or wanted. The radar is an SVG polygon over six axes; the Trace is projected points and a polyline. Both are a few dozen lines and both need to obey the design system exactly, which a chart library will fight. `DESIGN.md` § The Insight Surfaces specifies them.
+Changed finalized discussion during review or before output, expiry after 120 seconds, cancel, changed settings or runner replacement invalidates the draft/approval. The server and runtime fence commands independently. Review spacing, cooldown, count and evidence deduplication survive configuration changes, removal/re-addition and runner takeover; they reset when the room becomes empty. Category meaning and model limitations are documented in [GROUPTHINK.md](GROUPTHINK.md).
 
-### Proposed build order
+## Automatic private reminders
 
-The dependency chain is real; skipping ahead produces a demo with nothing to show.
+`auto-reminders.ts` checks every five seconds for new finalized human speech, with at least 30 seconds between analyses. It excludes chat, interims, assistant lines and replay-only changes. Requests contain up to 40 utterances and 20 historical automatic events, trimmed below the endpoint's 64 KiB limit. Gemini `gemini-embedding-001` retrieves related speech and neighbors; `gemini-3.6-flash` evaluates an explicit, important unresolved concern bypassed by a later concrete decision. Validation derives the recipient from the concern's author and returns a notice only to that author's requesting browser.
 
-1. **Activity events.** Turn `voice-activity.ts` RMS into start/stop/overlap events. Unlocks `float`, half the Hand, and every interruption measure. Cheapest, highest leverage, no AI required.
-2. **Utterance transport + storage.** Protocol arms, DO persistence. Now the room has a corpus.
-3. **`packages/groupthink` with fixture tests.** Write the detectors against a hand-written fake conversation that is *designed* to trip each one. This is also the regression suite and the demo script.
-4. **Embeddings in the DO.** Now `convergence`, `drift`, and `echo` come alive.
-5. **Insights panel + the Hand.** First thing a judge can actually see.
-6. **Interventions.** The product thesis, and it needs everything above to exist.
-7. **The Trace.** Highest visual impact per unit of risk once 4 is done — it is a projection of data you already have.
-8. **Post-meeting report.** Reads `interventions` incl. the `_after` columns.
+Event IDs combine concern and decision sequence numbers. Repeating the same event is rejected; recurrence requires a later substantive commitment, execution starting or changed scope linked to the previous decision. Exact/normalized repetition and evidence linkage have deterministic checks, while semantic novelty remains a model judgment. A 120-second cooldown limits reminders; elapsed time alone is never an event. New human speech makes an in-flight result stale, leave/disconnect discards work, and provider errors back off for 60 seconds.
 
-Whiteboard is not on this list. See `PRODUCT.md` § Explicitly deferred.
+`private-notices.ts` stores reminder evidence and lifecycle outside the meeting log. The stage popup collapses after 15 seconds of unattended display; hover, focus and insufficient space pause that timer. Collapse is independent of the active reminder TTL and is not dismissal, reading or public approval. Muse contains the private history and discussion actions. Reminders are silent and require no assistant session or WebMCP client.
+
+## Source map and validation
+
+| Area | Implementation |
+| --- | --- |
+| Room UI and lifecycle | `src/App.tsx`, `components.tsx`, `meeting-controller.ts`, `meeting-session.ts` |
+| Protocol, replay and local record | `src/protocol.ts`, `history.ts`, `meeting-log.ts` |
+| Media, captions and connectivity | `src/voice-activity.ts`, `caption-session.ts`, `ice-configuration.ts`, `packages/transcribe` |
+| Files and document previews | `src/file-share.ts`, `file-preview.tsx`, `pdf-preview.tsx`, `docx-preview.tsx`, `agents/attachments.ts` |
+| Shared board | `src/whiteboard.tsx`, `excalidraw-store.ts`, `whiteboard-webmcp.ts`, `whiteboard-capture.ts` |
+| Agent authority and policy | `src/agents/contracts.ts`, `config.ts`, `room.ts`, `group.ts` |
+| Agent interaction and tools | `src/agents/runtime.ts`, `live.ts`, `audio.ts`, `dictation.ts`, `tools.ts`, `panel.tsx` |
+| Private reminders | `src/auto-reminders.ts`, `private-notices.ts`, `private-notice-ui.tsx`, `worker/private-analysis.ts` |
+| Worker provisioning and routing | `worker/index.ts`, `live.ts`, `ice-servers.ts` |
+
+From the repository root, `pnpm check` runs type checks, tests, production builds, asset validation and Worker deployment dry-run. Browser harnesses, real-provider samples, physical audio, relay connectivity and deployment checks have separate evidence requirements described in [VERIFICATION.md](VERIFICATION.md). Numeric room-wide detectors, an Insights panel, radar/Trace visualizations and post-meeting reports are not implemented; they are not prerequisites for the current Muse, Omni or whiteboard paths.

@@ -294,6 +294,7 @@ export class GeminiLiveTranscriber implements LiveTranscriber {
     this.#rotating = true;
     this.#ready = false;
     this.#clearRotationTimer();
+    this.#callbacks.onReconnecting?.();
     const oldSocket = this.#socket;
     try {
       if (oldSocket?.readyState === WebSocket.OPEN) {

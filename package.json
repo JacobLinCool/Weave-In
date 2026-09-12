@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Browser-native meetings with per-participant live transcription shared over WebRTC.",
+  "description": "Browser meetings with live captions, private Muse conversations, approved Omni interventions, and a shared editable whiteboard.",
   "license": "MIT",
   "packageManager": "pnpm@11.24.0",
   "scripts": {
@@ -11,7 +11,6 @@
     "build": "pnpm -r --if-present build",
     "typecheck": "pnpm --filter @weave-in/transcribe build && pnpm -r --if-present typecheck",
     "test": "pnpm --filter @weave-in/transcribe build && pnpm -r --if-present test",
-    "deploy": "pnpm --filter @weave-in/meeting deploy",
     "deploy:dry-run": "pnpm --filter @weave-in/meeting deploy:dry-run",
     "check": "pnpm typecheck && pnpm test && pnpm build && pnpm deploy:dry-run"
   },

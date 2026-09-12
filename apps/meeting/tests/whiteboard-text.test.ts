@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parsePeerMessage } from '../src/protocol';
-import { newBoardShape, WhiteboardStore, type BoardElement } from '../src/whiteboard-model';
+import { newBoardShape, parseBoardElement, WhiteboardStore, type BoardElement } from '../src/whiteboard-model';
 
 // Keep explicit empty lines and non-ASCII characters at the accepted text limit.
 const longText = '共同編輯白板，保留每一行文字。\n\n下一行包含中文與 English。\n'.repeat(20).slice(0, 500);
@@ -10,16 +9,16 @@ function connectedStores() {
   const received: BoardElement[] = [];
   const remote = new WhiteboardStore(() => {}, 'remote');
   const local = new WhiteboardStore(element => {
-    // Exercise the same JSON encoding and validation used by the peer channel.
-    const message = parsePeerMessage(JSON.parse(JSON.stringify({ type: 'whiteboard', element })));
-    if (!message || message.type !== 'whiteboard') throw new Error('Rejected whiteboard text update');
-    received.push(message.element);
-    remote.merge(message.element);
+    // Compact records are local planning inputs; native Excalidraw records use the peer channel.
+    const parsed = parseBoardElement(JSON.parse(JSON.stringify(element)));
+    if (!parsed) throw new Error('Rejected whiteboard planning input');
+    received.push(parsed);
+    remote.merge(parsed);
   }, 'local');
   return { local, remote, received };
 }
 
-describe('whiteboard text and geometry', () => {
+describe('whiteboard planning text and geometry', () => {
   it.each(editableKinds)('synchronizes all 500 characters and the expanded %s in one record', kind => {
     const { local, remote, received } = connectedStores();
     const shape = newBoardShape(kind, 320, 240, '#f6d878');

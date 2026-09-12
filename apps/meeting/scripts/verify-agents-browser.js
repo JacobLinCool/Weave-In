@@ -72,10 +72,13 @@ async (page, origin = 'http://127.0.0.1:8788', options = {}) => {
           const answer=()=> {
             if(responding)return;responding=true;
             const preparing=body.session.instructions.includes('prepares a suggestion silently');
+            const explicitMarker='\n\nCurrent explicit request:\n';
+            const explicitAt=request.indexOf(explicitMarker);
+            const explicitRequest=explicitAt < 0 ? '' : request.slice(explicitAt + explicitMarker.length);
             const records=(reviewContext.meeting??[]).filter(r=>(r.kind==='chat'||r.kind==='transcript')&&!r.agent);
             const target=reviewContext.participants?.find(p=>p.name==='Carol');
             const texts={ convergence:'Consider an alternative before deciding.', drift:'Should we return to choosing the database rather than planning a holiday?', float:'Carol, what evidence would help us choose the launch date?', echo:'What concrete evidence supports approving this proposal?' };
-            const value=preparing?JSON.stringify(scenario==='none'?{kind:'none',severity:0,evidenceSeqs:[],targetPeerId:null,text:''}:{kind:scenario,severity:.8,evidenceSeqs:[records.at(-4)?.seq,records.at(-1)?.seq],targetPeerId:scenario==='float'?target?.peerId:null,text:texts[scenario]}):request.split('Current explicit request:').at(-1).includes('private-secret')?'Private response.':request.split('Current explicit request:').at(-1).includes('Approved message: ')?JSON.parse(request.split('Approved message: ').at(-1)) :'A useful perspective for the meeting.';
+            const value=preparing?JSON.stringify(scenario==='none'?{kind:'none',severity:0,evidenceSeqs:[],targetPeerId:null,text:''}:{kind:scenario,severity:.8,evidenceSeqs:[records.at(-4)?.seq,records.at(-1)?.seq],targetPeerId:scenario==='float'?target?.peerId:null,text:texts[scenario]}):explicitRequest.includes('private-secret')?'Private response.':explicitRequest.includes('Approved message: ')?JSON.parse(explicitRequest.split('Approved message: ').at(-1)) :'A useful perspective for the meeting.';
             emit({type:'response.event',delegation_id:'d1',event:{type:'response.created',response:{id:'r1'}}});
             emit({type:'response.event',delegation_id:'d1',event:{type:'response.output_text.delta',delta:value}});
             if(preparing){ gain.gain.value=.1; emit({type:'session.output_transcript.delta',delta:'SUPPRESSED PREPARATION',start_ms:0,end_ms:800}); }
@@ -206,16 +209,21 @@ async (page, origin = 'http://127.0.0.1:8788', options = {}) => {
     await museInput.press('Shift+Enter');
     if (await museInput.inputValue() !== 'private-secret\n') throw new Error('Muse composer cannot insert a newline');
     await museInput.fill('private-secret');
-    const voiceButton = page.locator('.agent-compose .agent-voice');
-    const sendButton = page.locator('.agent-compose .agent-send');
-    const voiceBox = await voiceButton.boundingBox(); const sendBox = await sendButton.boundingBox();
-    if (!voiceBox || !sendBox || voiceBox.x >= sendBox.x || voiceBox.y !== sendBox.y || voiceBox.height !== sendBox.height) throw new Error('Composer actions are not aligned');
-    if ((await voiceButton.innerText()).trim() || (await sendButton.innerText()).trim()) throw new Error('Composer actions should be icons only');
+    const composer = page.locator('.agent-compose');
+    const voiceButton = composer.getByRole('button', { name: 'Dictate message', exact: true });
+    const liveButton = composer.getByRole('button', { name: 'Start live conversation', exact: true });
+    const sendButton = composer.getByRole('button', { name: 'Send', exact: true });
+    const voiceBox = await voiceButton.boundingBox(); const liveBox = await liveButton.boundingBox(); const sendBox = await sendButton.boundingBox();
+    if (!voiceBox || !liveBox || !sendBox || voiceBox.x >= liveBox.x || liveBox.x >= sendBox.x ||
+      voiceBox.y !== sendBox.y || liveBox.y !== sendBox.y || voiceBox.height !== sendBox.height || liveBox.height !== sendBox.height) throw new Error('Composer actions are not aligned');
+    if ((await voiceButton.innerText()).trim() || (await sendButton.innerText()).trim()) throw new Error('Dictate and Send should be icons only');
+    if ((await liveButton.innerText()).trim() !== 'Live' || await liveButton.getAttribute('aria-pressed') !== 'false') throw new Error('Idle Live control is missing its label or state');
     await page.locator('.agent-compose__input').screenshot({ path: 'output/playwright/muse-composer.png' });
     await museInput.press('Enter');
     const stopResponse = page.locator('.agent-compose').getByRole('button', { name: 'Stop response', exact: true });
     await stopResponse.waitFor();
     if (await stopResponse.locator('svg.lucide-square').count() !== 1) throw new Error('Pending response does not show a square');
+    if (!await voiceButton.isDisabled() || !await liveButton.isDisabled()) throw new Error('Pending response leaves a competing voice input enabled');
     await museInput.fill('Next draft');
     if (await page.locator('.agent-compose').getByRole('button', { name: 'Send', exact: true }).count()) throw new Error('Editing a draft hides response Stop');
     await page.locator('.agent-compose__input').screenshot({ path: 'output/playwright/muse-waiting.png' });
@@ -230,6 +238,27 @@ async (page, origin = 'http://127.0.0.1:8788', options = {}) => {
     await stopResponse.click();
     await page.locator('.agent-compose').getByRole('button', { name: 'Send', exact: true }).waitFor();
     if (await page.locator('.agent-compose').getByRole('button', { name: 'Stop response', exact: true }).count()) throw new Error('Stop did not end response');
+
+    // The simulator supplies one voice exchange; Live must remain open until End.
+    const sessionsBeforeLive = await page.evaluate(() => window.__agentTest.sessions.length);
+    const micBeforeLive = await page.evaluate(() => Array.from(document.querySelectorAll('[data-local="true"] video')).some(v => v.srcObject?.getAudioTracks().some(t => t.enabled)));
+    if (!micBeforeLive) throw new Error('Expected an enabled meeting microphone before Live');
+    await liveButton.click();
+    const endLive = composer.getByRole('button', { name: 'End live conversation', exact: true });
+    await endLive.waitFor();
+    await page.getByRole('log', { name: 'Muse transcript' }).getByText('voice-secret', { exact: true }).waitFor();
+    await page.getByRole('log', { name: 'Muse transcript' }).getByText('A useful perspective for the meeting.', { exact: true }).waitFor();
+    await page.waitForTimeout(2500);
+    if (await endLive.getAttribute('aria-pressed') !== 'true' || (await endLive.innerText()).trim() !== 'End') throw new Error('Live ended after one answer');
+    if (!await museInput.evaluate(el => el.readOnly) || !await voiceButton.isDisabled() || await sendButton.count() || await stopResponse.count()) throw new Error('Live does not own the composer input controls');
+    if (await page.evaluate(() => Array.from(document.querySelectorAll('[data-local="true"] video')).some(v => v.srcObject?.getAudioTracks().some(t => t.enabled)))) throw new Error('Live left the meeting microphone enabled');
+    if (await page.evaluate(() => window.__agentTest.states.at(-1)?.floor !== null || window.__agentTest.sends.some(x => x.channel === 'weave-in' && JSON.stringify(x.value).includes('voice-secret')))) throw new Error('Private Live acquired a public floor or leaked speech');
+    if (await guest.locator('body').innerText().then(t => t.includes('voice-secret'))) throw new Error('Guest saw private Live speech');
+    await endLive.click();
+    await liveButton.waitFor();
+    if (await museInput.evaluate(el => el.readOnly) || await voiceButton.isDisabled()) throw new Error('End did not restore the composer');
+    if (await page.evaluate(() => Array.from(document.querySelectorAll('[data-local="true"] video')).some(v => v.srcObject?.getAudioTracks().some(t => t.enabled))) !== micBeforeLive) throw new Error('End did not restore the meeting microphone');
+    if (await page.evaluate(() => window.__agentTest.sessions.length) !== sessionsBeforeLive + 1) throw new Error('Live unexpectedly replaced or restarted its session');
 
     const reply = page.locator('.agent-line--assistant').filter({ hasText: 'Private response.' }).first();
     const sendReply = reply.getByRole('button', { name: 'Send to everyone', exact: true });
@@ -409,7 +438,8 @@ async (page, origin = 'http://127.0.0.1:8788', options = {}) => {
     await tab(guest, 'Transcript').click();
     await guest.getByText('Consider an alternative before deciding.', { exact: true }).waitFor();
     await page.locator('.agent-panel--group:not(.agent-panel--active)').waitFor();
-    if (!(await guest.getByRole('tabpanel').filter({ visible: true }).innerText()).includes('Omni')) throw new Error('Public suggestion is missing Omni attribution');
+    const omniLine = guest.getByTestId('transcript-list').locator('.transcript-line').filter({ hasText: 'Consider an alternative before deciding.' });
+    if (!(await omniLine.innerText()).includes('Omni')) throw new Error('Public suggestion is missing Omni attribution');
     for (const p of [page, guest]) {
       if (await p.evaluate(() => window.__agentTest.audible <= .01)) throw new Error('Approved Omni audio was not heard');
       if (await p.evaluate(() => window.__agentTest.sends.some(x => x.channel === 'weave-in' && JSON.stringify(x.value).includes('SUPPRESSED PREPARATION')))) throw new Error('Silent Omni preparation leaked');
@@ -424,7 +454,7 @@ async (page, origin = 'http://127.0.0.1:8788', options = {}) => {
     await page.getByRole('button', { name: 'Add Omni', exact: true }).waitFor();
     await tab(guest, 'Room').click();
     await guest.getByRole('button', { name: 'Add Omni', exact: true }).waitFor();
-    return { replySend: true, replyHover: true, replyKeyboard: true, replyTouch: true, selectedMessageOnly: true, responseSquare: true, responseStop: true, dictationStopDraft: true, dictationSendFinalized: true, dictationPrivate: true, automaticOmni: true, fullPanelSettings: true, backWithoutSaving: true, reminderControlsRemoved: true, groupRemoval: true, clients: 2, directMuseTab: true, groupInRoom: true, allMembersConfigureGroup: true, groupBorderGlow: true, injectedSystemSignal: false, automaticSystemSignal: true, editSettings: true, automaticChat: true, noLiveOnJoin: true, privateIsolation: true, privateRecovery: true, signalingRecovery: true, oneShotPublicSpeech: true, ownerAttribution: true, ownerMicOpen, omniApprovedSpeech: true, omniSilentBeforeApproval: true, omniReplayDedup: true, mobileOverflow: false, provider: 'simulated GPT-Live WebRTC (no real provider call)', relay: 'mocked provisioning; local peer connectivity' };
+    return { liveControls: true, liveStaysOpenAfterAnswer: true, liveEndRestoresMicrophone: true, livePrivate: true, replySend: true, replyHover: true, replyKeyboard: true, replyTouch: true, selectedMessageOnly: true, responseSquare: true, responseStop: true, dictationStopDraft: true, dictationSendFinalized: true, dictationPrivate: true, automaticOmni: true, fullPanelSettings: true, backWithoutSaving: true, reminderControlsRemoved: true, groupRemoval: true, clients: 2, directMuseTab: true, groupInRoom: true, allMembersConfigureGroup: true, groupBorderGlow: true, injectedSystemSignal: false, automaticSystemSignal: true, editSettings: true, automaticChat: true, noLiveOnJoin: true, privateIsolation: true, privateRecovery: true, signalingRecovery: true, oneShotPublicSpeech: true, ownerAttribution: true, ownerMicOpen, omniApprovedSpeech: true, omniSilentBeforeApproval: true, omniReplayDedup: true, mobileOverflow: false, provider: 'simulated GPT-Live WebRTC (no real provider call)', relay: 'mocked provisioning; local peer connectivity' };
   } catch (error) {
     const diagnostics = await page.evaluate(() => ({ events: window.__agentTest?.incoming.slice(-20), audible: window.__agentTest?.audible, group: window.__agentTest?.states.at(-1)?.agents.find(a => a.config.kind === 'group'), errors: [...document.querySelectorAll('.agent-error')].map(e => e.textContent) })).catch(() => null);
     throw new Error(`${String(error)} ${JSON.stringify(diagnostics)}`);

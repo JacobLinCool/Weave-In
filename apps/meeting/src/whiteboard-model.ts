@@ -1,4 +1,4 @@
-/** Bounded, versioned whiteboard records shared over the meeting data channel. */
+/** Bounded shape model for planning WebMCP edits before conversion to native Excalidraw records. */
 export const BOARD_COLORS = ['#f6d878', '#f4a27e', '#97d9b7', '#98bde8', '#c4ace8', '#f3eee3'] as const;
 export type BoardKind = 'note' | 'rectangle' | 'diamond' | 'text' | 'pen' | 'connector';
 export interface BoardShape {
@@ -117,22 +117,3 @@ export function newBoardShape(kind: BoardKind, x: number, y: number, color: stri
 }
 
 /** Route through cardinal ports, with a nonzero final segment for arrow orientation. */
-export function connectorPath(from: BoardShape, to: BoardShape): string {
-  const ax = from.x + from.width / 2, ay = from.y + from.height / 2;
-  const bx = to.x + to.width / 2, by = to.y + to.height / 2;
-  const horizontal = Math.abs(bx - ax) / ((from.width + to.width) / 2) >= Math.abs(by - ay) / ((from.height + to.height) / 2);
-  let points: [number, number][];
-  if (horizontal) {
-    const direction = bx >= ax ? 1 : -1;
-    const sx = ax + direction * from.width / 2, ex = bx - direction * to.width / 2;
-    const mid = (sx + ex) / 2;
-    points = [[sx, ay], [mid, ay], [mid, by], [ex, by]];
-  } else {
-    const direction = by >= ay ? 1 : -1;
-    const sy = ay + direction * from.height / 2, ey = by - direction * to.height / 2;
-    const mid = (sy + ey) / 2;
-    points = [[ax, sy], [ax, mid], [bx, mid], [bx, ey]];
-  }
-  const distinct = points.filter((p, i) => i === 0 || p[0] !== points[i-1]![0] || p[1] !== points[i-1]![1]);
-  return distinct.map((p, i) => `${i ? 'L' : 'M'} ${p[0]} ${p[1]}`).join(' ');
-}

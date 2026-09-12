@@ -1,9 +1,10 @@
 # Configure one (or both). Gemini is preferred when both are set unless TRANSCRIPTION_PROVIDER overrides it.
+# Automatic private reminders always require GEMINI_API_KEY, regardless of caption provider.
 GEMINI_API_KEY=replace-with-a-server-side-gemini-api-key
 # Agents always require OPENAI_API_KEY, even when captions use Gemini.
 #OPENAI_API_KEY=replace-with-a-server-side-openai-api-key
 #TRANSCRIPTION_PROVIDER=gemini
 
-# Cloudflare Realtime TURN key: both values stay server-side.
+# Cloudflare Realtime TURN key: both values are required for room connection setup and stay server-side.
 TURN_KEY_ID=replace-with-a-cloudflare-turn-key-id
 TURN_KEY_SECRET=replace-with-a-cloudflare-turn-key-secret

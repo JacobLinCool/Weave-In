@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-09-12T03:45:00+08:00",
+  "generatedAt": "2026-09-13T01:31:56+08:00",
   "title": "Design System: Weave In",
   "extensions": {
     "colorMeta": {
@@ -354,7 +354,7 @@
       },
       "body": {
         "displayName": "Body",
-        "purpose": "Landing prose at 60-64ch; spec cells at 16px."
+        "purpose": "Landing prose and explanatory content; current layout and sizes are documented in DESIGN.md."
       },
       "body-compact": {
         "displayName": "Body Compact",
@@ -374,7 +374,7 @@
       },
       "notation": {
         "displayName": "Notation",
-        "purpose": "Azeret Mono margin notes: draft labels, data labels, spec row heads, field labels, dividers, stage footnote. Uppercase, tracked 0.06-0.12em."
+        "purpose": "Azeret Mono for codes, compact labels, file metadata, the meeting timer and code/plain-text content."
       },
       "code": {
         "displayName": "Code",
@@ -385,7 +385,7 @@
       {
         "name": "room-panel",
         "value": "0 30px 80px rgba(0,0,0,.35)",
-        "purpose": "The sticky pattern card in the hero; one of two floating surfaces."
+        "purpose": "The indigo room-entry card in the hero."
       },
       {
         "name": "dialog",
@@ -405,7 +405,12 @@
       {
         "name": "leaving-scrim",
         "value": "background rgba(12,15,32,.86); backdrop-filter blur(8px)",
-        "purpose": "Full-screen scrim while local media is released; the only other backdrop blur in the system."
+        "purpose": "Full-screen scrim while local media is released."
+      },
+      {
+        "name": "omni-active",
+        "value": "0 0 14px rgba(233,180,76,.45), inset 0 0 8px rgba(233,180,76,.12)",
+        "purpose": "Steady operational glow while Omni prepares, awaits approval or speaks; not a confidence display."
       }
     ],
     "motion": [
@@ -469,22 +474,22 @@
       {
         "name": "landing-stack",
         "value": "1080px",
-        "purpose": "Hero stacks copy, draft, panel; invited variant puts the panel before the draft; sheets go single column; swatch hides."
+        "purpose": "Hero and sections stack; invite visitors see the room panel before the illustrative draft."
       },
       {
         "name": "landing-compact",
         "value": "720px",
-        "purpose": "Nav links hide, display drops to clamp(38px, 11vw, 56px), key rows stack, gutter 16px."
+        "purpose": "Navigation links hide while Settings remains; hero uses clamp(38px, 11vw, 56px), with 16px gutters."
       },
       {
         "name": "room-stack",
         "value": "980px",
-        "purpose": "Side panel drops below the stage (max 45vh); shell scrolls."
+        "purpose": "Stage and side panel stack; normal panels use up to 45vh. Active Muse moves above the stage and uses up to 75dvh."
       },
       {
         "name": "room-phone",
         "value": "640px",
-        "purpose": "One tile column, chrome labels hide, live captions pin to the viewport bottom, dialog padding 16px."
+        "purpose": "Video and room chrome compress, labels hide and settings-dialog padding becomes 16px."
       },
       {
         "name": "room-narrow",
@@ -495,6 +500,11 @@
         "name": "room-tiny",
         "value": "360px",
         "purpose": "The brand hides from the room header."
+      },
+      {
+        "name": "preview-phone",
+        "value": "600px",
+        "purpose": "File preview becomes a full-screen modal."
       }
     ]
   },
@@ -503,7 +513,7 @@
       "name": "Primary Button",
       "kind": "button",
       "refersTo": "button-primary",
-      "description": "The only gold control: create a room, join, send, done. Hover lightens to weld-hover; the shared 2px gold focus ring sits 3px out.",
+      "description": "Gold primary action with darker text, lighter hover and a visible 2px focus ring; secondary and Muse composer controls have their own treatments.",
       "html": "<button class=\"ds-btn-primary\" type=\"button\">Create a room <svg width=\"18\" height=\"18\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M5 12h14\"/><path d=\"m12 5 7 7-7 7\"/></svg></button>",
       "css": ".ds-btn-primary{display:inline-flex;align-items:center;justify-content:center;gap:9px;min-height:43px;padding:0 18px;border:0;border-radius:12px;color:var(--accent-ink,#1a1408);background:var(--accent,#e9b44c);font-family:'Jost Variable',Jost,'Helvetica Neue',Arial,sans-serif;font-size:16px;font-weight:730;cursor:pointer}.ds-btn-primary:hover{background:var(--accent-hover,#f2c46a)}.ds-btn-primary:focus-visible{outline:2px solid var(--accent,#e9b44c);outline-offset:3px}.ds-btn-primary:disabled{cursor:wait;opacity:.55}"
     },
@@ -540,14 +550,6 @@
       "css": ".ds-join{display:grid;grid-template-columns:1fr auto;gap:8px;max-width:364px}.ds-code{width:100%;min-height:48px;padding:0 12px;border:1px solid var(--line,#303a6b);border-radius:10px;color:var(--ink,#f3eee3);background:var(--base,#141a33);font-family:'Azeret Mono Variable','Azeret Mono',ui-monospace,monospace;font-size:13px;font-weight:520;letter-spacing:.18em;text-transform:uppercase;caret-color:var(--accent,#e9b44c)}.ds-code::placeholder{color:var(--dim,#9a968c)}.ds-code:focus-visible,.ds-join__btn:focus-visible{outline:2px solid var(--accent,#e9b44c);outline-offset:3px}.ds-join__btn{display:inline-flex;align-items:center;justify-content:center;gap:9px;min-height:48px;padding:0 20px;border:1px solid var(--line,#303a6b);border-radius:12px;color:var(--ink,#f3eee3);background:var(--raised,#232b52);font-family:'Jost Variable',Jost,'Helvetica Neue',Arial,sans-serif;font-size:16px;font-weight:730;cursor:pointer}.ds-join__btn:hover{border-color:var(--dim,#9a968c)}"
     },
     {
-      "name": "Woven Chip Key Row",
-      "kind": "chip",
-      "refersTo": "chip-woven",
-      "description": "Two dyes woven as 4px stripes name the two parties on a data path; the dashed empty chip is the path that carries nothing.",
-      "html": "<dl class=\"ds-key\"><div class=\"ds-key__row\"><dt><span class=\"ds-chip\" style=\"--a:#e0563f;--b:#5fc7a2\" aria-hidden=\"true\"></span>Between participants</dt><dd>Video, voice, screen share, chat, and every caption line travel browser to browser over encrypted WebRTC connections.</dd></div><div class=\"ds-key__row\"><dt><span class=\"ds-chip ds-chip--empty\" aria-hidden=\"true\"></span>Our server</dt><dd>It never sees media, chat, or a word of the transcript, and it keeps nothing.</dd></div></dl>",
-      "css": ".ds-key{margin:0;display:grid;max-width:640px;font-family:'Jost Variable',Jost,'Helvetica Neue',Arial,sans-serif}.ds-key__row{display:grid;grid-template-columns:minmax(180px,.5fr) minmax(0,1fr);gap:20px;padding:22px 0;border-top:1px solid var(--line-soft,#262f5a)}.ds-key__row:first-child{border-top:0;padding-top:6px}.ds-key dt{display:flex;align-items:center;gap:12px;font-size:17px;font-weight:500;color:var(--ink,#f3eee3)}.ds-key dd{margin:0;max-width:62ch;color:var(--muted,#c9c4b8);font-size:15.5px;line-height:1.65}.ds-chip{flex:0 0 auto;width:26px;height:18px;border-radius:4px;background:repeating-linear-gradient(90deg,var(--a) 0 4px,transparent 4px 8px),repeating-linear-gradient(0deg,var(--b) 0 4px,transparent 4px 8px),var(--raised,#232b52)}.ds-chip--empty{background:transparent;border:1px dashed var(--dim,#9a968c)}"
-    },
-    {
       "name": "Caption Status Pill",
       "kind": "chip",
       "refersTo": "pill-caption-status",
@@ -559,102 +561,93 @@
       "name": "Room Panel",
       "kind": "card",
       "refersTo": "card-room-panel",
-      "description": "The pattern card: eight-dye selvedge stripe on the top edge, preview well, gold primary, mono divider. One of two floating surfaces.",
+      "description": "Room-entry card with eight-color selvedge, media preview, primary creation/join action and code entry.",
       "html": "<aside class=\"ds-room-panel\" aria-labelledby=\"ds-start-title\"><div class=\"ds-selvedge\" aria-hidden=\"true\"><i style=\"background:#f4a27e\"></i><i style=\"background:#e0563f\"></i><i style=\"background:#e9b44c\"></i><i style=\"background:#5fc7a2\"></i><i style=\"background:#7fb3e6\"></i><i style=\"background:#b79be8\"></i><i style=\"background:#9bbf5a\"></i><i style=\"background:#e98bb4\"></i></div><h2 id=\"ds-start-title\">Start a room</h2><div class=\"ds-preview\"><svg width=\"22\" height=\"22\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z\"/><circle cx=\"12\" cy=\"13\" r=\"3\"/></svg><strong>Start preview</strong><span>Allow camera and microphone access.</span></div><button class=\"ds-room-panel__cta\" type=\"button\">Create a room</button><div class=\"ds-or\"><span>or join with a code</span></div></aside>",
       "css": ".ds-room-panel{position:relative;max-width:400px;padding:18px 18px 20px;border:1px solid var(--line,#303a6b);border-radius:14px;background:var(--panel,#1b2242);box-shadow:0 30px 80px rgba(0,0,0,.35);overflow:hidden;font-family:'Jost Variable',Jost,'Helvetica Neue',Arial,sans-serif;color:var(--ink,#f3eee3)}.ds-selvedge{position:absolute;inset:0 0 auto;height:6px;display:grid;grid-template-columns:repeat(8,1fr)}.ds-room-panel h2{margin:6px 0 14px;font-size:20px;font-weight:500;letter-spacing:-.01em}.ds-preview{aspect-ratio:16/9;margin-bottom:16px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;border-radius:12px;color:var(--muted,#c9c4b8);background:radial-gradient(circle at center,#232b52,#10142a 68%)}.ds-preview strong{color:var(--ink,#f3eee3);font-size:14px}.ds-preview span{font-size:11px}.ds-room-panel__cta{width:100%;min-height:51px;margin-top:16px;border:0;border-radius:12px;color:var(--accent-ink,#1a1408);background:var(--accent,#e9b44c);font:inherit;font-weight:730;cursor:pointer}.ds-room-panel__cta:hover{background:var(--accent-hover,#f2c46a)}.ds-room-panel__cta:focus-visible{outline:2px solid var(--accent,#e9b44c);outline-offset:3px}.ds-or{display:flex;align-items:center;gap:12px;margin:18px 0 0;color:var(--dim,#9a968c);font-family:'Azeret Mono Variable','Azeret Mono',ui-monospace,monospace;font-size:11px;letter-spacing:.09em;text-transform:uppercase}.ds-or::before,.ds-or::after{content:'';height:1px;flex:1;background:var(--line-soft,#262f5a)}"
     },
     {
       "name": "The Draft",
       "kind": "custom",
-      "refersTo": "card-sheet",
-      "description": "The signature: five warps under weft passes in the speaker's thread colour, warp over weft on alternate crossings, on 20px graph paper. Static here; in the build a pick arrives every 1.9s and the list advances by one pick height.",
+      "refersTo": "card-draft",
+      "description": "Illustrative woven conversation using five human warps, alternating crossings and 20px graph paper. This compact sample shows three rows; the live landing keeps seven and advances every 1.9s.",
       "html": "<figure class=\"ds-draft\" aria-label=\"Draft: three captions woven across five warps\"><div class=\"ds-draft__body\"><div class=\"ds-warps\" aria-hidden=\"true\"><div class=\"ds-warp\" style=\"--thread:#e0563f\"><span>Mika</span></div><div class=\"ds-warp\" style=\"--thread:#e9b44c\"><span>Jun</span></div><div class=\"ds-warp\" style=\"--thread:#5fc7a2\"><span>Ada</span></div><div class=\"ds-warp\" style=\"--thread:#7fb3e6\"><span>Sam</span></div><div class=\"ds-warp\" style=\"--thread:#f4a27e\"><span>You</span></div></div><ol class=\"ds-picks\"><li class=\"ds-pick\" style=\"--thread:#5fc7a2\"><span class=\"ds-weft\" aria-hidden=\"true\"><i class=\"ds-over\" style=\"--warp:#e0563f\"></i><i style=\"--warp:#e9b44c\"></i><i class=\"ds-over\" style=\"--warp:#5fc7a2\"></i><i style=\"--warp:#7fb3e6\"></i><i class=\"ds-over\" style=\"--warp:#f4a27e\"></i></span><span class=\"ds-note\"><b>Ada</b>Recording stays off. Who is transcribing?</span></li><li class=\"ds-pick\" style=\"--thread:#e0563f\"><span class=\"ds-weft\" aria-hidden=\"true\"><i style=\"--warp:#e0563f\"></i><i class=\"ds-over\" style=\"--warp:#e9b44c\"></i><i style=\"--warp:#5fc7a2\"></i><i class=\"ds-over\" style=\"--warp:#7fb3e6\"></i><i style=\"--warp:#f4a27e\"></i></span><span class=\"ds-note\"><b>Mika</b>Everyone. Each of us transcribes our own microphone.</span></li><li class=\"ds-pick\" style=\"--thread:#e9b44c\"><span class=\"ds-weft\" aria-hidden=\"true\"><i class=\"ds-over\" style=\"--warp:#e0563f\"></i><i style=\"--warp:#e9b44c\"></i><i class=\"ds-over\" style=\"--warp:#5fc7a2\"></i><i style=\"--warp:#7fb3e6\"></i><i class=\"ds-over\" style=\"--warp:#f4a27e\"></i></span><span class=\"ds-note\"><b>Jun</b>So nothing gets mixed on a server?</span></li></ol></div></figure>",
-      "css": ".ds-draft{position:relative;margin:0;max-width:640px;padding:20px 20px 16px;border:1px solid var(--line,#303a6b);border-radius:12px;background-color:rgba(27,34,66,.7);background-image:linear-gradient(rgba(243,238,227,.06) 1px,transparent 1px),linear-gradient(90deg,rgba(243,238,227,.06) 1px,transparent 1px);background-size:100% 20px,20px 100%;font-family:'Jost Variable',Jost,'Helvetica Neue',Arial,sans-serif;color:var(--ink,#f3eee3)}@keyframes ds-tie{from{transform:scale(.2);opacity:0}to{transform:none;opacity:1}}.ds-draft__body{position:relative;--warp-w:12px;--warp-gap:8px;--pick-h:40px;--warps-w:calc(var(--warp-w) * 5 + var(--warp-gap) * 4);height:calc(var(--pick-h) * 3 + 40px);overflow:hidden}.ds-warps{position:absolute;top:0;bottom:0;left:0;width:var(--warps-w);display:grid;grid-template-columns:repeat(5,var(--warp-w));column-gap:var(--warp-gap)}.ds-warp{position:relative;height:100%;border-radius:3px;background:linear-gradient(180deg,transparent 0,var(--thread) 30px,var(--thread) calc(100% - 4px),transparent 100%);opacity:.95}.ds-warp span{position:absolute;top:4px;left:50%;transform:translateX(-50%);font-family:'Azeret Mono Variable','Azeret Mono',ui-monospace,monospace;font-size:11px;font-weight:600;letter-spacing:.04em;color:var(--base,#141a33);background:var(--thread);padding:4px 1px;border-radius:3px;writing-mode:vertical-rl;text-orientation:mixed}.ds-picks{position:relative;margin:0;padding:40px 0 0;list-style:none;display:flex;flex-direction:column}.ds-pick{display:grid;grid-template-columns:var(--warps-w) minmax(0,1fr);column-gap:20px;align-items:start;height:var(--pick-h);animation:ds-pick-in 900ms cubic-bezier(.16,1,.3,1) both}.ds-weft{position:relative;margin-top:4px;display:grid;grid-template-columns:repeat(5,var(--warp-w));column-gap:var(--warp-gap);height:var(--warp-w);border-radius:3px;background:var(--thread);box-shadow:0 2px 6px rgba(0,0,0,.25);animation:ds-weft-in 900ms cubic-bezier(.16,1,.3,1) both}.ds-weft::before{content:'';position:absolute;inset:0 -4px;border-radius:3px;background:var(--thread)}.ds-weft i{position:relative;z-index:1;height:var(--warp-w)}.ds-weft i.ds-over{background:var(--warp);border-radius:2px}.ds-note{min-width:0;max-height:36px;font-size:14.5px;line-height:1.25;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;animation:ds-note-in 700ms 250ms cubic-bezier(.16,1,.3,1) both}.ds-note b{display:inline-block;margin-right:9px;padding:1px 6px;border-radius:4px;color:var(--base,#141a33);background:var(--thread);font-family:'Azeret Mono Variable','Azeret Mono',ui-monospace,monospace;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;vertical-align:1px}@keyframes ds-weft-in{from{clip-path:inset(0 100% 0 0)}to{clip-path:inset(0 0 0 0)}}@keyframes ds-pick-in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}@keyframes ds-note-in{from{opacity:0;transform:translateX(-6px)}to{opacity:1;transform:none}}@media (prefers-reduced-motion:reduce){.ds-pick,.ds-weft,.ds-note}"
+      "css": ".ds-draft{position:relative;margin:0;max-width:640px;padding:20px 20px 16px;border:1px solid var(--line,#303a6b);border-radius:12px;background-color:rgba(27,34,66,.7);background-image:linear-gradient(rgba(243,238,227,.06) 1px,transparent 1px),linear-gradient(90deg,rgba(243,238,227,.06) 1px,transparent 1px);background-size:100% 20px,20px 100%;font-family:'Jost Variable',Jost,'Helvetica Neue',Arial,sans-serif;color:var(--ink,#f3eee3)}@keyframes ds-tie{from{transform:scale(.2);opacity:0}to{transform:none;opacity:1}}.ds-draft__body{position:relative;--warp-w:12px;--warp-gap:8px;--pick-h:40px;--warps-w:calc(var(--warp-w) * 5 + var(--warp-gap) * 4);height:calc(var(--pick-h) * 3 + 40px);overflow:hidden}.ds-warps{position:absolute;top:0;bottom:0;left:0;width:var(--warps-w);display:grid;grid-template-columns:repeat(5,var(--warp-w));column-gap:var(--warp-gap)}.ds-warp{position:relative;height:100%;border-radius:3px;background:linear-gradient(180deg,transparent 0,var(--thread) 30px,var(--thread) calc(100% - 4px),transparent 100%);opacity:.95}.ds-warp span{position:absolute;top:4px;left:50%;transform:translateX(-50%);font-family:'Azeret Mono Variable','Azeret Mono',ui-monospace,monospace;font-size:11px;font-weight:600;letter-spacing:.04em;color:var(--base,#141a33);background:var(--thread);padding:4px 1px;border-radius:3px;writing-mode:vertical-rl;text-orientation:mixed}.ds-picks{position:relative;margin:0;padding:40px 0 0;list-style:none;display:flex;flex-direction:column}.ds-pick{display:grid;grid-template-columns:var(--warps-w) minmax(0,1fr);column-gap:20px;align-items:start;height:var(--pick-h);animation:ds-pick-in 900ms cubic-bezier(.16,1,.3,1) both}.ds-weft{position:relative;margin-top:4px;display:grid;grid-template-columns:repeat(5,var(--warp-w));column-gap:var(--warp-gap);height:var(--warp-w);border-radius:3px;background:var(--thread);box-shadow:0 2px 6px rgba(0,0,0,.25);animation:ds-weft-in 900ms cubic-bezier(.16,1,.3,1) both}.ds-weft::before{content:'';position:absolute;inset:0 -4px;border-radius:3px;background:var(--thread)}.ds-weft i{position:relative;z-index:1;height:var(--warp-w)}.ds-weft i.ds-over{background:var(--warp);border-radius:2px}.ds-note{min-width:0;max-height:36px;font-size:14.5px;line-height:1.25;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;animation:ds-note-in 700ms 250ms cubic-bezier(.16,1,.3,1) both}.ds-note b{display:inline-block;margin-right:9px;padding:1px 6px;border-radius:4px;color:var(--base,#141a33);background:var(--thread);font-family:'Azeret Mono Variable','Azeret Mono',ui-monospace,monospace;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;vertical-align:1px}@keyframes ds-weft-in{from{clip-path:inset(0 100% 0 0)}to{clip-path:inset(0 0 0 0)}}@keyframes ds-pick-in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}@keyframes ds-note-in{from{opacity:0;transform:translateX(-6px)}to{opacity:1;transform:none}}@media (prefers-reduced-motion:reduce){.ds-pick,.ds-weft,.ds-note{animation:none}}"
     },
     {
       "name": "Landing Header",
       "kind": "nav",
       "refersTo": "button-icon",
-      "description": "Brand (the woven mark plus the word) on the left; three muted in-page links with a gold hover underline and the wide Settings icon button on the right. Links hide below 720px.",
-      "html": "<header class=\"ds-header\"><a class=\"ds-brand\" href=\"#\"><svg class=\"ds-mark\" viewBox=\"0 0 64 64\" width=\"30\" height=\"30\" role=\"img\" aria-label=\"Weave In\"><rect width=\"64\" height=\"64\" rx=\"14\" fill=\"#141A33\"/><rect x=\"12\" y=\"10\" width=\"8\" height=\"44\" rx=\"2\" fill=\"#E0563F\"/><rect x=\"22\" y=\"10\" width=\"8\" height=\"44\" rx=\"2\" fill=\"#E9B44C\"/><rect x=\"32\" y=\"10\" width=\"8\" height=\"44\" rx=\"2\" fill=\"#5FC7A2\"/><rect x=\"42\" y=\"10\" width=\"8\" height=\"44\" rx=\"2\" fill=\"#F4A27E\"/><rect x=\"10\" y=\"12\" width=\"44\" height=\"8\" rx=\"2\" fill=\"#F3EEE3\"/><rect x=\"10\" y=\"22\" width=\"44\" height=\"8\" rx=\"2\" fill=\"#F3EEE3\"/><rect x=\"10\" y=\"32\" width=\"44\" height=\"8\" rx=\"2\" fill=\"#F3EEE3\"/><rect x=\"10\" y=\"42\" width=\"44\" height=\"8\" rx=\"2\" fill=\"#F3EEE3\"/><rect x=\"12\" y=\"12\" width=\"8\" height=\"8\" fill=\"#E0563F\"/><rect x=\"32\" y=\"12\" width=\"8\" height=\"8\" fill=\"#5FC7A2\"/><rect x=\"22\" y=\"22\" width=\"8\" height=\"8\" fill=\"#E9B44C\"/><rect x=\"42\" y=\"22\" width=\"8\" height=\"8\" fill=\"#F4A27E\"/><rect x=\"12\" y=\"32\" width=\"8\" height=\"8\" fill=\"#E0563F\"/><rect x=\"32\" y=\"32\" width=\"8\" height=\"8\" fill=\"#5FC7A2\"/><rect x=\"22\" y=\"42\" width=\"8\" height=\"8\" fill=\"#E9B44C\"/><rect x=\"42\" y=\"42\" width=\"8\" height=\"8\" fill=\"#F4A27E\"/></svg><span>Weave In</span></a><nav class=\"ds-nav\" aria-label=\"Page\"><a href=\"#data\">Where data goes</a><a href=\"#voices\">Your own voice</a><a href=\"#spec\">Specification</a><button class=\"ds-iconbtn\" type=\"button\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z\"/><circle cx=\"12\" cy=\"12\" r=\"3\"/></svg><span>Settings</span></button></nav></header>",
+      "description": "Brand on the left; Meet the agents, Shared thinking, Privacy and Settings on the right. Navigation links hide below 720px while Settings remains.",
+      "html": "<header class=\"ds-header\"><a class=\"ds-brand\" href=\"#\"><svg class=\"ds-mark\" viewBox=\"0 0 64 64\" width=\"30\" height=\"30\" role=\"img\" aria-label=\"Weave In\"><rect width=\"64\" height=\"64\" rx=\"14\" fill=\"#141A33\"/><rect x=\"12\" y=\"10\" width=\"8\" height=\"44\" rx=\"2\" fill=\"#E0563F\"/><rect x=\"22\" y=\"10\" width=\"8\" height=\"44\" rx=\"2\" fill=\"#E9B44C\"/><rect x=\"32\" y=\"10\" width=\"8\" height=\"44\" rx=\"2\" fill=\"#5FC7A2\"/><rect x=\"42\" y=\"10\" width=\"8\" height=\"44\" rx=\"2\" fill=\"#F4A27E\"/><rect x=\"10\" y=\"12\" width=\"44\" height=\"8\" rx=\"2\" fill=\"#F3EEE3\"/><rect x=\"10\" y=\"22\" width=\"44\" height=\"8\" rx=\"2\" fill=\"#F3EEE3\"/><rect x=\"10\" y=\"32\" width=\"44\" height=\"8\" rx=\"2\" fill=\"#F3EEE3\"/><rect x=\"10\" y=\"42\" width=\"44\" height=\"8\" rx=\"2\" fill=\"#F3EEE3\"/><rect x=\"12\" y=\"12\" width=\"8\" height=\"8\" fill=\"#E0563F\"/><rect x=\"32\" y=\"12\" width=\"8\" height=\"8\" fill=\"#5FC7A2\"/><rect x=\"22\" y=\"22\" width=\"8\" height=\"8\" fill=\"#E9B44C\"/><rect x=\"42\" y=\"22\" width=\"8\" height=\"8\" fill=\"#F4A27E\"/><rect x=\"12\" y=\"32\" width=\"8\" height=\"8\" fill=\"#E0563F\"/><rect x=\"32\" y=\"32\" width=\"8\" height=\"8\" fill=\"#5FC7A2\"/><rect x=\"22\" y=\"42\" width=\"8\" height=\"8\" fill=\"#E9B44C\"/><rect x=\"42\" y=\"42\" width=\"8\" height=\"8\" fill=\"#F4A27E\"/></svg><span>Weave In</span></a><nav class=\"ds-nav\" aria-label=\"Page\"><a href=\"#agents\">Meet the agents</a><a href=\"#whiteboard\">Shared thinking</a><a href=\"#data\">Privacy</a><button class=\"ds-iconbtn\" type=\"button\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z\"/><circle cx=\"12\" cy=\"12\" r=\"3\"/></svg><span>Settings</span></button></nav></header>",
       "css": ".ds-header{height:76px;display:flex;align-items:center;justify-content:space-between;gap:20px;border-bottom:1px solid var(--line-soft,#262f5a);font-family:'Jost Variable',Jost,'Helvetica Neue',Arial,sans-serif;color:var(--ink,#f3eee3)}.ds-brand{display:inline-flex;align-items:center;gap:11px;font-size:17px;font-weight:600;letter-spacing:-.01em;color:inherit;text-decoration:none}.ds-mark{flex:0 0 auto;border-radius:22%}.ds-nav{display:flex;align-items:center;gap:22px}.ds-nav a{color:var(--muted,#c9c4b8);font-size:14px;font-weight:500;text-decoration:none;text-underline-offset:5px}.ds-nav a:hover{color:var(--ink,#f3eee3);text-decoration:underline;text-decoration-color:var(--accent,#e9b44c)}.ds-nav a:focus-visible,.ds-iconbtn:focus-visible{outline:2px solid var(--accent,#e9b44c);outline-offset:3px}.ds-iconbtn{min-height:40px;padding:0 12px;border:1px solid var(--line,#303a6b);border-radius:10px;background:var(--panel,#1b2242);display:inline-flex;align-items:center;gap:7px;color:inherit;font:inherit;font-size:13px;font-weight:670;cursor:pointer}.ds-iconbtn:hover{background:var(--raised,#232b52)}@media (max-width:720px){.ds-nav a{display:none}}"
     }
   ],
   "narrative": {
     "northStar": "The Weaver's Draft",
-    "overview": "Weave In draws a meeting the way a weaver draws cloth. The page is indigo-dyed ground; the type is undyed cotton; every participant is a warp thread in one of eight dyes, every caption a weft pass laid across those threads, and the transcript is the drawdown the passes leave behind. The landing surface persuades by weaving itself live in the first viewport; the meeting room operates with the same threads, the same mark, and the same gold, on the same cloth.\n\nThe world is quiet and material. Surfaces are flat tonal steps of indigo separated by thin lines, never glass, never gradients on text. Jost at medium weight carries every headline and sentence; Azeret Mono appears only where a weaver would write in the margin (labels, codes, draft notation). One dye, weld gold, is allowed to ask for a click. The eight thread dyes are reserved for people, so a colour on this page always means who, never what.\n\nDensity is editorial on the landing (one idea per sheet, generous section rhythm, a 60–64ch measure) and tight in the room (10–13px chrome, 8–12px gaps, a full-height stage). The build refused the dark-SaaS hero with a floating screenshot, icon cards, eyebrows and kickers, gradient text, and glass surfaces.",
+    "overview": "The Weaver’s Draft connects an agent-native meeting app to its visual identity. Indigo surfaces frame cotton text and human thread colors; the landing illustrates a conversation as a weave. The room combines video, screen sharing, public records, a private Muse panel and Omni’s status/approval card. The shared Excalidraw board is a light editing canvas within that indigo frame. DESIGN.md describes the current interface, PRODUCT.md describes current behavior, and GROUPTHINK.md describes automatic Omni review.",
     "keyCharacteristics": [
-      "Indigo cloth ground with undyed cotton text; depth comes from three tonal steps and 1px lines, not from shadows.",
-      "Weld gold is the only colour that asks for a click; the eight dyed threads identify participants and nothing else.",
-      "Jost (variable) at weight 500 for display and body; Azeret Mono strictly for notation at 11–13px, tracked and uppercase.",
-      "",
-      "One authored motion: the draft advancing one pick every 1.9s on an expo-out curve; everything else is a 120–140ms state change."
+      "Indigo ground and panels, cotton copy, thin rules and restrained elevation.",
+      "Gold for primary actions, focus and active state; cotton secondary controls and Muse composer actions.",
+      "Human thread colors for speaker identity; neutral assistant speech with explicit attribution.",
+      "Jost for interface prose and headings; Azeret Mono for functional notation, timer and code/text content.",
+      "An explicitly illustrative woven conversation and interactive SVG board example on the landing.",
+      "A light Excalidraw canvas for shared human and agent editing.",
+      "Private reminder cards stay silent; Omni prepares silently and requires approval before public speech."
     ],
     "rules": [
       {
-        "name": "The One Dye Rule",
+        "name": "Action and identity",
         "section": "colors",
-        "body": "Weld gold means act, or yours. It asks for a click (buttons, focus ring, selection, toggles on, active tab) and tints what you yourself said (own chat rows at 12%, own transcript rows at 8%). It never decorates a heading, an icon, or a section."
+        "body": "Use gold for primary actions, focus and selection, and the existing neutral treatment for secondary controls and Muse Send. Human colors identify speakers; assistant transcripts use explicit names and neutral cotton."
       },
       {
-        "name": "The Dyed Thread Rule",
+        "name": "State color",
         "section": "colors",
-        "body": "A thread colour means one participant and nothing else. Seat 0 is you (peach); peers take madder, weld, verdigris, woad, lilac, moss, rose in join order. A thread colour never labels a feature, a status, or a section."
+        "body": "Coral marks muted/off states, Leave and errors. Verdigris marks live captions and active sharing. Omni’s steady gold glow accompanies preparing, approval and speech states, never a person or confidence score."
       },
       {
-        "name": "The Coral Rule",
-        "section": "colors",
-        "body": "Coral is only ever off or wrong: muted, camera off, leave, error. Verdigris is only ever live: captions running, screen shared, invited. Neither is an accent."
-      },
-      {
-        "name": "The Notation Rule",
+        "name": "Functional typography",
         "section": "typography",
-        "body": "Azeret Mono is for what a weaver writes in the margin: labels, codes, and draft notation, always 11–13px, tracked, uppercase. Never a heading, never a sentence, never a button. Counts (people, tab badges) and timestamps stay in Jost with tabular figures."
+        "body": "Use Jost for prose, headings and controls. Use Azeret Mono for codes, compact notation, file metadata, the meeting timer and code/plain-text previews. Display headings remain medium weight."
       },
       {
-        "name": "The Medium Weight Rule",
-        "section": "typography",
-        "body": "Display, headlines, and titles sit at 500 and never bolder. Weight rises only as size falls: 590 for captions, 660–700 for 10–11px chrome, 730 for buttons."
-      },
-      {
-        "name": "The Sheet Rule",
+        "name": "Illustration and work",
         "section": "layout",
-        "body": "Graph paper belongs on the draft, not the page. The 20px module (Cotton at 6% alpha, 1px lines, linear-gradient in both axes) is painted only on .draft and .swatch; the page ground stays plain indigo."
+        "body": "Keep graph paper on the illustrative draft. Use the light Excalidraw canvas and its existing green controls for the shared board. Do not imply the illustrative payment flow is a live meeting artifact."
       },
       {
-        "name": "The Invited Reorder Rule",
+        "name": "Invite ordering",
         "section": "layout",
-        "body": "On an invite link the join form outranks the demonstration. Below 1080px the room panel moves above the draft; above it the panel is already sticky beside the copy."
+        "body": "Below 1080px an invite places the room form ahead of the draft; on desktop the room panel sits beside the hero copy."
       },
       {
-        "name": "The Flat Cloth Rule",
-        "section": "elevation",
-        "body": "Surfaces are flat at rest and flat on hover; hover changes fill (panel to raised) or border (line to dim), never elevation. A new floating surface needs a reason as strong as \"the visitor must act here\" (the room panel) or \"the page is interrupted\" (the dialog)."
+        "name": "Audience and approval",
+        "section": "interaction",
+        "body": "Private Muse dialogue, requested shared board edits, requested Room messages and approved public speech have separate boundaries. Omni’s Room card offers approval; its speech appears in Transcript. No Insights panel or participant profile is implemented."
+      },
+      {
+        "name": "Truthful disclosure",
+        "section": "content",
+        "body": "Describe participant WebRTC/TURN, direct AI connections, Worker processing and local recovery storage separately. Do not claim the Worker never receives transcript text, all traffic stays in-browser, or automatic reminders can be paused in the current interface."
       }
     ],
     "dos": [
-      "Do set every action in Weld Gold and nothing else: primary buttons, send, focus ring (2px, offset 3px), selection, caret, toggles on, active tab.",
-      "Do give every participant a thread colour by seat (you are peach; peers take madder, weld, verdigris, woad, lilac, moss, rose in join order) and use it for their avatar, speaking ring, name, warp, and weft.",
-      "Do set headlines and titles in Jost at 500 with negative tracking (-0.035em display, -0.025em headline, -0.01em title) and balance the wrap.",
-      "Do write labels, codes, and draft notation in Azeret Mono at 11–13px, uppercase, tracked 0.06–0.18em, in Cotton Muted.",
-      "Do build depth from tonal steps (Cloth, Panel, Raised) and 1px Line or Line Soft rules; hover moves one step up.",
-      "Do paint the 20px graph paper on draft sheets (the draft, the swatch) at Cotton 6% alpha, and frame them at 12px with a 1px Line.",
-      "Do ease every authored movement on cubic-bezier(.16,1,.3,1) and keep state changes at 120–140ms.",
-      "Do honour prefers-reduced-motion: render the draft's seven picks statically, collapse animations, and show the speaking ring as a solid 3px line.",
-      "Do keep the plain-weave silhouette exact: warp over weft where (row + column) is even.",
-      "Do use Coral only for off and wrong, and Verdigris (with the Mint Pale tint) only for live."
+      "Use the colors, sizes and interaction states in the current DESIGN.md and rendering stylesheets.",
+      "Preserve explicit human and assistant attribution in public records.",
+      "Keep native labels, visible keyboard focus, accessible selected state and usable modal previews.",
+      "Preserve the alternating warp/weft crossings and the labelled synthetic conversation.",
+      "Honor reduced motion: freeze the woven draft and reduce operational animation.",
+      "Show transfer progress, missing context and provider errors when those states occur.",
+      "Keep private reminder cards silent and collapsible after 15 visible seconds; retain evidence in Muse.",
+      "Show Omni preparation, approval, quiet-waiting and speech as distinct states."
     ],
     "donts": [
-      "Don't add eyebrows or kickers above headings; a sheet head is a headline and one intro line.",
-      "Don't build icon cards or feature grids; the data key uses woven chips and the voices sheet is a ruled list.",
-      "Don't put gradients on text, or use gradients anywhere except the warp fade, the tile field, the preview well, and the tile shade.",
-      "Don't make glass: no backdrop-filter on cards or panels (it exists only on the two full-screen scrims), and no translucent surfaces below 90% opacity except the 70% draft sheet over its graph paper.",
-      "Don't use a thread colour for a feature, a status, or decoration, and don't use gold as a participant colour on purpose (seat 2 wears it because it is a dye; that is the only overlap).",
-      "Don't set Azeret Mono in a heading, a sentence, a button, a count, or a timestamp.",
-      "Don't add drop shadows to controls, chips, tiles, or sheets; only the room panel and the dialog float.",
-      "Don't put the graph paper on the page ground, the room, or any surface that is not a draft sheet.",
-      "Don't raise headline weight above 500 or invent a second display face.",
-      "Don't fabricate proof: no testimonials, customers, metrics, or screenshots as hero art; the draft is the demonstration and is labelled synthetic."
+      "Do not fabricate testimonials, metrics, customers or validated detection outcomes.",
+      "Do not use a speaker color as a diagnosis or score.",
+      "Do not claim future charts or removed controls exist.",
+      "Do not conflate a Room post with reading one approved message aloud.",
+      "Do not treat shared context or an available tool as permission to mutate shared work.",
+      "Do not place private conversations in public replay or imply partial recovery is a complete archive."
     ]
   }
 }

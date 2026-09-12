@@ -4,95 +4,71 @@ Keep the thread. Weave everyone in.
 
 [Open Weave In](https://weave.nycu.ai/)
 
-Groupthink is the failure mode where a group suppresses dissent to preserve harmony, stops thinking critically, and converges on a decision no member would have defended alone. It is invisible from inside the room, because the meeting feels productive precisely when nobody is arguing.
+Weave In is a browser meeting app for thinking independently and contributing together. Up to eight participants share video, audio, screens, live captions, chat, files, and an editable whiteboard. No account is required.
 
-Weave In runs browser meetings with per-participant captions, private **Muse** assistants and a shared **Omni** facilitator. Muse supports private voice and text discussion, reads permitted meeting records and shared files, and can edit the shared whiteboard when its owner asks. Room posting is disabled unless the owner enables that permission and requests a public message. Omni publishes brief public text suggestions. Automatic private reminders flag possible unresolved objections; broader groupthink detection remains future work.
+- **Muse** is each participant’s private assistant. Type, dictate a draft, or start a continuous GPT-Live conversation. Muse can read permitted meeting records and files, inspect a shared screen when enabled, and edit the whiteboard when asked. Room text posting requires a separate permission and an explicit request. **Send to everyone** reads one completed reply aloud to the room.
+- **Omni** is the room’s shared facilitator. It automatically reviews public discussion for premature convergence, drift from an explicit goal, uneven participation, or repeated agreement without reasons. It prepares silently, then waits for a participant to choose **Allow Omni to speak** or say “Omni, go ahead” with captions enabled. Approved speech also appears in the shared transcript.
+- **Codex and other WebMCP clients** can use structured browser tools to read meeting context, capture a screen or board, retrieve files, post requested messages, and edit diagrams. These clients run outside the app; Muse and Omni work in ordinary browsers.
+- **Automatic private reminders** separately check whether the participant’s explicit objection remains unresolved as a later decision moves ahead. These are evidence-linked discussion prompts; the app does not diagnose groupthink or compute a validated group-risk score.
 
-```
-apps/meeting          Landing page + meeting room (React + Vite), Cloudflare Worker + Durable Object
-packages/transcribe   Headless live transcription core (Gemini, OpenAI)
-```
+## Run locally
+
+Use Node.js 24 and pnpm 11.24.0, matching CI and the root `packageManager` field.
 
 ```bash
-pnpm install
+pnpm install --frozen-lockfile
+cp apps/meeting/.dev.vars.example apps/meeting/.dev.vars
+# Replace the placeholders with server-side credentials for the features you use.
 pnpm dev              # http://localhost:5173
-pnpm check            # typecheck + tests + build + deploy dry run
+pnpm check            # typecheck + tests + build + deployment dry run
 ```
 
-## Where to start reading
-
-| File | What it settles |
+| Credentials | Enables |
 | --- | --- |
-| `apps/meeting/PRODUCT.md` | What the product is and exactly what may be claimed |
-| `apps/meeting/GROUPTHINK.md` | The detection model: signals, formulas, thresholds, intervention policy, reading list |
-| `apps/meeting/ARCHITECTURE.md` | Data flow, protocol additions, storage, and the order to build in |
-| `apps/meeting/DESIGN.md` | The design system, including the analysis surfaces |
+| `GEMINI_API_KEY` | Gemini captions and automatic private analysis |
+| `OPENAI_API_KEY` | OpenAI captions, Muse, and Omni |
+| `TRANSCRIPTION_PROVIDER` | Optional `gemini` or `openai` caption-provider override; Gemini is preferred when both keys exist |
+| `TURN_KEY_ID` and `TURN_KEY_SECRET` | Cloudflare TURN relay provisioning; both are required for room connection setup |
 
-## Privacy
+Automatic private analysis requires Gemini even when captions use OpenAI. Muse and Omni require OpenAI even when captions use Gemini. Credentials stay server-side. See the [meeting setup guide](apps/meeting/README.md) for provisioning, API limits, local preview, and deployment.
 
-Camera, microphone, screen share, chat, files, whiteboard edits, and captions use encrypted WebRTC connections between participants. Browsers prefer direct connections and can use Cloudflare TURN to relay encrypted packets on restricted networks. The relay can process connection metadata, including IP addresses and timing, but cannot read the encrypted meeting content. The signaling Worker issues short-lived TURN credentials and routes connection setup messages; meeting media and data do not pass through that Worker.
+Deployment runs through [GitHub Actions](.github/workflows/deploy.yml) after checks on `main`; use `pnpm deploy:dry-run` to validate locally.
 
-Caption audio goes directly to the selected AI provider. Agent context, selected files/screens and conversations go directly to OpenAI after initialization. The Worker handles Agent settings and room coordination; it does not store meeting transcripts or private conversations.
+## Repository and documentation
 
-Automatic private analysis separately sends recent transcript text and previous automatic reminders through the Worker to Gemini. The Worker does not persist this analysis data. Participants can pause automatic analysis in the meeting.
+```text
+apps/meeting          React + Vite client, Cloudflare Worker and room Durable Object
+packages/transcribe   Headless browser transcription core for Gemini and OpenAI
+```
 
-See `apps/meeting/README.md` for room limits, TURN setup (`TURN_KEY_ID` / `TURN_KEY_SECRET`), and caption provider secrets (`GEMINI_API_KEY` / `OPENAI_API_KEY`).
+| Document | Purpose |
+| --- | --- |
+| [Meeting README](apps/meeting/README.md) | Setup, commands, environment, APIs, browser tools, limits, and deployment |
+| [Product](apps/meeting/PRODUCT.md) | Current capabilities, user flows, privacy boundaries, and claim limits |
+| [Architecture](apps/meeting/ARCHITECTURE.md) | Implemented modules, data paths, coordination, and storage |
+| [Groupthink and intervention policy](apps/meeting/GROUPTHINK.md) | Implemented reminder and Omni policies, and limits of interpretation |
+| [Design](apps/meeting/DESIGN.md) | Visual system and current interface behavior |
+| [Verification](apps/meeting/VERIFICATION.md) | Automated checks, browser harnesses, and their evidence limits |
+| [Project narrative（繁體中文）](apps/meeting/PROJECT-NARRATIVE.zh-TW.md) | Product motivation and collaboration scenarios |
+| [Transcription package](packages/transcribe/README.md) | Public API, provider differences, lifecycle, and usage |
 
-### Shared whiteboard
+## Data flow and storage
 
-In the bottom meeting controls, choose **Open shared whiteboard** to show the room's canvas and
-**Close whiteboard** to return to video. It starts closed; each participant
-controls their own view. Closing it does not clear its contents or stop sync.
+Meeting video, audio, screens, chat, files, captions, and whiteboard records travel over encrypted WebRTC connections between participants. Browsers prefer direct connections; Cloudflare TURN can relay encrypted packets on restricted networks. The relay handles connection metadata such as IP addresses and timing, but cannot read the encrypted content.
 
-The editor uses [Excalidraw](https://github.com/excalidraw/excalidraw) (MIT),
-with rectangles, decision diamonds, text, arrows and freehand drawing. Double-click
-a shape to edit its bound text; long labels wrap and expand the container.
-Drag nodes to move their text and attached arrows together. Use the hand tool
-or hold Space to pan, and the native zoom, selection, resize and undo controls.
-The menu can export an image. Fonts are served locally.
-For manual Mermaid input, open **More tools → Mermaid to Excalidraw**, paste
-the flowchart source, and choose **Insert**. The resulting elements also sync
-with the room.
+The signaling Worker routes connection setup, issues short-lived caption and TURN credentials, and initializes GPT-Live sessions. Its room Durable Object stores agent configuration, ownership, runner leases, approval/floor state, and coordination metadata. Meeting media and shared content use the peer connections, while caption audio goes directly from the browser to the selected AI provider. After Live initialization, assistant audio, permitted context, conversations, and tool results travel directly between the browser and OpenAI.
 
-Edits travel over the meeting's existing WebRTC data channels. Participants
-exchange versioned records, including deletions, when a channel opens, so late
-joiners and reconnected peers receive the shared board. Concurrent edits to the
-same element resolve by Excalidraw's version and nonce ordering. The canvas is held in
-participant memory, not persisted on the server: export before everyone leaves.
-The room supports up to 1,000 native element records (including bound text and
-deleted elements), 4,000 characters per text element and 2,000 points per stroke,
-subject to a 16 KB message limit per element. Images and embeds are not shared.
+Automatic private analysis sends a bounded recent transcript window and previous automatic-reminder evidence through the Worker to Gemini. The Worker does not persist these analysis requests or private conversations. Analysis starts automatically in a meeting; the current interface has no pause switch. Hiding or dismissing a reminder controls its display, not analysis.
 
-Two WebMCP tools are available while in a meeting:
+The browser stores the display name and caption preferences in `localStorage`. A bounded, room-specific `sessionStorage` checkpoint retains transcripts, text chat, private reminders, and up to 200 private Muse conversation lines for refresh/rejoin recovery in that tab, with a 12-hour validity window since the last save. Leaving saves this checkpoint; it does not erase it. Whiteboard elements and file bytes remain in participant memory and are excluded from that checkpoint. This is partial recovery, not a server-side meeting archive; export work before everyone leaves. AI-provider retention is separate from the app’s own storage.
 
-- `edit_whiteboard`: read native elements and bindings, or create, update, move,
-  delete and connect nodes. Tool requests accept up to 50 edits, 500 characters
-  per new label and 256 points per stroke. Edit a label through its container's id.
-  Use `action: "mermaid"` with a `source` string to import a Mermaid `flowchart`
-  or `graph` as editable nodes, bound labels and arrows. Branches, edge labels
-  loops and nested `subgraph` groups are supported. Existing content is preserved; one import is one
-  undo step. Imports accept up to 12,000 characters and 300 native elements
-  including labels. Other diagram types and image fallbacks are rejected.
-  A pinned converter patch handles Mermaid 11’s diagram-prefixed group IDs.
-- `capture_whiteboard`: capture the actual visible drawing canvas without
-  toolbars. Open the board and finish any active text edit before capturing.
+Private Muse Live and dictation pause the owner’s room microphone and public captions while capturing private input. Ending capture restores the meeting microphone preference and caption flow. Reading a selected reply aloud uses only the approved text, without private history or tools; it leaves the room microphone available and stops when the owner starts speaking.
 
-Use the capture tool after an edit to verify its rendered appearance. Closing
-the board preserves shared content; viewport position and selection remain local.
+## Shared whiteboard
 
-The personal **Muse** assistant uses the same whiteboard tools from an ordinary
-meeting browser. Open **Muse → Talk to Muse** and ask, for example, “Turn our
-discussion into a flowchart on the whiteboard,” or “Read the uploaded design
-and draw its workflow.” Room posting is off by default. To allow public summaries,
-open **Muse → Settings**, enable **Allow posting to Room (visible to everyone)**,
-and choose **Save settings**. Then explicitly ask Muse to post. Saving keeps
-your private conversation and stops work using the previous permissions.
-Its spoken replies remain private. It reads earlier meeting records and supported
-files as needed; it cannot recover records missing from this browser or fetch an
-uncached file from a participant who has left. Whiteboard output consists of
-editable shapes, labels and connectors; generated image assets are not supported.
+Choose **Open shared whiteboard** in the meeting controls. Each participant controls their own view; closing the board preserves its contents and synchronization. The [Excalidraw](https://github.com/excalidraw/excalidraw) editor supports shapes, bound text, arrows, freehand drawing, pan/zoom, and export. Fonts are served locally. Late joiners receive element records, including deletions, from connected peers. Concurrent edits resolve by native element version and nonce ordering.
 
-For example, pass this to `edit_whiteboard`, then call `capture_whiteboard`:
+For manual Mermaid input, open **More tools → Mermaid to Excalidraw**. For agent edits, `edit_whiteboard` supports read, edit, undo, redo, and Mermaid import; follow edits with `capture_whiteboard` to inspect the visible result. External WebMCP captures require the board to be open. Muse opens it when needed.
 
 ```json
 {
@@ -102,3 +78,5 @@ For example, pass this to `edit_whiteboard`, then call `capture_whiteboard`:
   "y": 0
 }
 ```
+
+Tool imports accept Mermaid `flowchart` / `graph`, including nested subgraphs, and add editable elements while preserving existing content. Other diagram families and generated image assets are unsupported. Imports are limited to 12,000 source characters and 300 native elements; the board holds up to 1,000 records including bound text and deletions. Native records are also subject to text, point-count, and 16 KiB frame limits. See the [meeting guide](apps/meeting/README.md) for the complete editing limits.

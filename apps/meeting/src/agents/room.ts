@@ -151,7 +151,7 @@ function settle(agent: RoomAgent): void {
 function grant(state: AgentRoomState, agent: RoomAgent, now: number, uuid: () => string): void {
   if (!agent.runner) return;
   state.floor = { id: uuid(), agentId: agent.id, runner: agent.runner, epoch: agent.epoch, startedAt: now, expiresAt: now + PUBLIC_TURN_MS };
-  // ponytail: retain 128 grant proofs for replay; older history is unavailable to late joiners.
+  // Retain 128 grant proofs for replay; older history is unavailable to late joiners.
   state.grants = [...state.grants.slice(-127), { ...state.floor }];
   agent.phase = 'speaking';
 }

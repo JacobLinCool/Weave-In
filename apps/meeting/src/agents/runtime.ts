@@ -40,7 +40,6 @@ export interface AgentView {
   personal: RoomAgent | null;
   group: RoomAgent | null;
   groupStatus: string;
-  audience: Audience;
   lines: AgentLine[];
   status: string;
   error: string | null;
@@ -54,7 +53,6 @@ export interface AgentView {
 export class AgentRuntime {
   #state = emptyAgentRoom();
   #lines: AgentLine[] = [];
-  #audience: Audience = 'private';
   #connectionLost = false;
   #recoverConfig: AgentConfig | null = null;
   #recoverReady = false;
@@ -120,7 +118,7 @@ export class AgentRuntime {
     return { room: this.#state, personal: this.#personal(), group: this.#state.agents.find((agent) => agent.config.kind === 'group') ?? null,
       groupStatus: this.#state.automation.published >= GROUP_MAX_INTERVENTIONS ? 'Five suggestions shared; automatic review is finished for this room.' : this.#now() < this.#state.automation.nextPublishAt ? 'Giving the room time to discuss.' : this.#discussion().length < GROUP_MIN_RECORDS ? 'Waiting for at least four public discussion messages.' : 'Watching for new public discussion.',
       personalActive: this.#operations.has('personal') || this.#queue.length > 0 || this.#publicRequestPending,
-      audience: this.#audience, lines: [...this.#lines], status: this.#status, error: this.#error, voice: !!this.#operations.get('personal')?.microphone, ready: this.#ready, queued: this.#queue.length, publicPersonalSpeaking: this.#publicRequestPending || this.#operations.get('personal')?.audience === 'public' || this.#queue.some((item) => item.audience === 'public') };
+      lines: [...this.#lines], status: this.#status, error: this.#error, voice: !!this.#operations.get('personal')?.microphone, ready: this.#ready, queued: this.#queue.length, publicPersonalSpeaking: this.#publicRequestPending || this.#operations.get('personal')?.audience === 'public' || this.#queue.some((item) => item.audience === 'public') };
   }
   #emit(): void { if (this.#closed) return; this.#view = this.#snapshot(); for (const listener of this.#listeners) listener(); }
   #personal(): RoomAgent | null { return this.#state.agents.find((agent) => agent.config.kind === 'personal' && agent.owner === this.ctx.peerId) ?? null; }
@@ -175,8 +173,6 @@ export class AgentRuntime {
     this.command({ type: 'agent-remove', id });
     this.#emit();
   }
-  /** Kept for callers upgrading from the old panel; persistent public mode is disabled. */
-  setAudience(_audience: Audience): void { this.#audience = 'private'; }
   restoreConversation(lines: AgentLine[]): void {
     // Restored records are local context only, never replayed as public messages or audio.
     this.#lines = lines.filter((line) => line.audience === 'private').slice(-200).map((line) => ({ ...line,
@@ -369,7 +365,7 @@ export class AgentRuntime {
     if (personal?.id !== this.#personalId) {
       this.#stop('personal', 'interrupted'); if (!this.#restorePrivateHistory) this.#lines = []; this.#queue = [];
       if (personal) this.#restorePrivateHistory = false;
-      this.#personalId = personal?.id ?? ''; this.#audience = 'private';
+      this.#personalId = personal?.id ?? '';
       this.#status = personal ? 'Ready for your question.' : 'Add Muse to start a conversation.';
     }
     for (const [kind, op] of this.#operations) if (!this.#valid(op)) this.#stop(kind, 'interrupted');
@@ -462,7 +458,7 @@ export class AgentRuntime {
             if (level > 0.02 && playing) {
               op.heard = true; op.lastSound = Date.now(); this.#markGroupPublished(op);
             }
-            // ponytail: two seconds of output silence closes a bounded reply; long rhetorical pauses may end it early.
+            // Two seconds of output silence closes a bounded reply; long rhetorical pauses may end it early.
             if (op.heard && !op.microphone && op.live?.canFinish(op.lastSound) && Date.now() - op.lastSound > 2_000) { this.#stop(agent.config.kind, 'finished'); this.#drain(); }
           }, (message) => { if (valid()) { this.#error = message; this.#stop(agent.config.kind, 'interrupted'); } });
           op.stopAudio = attached.stop;

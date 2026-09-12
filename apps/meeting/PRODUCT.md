@@ -8,92 +8,94 @@ web
 
 ## Users
 
-- Teams that make consequential decisions in meetings — product, research, strategy, investment committees — and who suspect their meetings reach agreement faster than they reach understanding.
-- Facilitators, chairs, and team leads who know a discussion is going wrong but cannot name the moment it did, and have nothing but instinct to act on.
-- Privacy-conscious small remote teams (startups, research groups, advisors) who discuss sensitive material and want their camera, microphone, and screen to stay between the people in the room.
-- All three care about keeping their own critical thinking intact while collaborating. The product should help every participant contribute input rather than let one voice dominate.
+- Small remote teams making decisions together, including product, research and strategy teams.
+- Participants who want to preserve a question, examine an assumption, or contribute while someone else holds the floor.
+- Facilitators and team leads who want grounded prompts when public discussion bypasses an objection, loses its goal, or repeats agreement without reasons.
+- Teams that want participant media and shared work transported over encrypted WebRTC, with explicit information about the separate AI data paths.
 
 ## Product Purpose
 
-Detect groupthink while it is happening and intervene before the decision is made.
+Help participants think independently and bring their ideas into the shared discussion before a decision is made.
 
-Groupthink is the failure mode where a group suppresses dissent to preserve harmony, stops thinking critically, and converges on a low-quality decision that no individual member would have defended alone. It is invisible from inside the room: the meeting feels productive precisely because nobody is arguing.
+Weave In is an agent-native meeting app. Browser video, screen sharing, public chat, per-speaker captions and an editable shared whiteboard provide a common workspace. Three forms of assistance connect to it: personal **Muse**, shared **Omni**, and an external personal agent such as **Codex** through a WebMCP-capable browser.
 
-The current product pairs browser meetings and per-participant transcription with a personal **Muse** tab and shared **Omni**. Muse opens directly into private chat with a settings button. Muse is configured on join and gives silent, evidence-based reminders when the owner’s explicit concern remains unresolved while a decision moves ahead. It supports private follow-up and can speak once for the owner after approval. Omni prepares brief questions and speaks publicly after participant approval. Omni automatically reviews public discussion for premature closure, sustained drift, domination and repetitive agreement, with grounded questions or abstention.
-
-Success means a participant can raise an overlooked concern before a decision is finalized. Post-meeting intervention reports remain future work.
+Groupthink motivates the work: people can reach agreement before important doubts or alternatives receive attention. The implementation recognizes specific discussion patterns and asks grounded questions. It does not diagnose groupthink, read unexpressed opinions, or establish that a team has made a poor decision. Success means a participant can preserve, clarify and raise an overlooked concern while it can still affect the discussion.
 
 ## Positioning
 
-Weave In helps participants notice an unresolved concern while the discussion is still underway.
+**Weave In — Keep the thread. Weave everyone in.**
 
-The meeting itself is the instrument, not the product. Full-mesh video, screen share, chat, and per-speaker live captions exist because they are the cleanest possible sensor: each participant transcribes their own microphone through the configured provider, so speaker attribution is structurally correct rather than guessed by diarization, and every utterance arrives tagged, timestamped, and separable. That signal is what the detection engine needs and what a mixed-audio recorder cannot give it.
+Private thinking, public conversation and asynchronous agent work belong in the same meeting workflow. A participant can discuss an idea with Muse, ask Codex to inspect code or research a question, and bring the result into Room or the shared whiteboard. Omni can prepare a public question when the discussion warrants one; a participant decides whether it may speak.
 
-Name: Weave In. "Keep the thread. Weave everyone in." The tagline is the product thesis, not decoration: *keep the thread* is topic drift, *weave everyone in* is participation balance. A meeting is cloth. Groupthink is what happens when every pass of the shuttle takes the same dye.
+The meeting works in an ordinary supported browser. External-agent tool access requires a browser exposing WebMCP, such as Codex's in-app browser. Codex supplies its own research and coding capabilities; Weave In supplies the meeting context and shared workspace tools.
 
 ## Operating Context
 
-- The meeting runs in the browser: full-mesh WebRTC with Cloudflare STUN/TURN, up to 8 participants, six-character room codes, invite links of the form `?room=CODE`.
-- Camera, microphone, screen share, chat, files, whiteboard edits, and captions travel over encrypted WebRTC between participants. Connections prefer a direct path and may use Cloudflare TURN to relay encrypted packets. The relay processes connection metadata but cannot decrypt the meeting content. The operator's signaling Worker handles connection setup and credential issuance, not the meeting media or data-channel payloads.
-- Audio for captions travels directly from the speaker's browser to the selected AI provider (Gemini or OpenAI) using a single-use ephemeral token minted by the Worker.
-- Agent settings and connection descriptions go to the Worker for GPT-Live initialization. Meeting records, private conversations and permitted tools then travel directly between the Client and OpenAI.
-- The room Durable Object coordinates Agent identity, the single Group executor, leases and public speaking rights. It does not store utterances or embeddings. Coordination is deleted when the last member leaves.
-- Personal source permissions can be set at creation and edited by the owner. Private conversations stay out of public replay and the meeting log. Speaking for the owner uses only the selected completed Muse reply or specifically approved reminder in a fresh session, without private history or tools; persistent public mode is disabled.
-- Automatic reminder analysis sends bounded human transcript text and prior reminder evidence through the Worker to Gemini, without Worker persistence. It runs while the meeting page is open, without a Codex browser or external assistant session.
-- Same-tab room recovery uses sessionStorage for meeting text, reminders and up to 200 private Muse lines, for up to 12 hours since the last save. It does not restore active audio sessions or queued speaking approvals.
-- Display name and settings (languages spoken, caption style, captions on/off) persist in the browser's localStorage.
+- Browser meetings use full-mesh WebRTC for up to eight participants, six-character room codes, and invite links of the form `?room=CODE`. No account is required.
+- Camera, microphone, screen share, public chat, files, whiteboard edits and captions travel over encrypted WebRTC between participants. Connections prefer a direct route; Cloudflare TURN can relay encrypted packets. TURN handles connection metadata and cannot decrypt WebRTC content.
+- Each participant sends their own microphone audio directly to the configured caption provider, Gemini or OpenAI, using a short-lived credential issued by the Worker. The browser supplies speaker identity; caption wording and completeness remain dependent on recognition and connectivity. The meeting settings choose languages and caption style, not the provider.
+- Muse and Omni use GPT-Live-1 with Responses delegation to `gpt-5.6-terra`. The Worker authorizes initialization and handles agent configuration, session settings and SDP. Selected meeting context, private conversation and permitted tool results subsequently travel directly between the browser and OpenAI.
+- The room Durable Object coordinates membership, assistant identities, the elected Omni runner, leases, approval and public speaking turns. Public discussion and private conversations are not stored there. Room coordination is cleared when the room becomes empty.
+- Automatic private reminder analysis is a separate browser-to-Worker-to-Gemini path. It sends bounded finalized human captions and prior automatic-reminder evidence for analysis without persisting those records in the Worker. It runs while the meeting page is open without an external agent session.
+- Meeting text, reminders and up to 200 private Muse lines are checkpointed in same-tab `sessionStorage`, subject to size limits and a 12-hour expiry since the last save. Refresh/rejoin restores available text, not file bytes, the whiteboard, active audio or queued speaking approvals. Display name and caption settings use `localStorage`. Storage failures are surfaced as recovery limitations.
 
 ## Capabilities and Constraints
 
-### Current implementation
+### Meeting and shared work
 
-- Silent private reminder cards float at the stage's lower left without reserving layout space. They collapse after 15 seconds, pausing while hovered or focused; evidence and history remain in the Muse panel.
-- Automatic analysis covers explicit unresolved concerns bypassed by later decisions, delivered only to the concern's author. The same concern can recur on a substantive new commitment, execution or scope change, not a timer or paraphrased decision. Meaning and novelty remain model judgments, not a validated diagnosis of Groupthink.
-- **Discuss privately** opens follow-up in personal Muse. **Speak for me** grants one brief public turn, allowing slight elaboration without new commitments or private details. The owner's microphone remains in its current state; owner speech stops the assistant without automatic resume. Every new turn needs another approval.
-- One personal Muse is configured automatically per participant; one shared Omni is enabled automatically for the room without a setup form. Removing Omni keeps it off for the rest of that room unless explicitly added again. Role, language, source and tool permissions remain configurable.
-- Omni prepares a question of at most 240 characters and waits for button or explicit voice approval before speaking to everyone, labelled Omni in the public transcript. A persistent Omni card at the top of Room shows status, glows while preparing or publishing, and lets every participant edit settings; public transcripts replay to late joiners. A ready browser can take over if the runner leaves.
-- Camera, microphone, screen share with live renegotiation, shared messages and files, per-speaker live captions, and a merged transcript.
-- Up to four selected BCP-47 caption languages or automatic detection; Verbatim or Smart captions. Each browser sends its own audio directly to its caption provider.
-- Signaling reconnects automatically while preserving local state. Refresh/rejoin restores the same tab's checkpoint, including private reminder and Muse text history; it does not replay interrupted speech.
-- No accounts or meeting recording. Meeting media is encrypted between participants; Cloudflare TURN may relay it without decrypting it. The signaling Worker does not carry that media. Configured AI providers receive the selected audio/context. GPT-Live uses native browser WebRTC after authorized initialization, with Responses delegation.
+- Camera, microphone and screen sharing with live connection renegotiation; Room messages and shared files; per-speaker captions and a merged Transcript view.
+- Captions default to enabled, automatic language detection and Verbatim style. Participants may select up to four supported BCP-47 languages or choose Smart captions.
+- Files transfer on demand between browsers, up to 300 MiB each. Supported images, PDF, DOCX, Markdown and text have in-app previews with smaller format-specific size limits. Availability depends on a connected browser retaining the bytes.
+- An Excalidraw-based shared whiteboard supports human drawing and structured agent reads and edits. Mermaid `flowchart` / `graph` imports, including subgraphs, become native editable nodes, bound text and arrows. Other Mermaid diagram families and image embedding are unsupported.
+- WebMCP exposes available meeting records, shared-file download, screen capture, private reminders, public message posting, whiteboard capture, and structured whiteboard read/edit/import/undo/redo. Tool access belongs to the browser integration; Muse has its own scoped tool set and settings.
+- Signaling reconnects automatically. Connected peers replay available public history and board state to late joiners. This is peer recovery, not a complete server archive.
 
-### In development
+### Muse
 
-These remain proposals. Do not describe them as running in the current implementation.
+- One personal Muse is configured automatically on join and opens into private discussion. Text requests, microphone dictation into an editable draft, and continuous **Live** voice conversation are distinct controls.
+- Live conversation and dictation pause the owner's public microphone and captions while capturing private input, then restore the meeting microphone state. Joining the room does not itself begin private voice capture.
+- By default Muse may read everyone's public contributions, public chat, system signals, shared files and the whiteboard. Shared-screen access is off; Room posting is off. Owners can change public-source scope, chat/system inclusion, screen/file access, role instructions, language and Room-posting permission in Muse settings.
+- Muse can inspect shared work during private requests and edit the whiteboard when asked. Posting to Room requires enabling that setting and requesting the specific public message. Tool availability and incoming meeting context do not themselves authorize shared actions.
+- Automatic reminders identify an owner's explicit unresolved concern when later public speech moves toward a concrete decision that bypasses it. They use recent finalized human captions, not Room chat, silence or inferred private positions. The same concern may recur only on a substantive new commitment, execution or scope change, as judged by the model and checked against prior evidence.
+- Private reminder cards appear silently at the lower left of the stage without reserving space or covering captions. They collapse after 15 visible seconds, pausing while hovered or focused; evidence and history remain in Muse. The history supports reading and dismissal, and reports analysis unavailability.
+- **Discuss privately** asks Muse to help consider the reminder. **Speak for me**, or **Send** on a completed private Muse reply, authorizes one faithful public reading of only that selected text. A fresh session receives no private history or tools, omits Markdown marks, and does not elaborate or make new commitments. The owner's public microphone stays in its current state; owner speech cancels pending or active Muse speech without automatic resume. Every later spoken turn requires a new approval.
+- Private conversations and reminders stay out of public replay and the meeting log. Selected shared content and approved speech are visible to the room with assistant attribution.
 
-- **Semantic space analysis.** Every finalized utterance is embedded; the room maintains a rolling window, a group centroid, and a dispersion measure.
-- **Four groupthink detectors.** Convergence (opinions collapsing too early), drift (the discussion leaving its own agenda), float (one voice running unchecked), and echo (agreement carrying no new information). Specified in `GROUPTHINK.md`.
-- **Visual intervention.** When a detector fires, every participant sees a non-intrusive card on the stage and an entry in the Insights panel, carrying the named signal and a generated counter-question. These proposed surfaces do not replace the current silent private Muse cards or text-only Omni behavior.
-- **The Hand.** A six-axis profile of each participant's communication style — airtime, initiative, challenge, inquiry, echo, influence — drawn as a radar in their thread colour.
-- **The Trace.** The discussion's path through semantic space over time, rendered as a dimensionally-reduced trajectory, so convergence and drift are visible as shape rather than asserted as a number.
-- **Post-meeting report.** The signal timeline, each intervention, and whether the discussion reopened after it.
+### Omni
 
-### Explicitly deferred
+- One shared Omni is enabled automatically for the room. A ready browser runs it; another ready browser can take over if the runner leaves. Any participant may edit its settings. The host or its owner may remove it; removal keeps it off until explicitly added again.
+- Omni automatically reviews public finalized speech and Room chat for four categories: premature closure (`convergence`), sustained goal departure (`drift`), domination (`float`), and agreement without new information (`echo`). It uses semantic model review, evidence validation and abstention, as specified in [GROUPTHINK.md](GROUPTHINK.md).
+- Preparation requires fresh public discussion and a quiet interval. Omni prepares a question of at most 240 characters silently, then waits for **Allow Omni to speak** or a fresh local finalized “Omni, go ahead” / “Omni，請發言” caption. Approval authorizes only that prepared question. New discussion or an expired draft cancels it.
+- After approval, Omni waits for a quiet public turn, speaks to everyone and appears in Transcript. It does not publish each question as a Room chat message or edit the whiteboard. Its persistent Room card shows status, approval and Stop controls; settings replace the card content inline.
+- The room enforces a 30-second review interval, 120 seconds between confirmed publications and at most five confirmed publications while it remains occupied. Review pauses when the runner tab is hidden or speech monitoring is unavailable. These are cost and interruption limits, not measures of detection accuracy.
 
-- Shared whiteboard. The team decided the whiteboard is an instrument for capturing non-verbal interaction data, not a headline feature. It is not part of the first build and must not lead the pitch.
-- Host-only dashboards. Private assistance belongs to each participant; shared public suggestions are visible to everyone, rather than restricted to the chair.
+### Current limits
+
+- There is no validated groupthink diagnosis, participant personality score, semantic-dispersion dashboard, Insights tab, Hand radar, Trace trajectory or post-meeting intervention report. Those older visualization concepts are not the current detection algorithm or interface.
+- Automatic private reminders and Omni are separate systems with different inputs, providers and approval paths. Muse source settings do not configure automatic reminder analysis.
+- Available context is bounded by the records in the current browser and application input budgets. An assistant may need to fetch earlier records or file pages, and must report unavailable context rather than imply it has read the entire meeting.
+- No account system or meeting-media recording is implemented. Browser checkpoints are local recovery data, not a permanent meeting archive.
 
 ## Brand Commitments
 
-- Name: Weave In. Tagline: "Keep the thread. Weave everyone in." (confirmed by the user, 2026-09-12; replaces the working name On Track)
-- Landing page language: English.
-- The animated demonstration on the landing page is built in-page with React/CSS/SVG, not as a video file.
-- Privacy copy must distinguish encrypted peer media (which may use Cloudflare TURN), direct AI connections, and the Worker. TURN handles connection metadata but cannot decrypt WebRTC content. The Worker handles Agent settings, SDP, credential issuance and coordination, plus bounded transcript/reminder evidence for stateless Gemini analysis. It does not persist conversation records. AI providers receive the selected audio/context/tool data. Do not claim that all connections are direct, nothing leaves the browser, or no metadata reaches the server. Update the landing page and README with changes to these data paths.
-- The assistant has no dye: it is not a participant, it is never given a thread colour, and it is never described as a member of the meeting.
-- Detector output is stated as an observation with its evidence, never as a verdict about a person. "Three speakers in a row added no new position" is allowed. "You are being a conformist" is not.
+- Name: Weave In. Tagline: “Keep the thread. Weave everyone in.” Landing-page language: English.
+- The landing demonstration is an explicitly illustrative React/CSS/SVG conversation. Its statements demonstrate the workflow; they are not real users, testimonials or measured outcomes.
+- Indigo meeting surfaces, cotton text, human thread colors and gold actions form the visual identity. Assistants retain explicit names and neutral public transcript styling rather than receiving human video tiles.
+- Privacy copy distinguishes participant WebRTC/TURN, direct AI-provider connections, Worker processing and local recovery storage. Never imply all traffic stays in the browser, every connection is direct, or the Worker never receives transcript text. Keep landing and README claims synchronized with these paths.
+- Signals identify discussion evidence and a useful question, not a verdict about a person. Do not claim validated detection, improved critical thinking or better decisions without outcome evidence.
 
 ## Evidence on Hand
 
-- A working product in `apps/meeting`; real screenshots can be captured from the running app.
-- The groupthink literature is the theoretical backing and is cited in `GROUPTHINK.md`. Citing Janis and the established literature is legitimate; claiming our detectors are validated against it is not, until they are.
-- No testimonials, customers, metrics, press, or pricing. Do not fabricate any.
+- Implemented behavior is in [src/App.tsx](src/App.tsx), [src/agents](src/agents), [src/webmcp.ts](src/webmcp.ts), the whiteboard modules and [worker](worker).
+- [VERIFICATION.md](VERIFICATION.md) describes reproducible tests and the limits of browser/provider verification. [GROUPTHINK.md](GROUPTHINK.md) describes Omni's actual review policy.
+- There are no documented customer, testimonial, pricing or outcome metrics to use as product proof.
 
 ## Product Principles
 
-1. **Name the moment, not the person.** Every signal is attached to a timestamp and an utterance the group can go back and look at. The product describes what the discussion did, never what a participant is.
-2. **Respect private and shared audiences.** Muse reminders and discussion belong to their owner. Only a selected completed Muse reply or specifically approved reminder may be spoken for them; Omni uses public context and posts visibly to the room.
-3. **AI assists thinking and never replaces it.** Participants retain decisions. Muse needs approval for each public spoken turn and stops when its owner speaks. Omni speaks only after explicit participant approval.
-4. **Truth over slogans.** Privacy claims name exactly what leaves the browser and where it goes. The claim changed when the product changed; the copy changes with it.
-5. **Every voice is its own source.** Each person transcribes themselves; nothing is mixed or attributed by guesswork. Correct attribution is a precondition for every measurement downstream.
-6. **Intervene rarely and well.** An assistant that fires constantly is noise, and a group learns to ignore noise. The implemented detector uses cooldowns, evidence checks and substantive-development rules; broader warm-up and per-meeting caps belong to the proposed detector model.
-7. **Zero-friction entry.** A link, a name, a room.
+1. **Preserve independent thinking.** Give people a private place to clarify an idea and an explicit path to share it.
+2. **Respect the audience.** Private replies, requested shared edits, Room posts and public speech have different authorization boundaries.
+3. **Keep decisions with participants.** Muse needs approval for each public reading; Omni needs approval for each prepared question.
+4. **Ground the prompt.** Use explicit discussion evidence, examine intervening replies and abstain when meaning or novelty is uncertain.
+5. **Make shared work editable.** People and agents should continue working on the same board objects and visible results.
+6. **State the actual limits.** Describe data paths, local-history coverage and model uncertainty accurately.
+7. **Keep entry simple.** A link, a name and a room; agent settings remain available when needed.

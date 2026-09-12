@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { WhiteboardStore, newBoardShape, parseBoardElement, connectorPath, type BoardElement } from '../src/whiteboard-model';
-import { parsePeerMessage, MAX_PEER_MESSAGE_BYTES } from '../src/protocol';
+import { WhiteboardStore, newBoardShape, parseBoardElement, type BoardElement } from '../src/whiteboard-model';
+import { parsePeerMessage } from '../src/protocol';
 const note = () => newBoardShape('note', 10, 20, '#f6d878');
-describe('shared whiteboard', () => {
-  it('synchronizes edits without a mounted whiteboard and replays deletions to late joiners', () => {
+describe('whiteboard edit planning model', () => {
+  it('preserves deletion records when seeding a planning store', () => {
     const b = new WhiteboardStore(() => {}, 'b');
     const a = new WhiteboardStore(e => b.merge(e), 'a');
     const shape = note(); a.commit([shape]);
@@ -37,29 +37,15 @@ describe('shared whiteboard', () => {
     expect(a.snapshot()).toEqual(b.snapshot()); expect(a.snapshot()).toHaveLength(2);
     a.reset(); expect(a.records()).toEqual([]); expect(a.canUndo).toBe(false);
   });
-  it('rejects malformed remote records and keeps maximal frames bounded', () => {
+  it('rejects malformed planning records', () => {
     const record: BoardElement = { ...note(), actor: 'a', clock: 1 };
     for (const change of [{ x: Infinity }, { width: NaN }, { text: 'x'.repeat(501) }, { points: [[0, 'x']] }, { clock: -1 }, { color: 'url(evil)' }, { kind: 'connector', from: 'a', to: 'a' }]) {
       expect(parseBoardElement({ ...record, ...change })).toBeNull();
-      expect(parsePeerMessage({ type: 'whiteboard', element: { ...record, ...change } })).toBeNull();
     }
     const maximal = { ...record, text: '\\'.repeat(500), points: Array.from({ length: 256 }, () => [-19999.123456789012, -19999.123456789012]) };
-    const frame = { type: 'whiteboard', element: maximal };
-    expect(parsePeerMessage(frame)).not.toBeNull();
-    expect(new TextEncoder().encode(JSON.stringify(frame)).length).toBeLessThan(MAX_PEER_MESSAGE_BYTES);
+    expect(parseBoardElement(maximal)).not.toBeNull();
   });
-  it('keeps connectors attached when a node moves', () => {
-    const a = { ...note(), kind: 'rectangle' as const, x: 0, y: 0, width: 100, height: 100 };
-    const b = { ...a, id: 'b', x: 300 };
-    expect(connectorPath(a, b)).toBe('M 100 50 L 200 50 L 300 50');
-    expect(connectorPath(a, { ...b, x: 500 })).toBe('M 100 50 L 300 50 L 500 50');
+  it('does not accept planning records as a room transport message', () => {
+    expect(parsePeerMessage({ type: 'whiteboard', element: { ...note(), actor: 'a', clock: 1 } })).toBeNull();
   });
 });
-
- it('routes vertical diamond connections with a vertical final segment', () => {
-   const a = { ...note(), kind: 'diamond' as const, x: 0, y: 0, width: 180, height: 90 };
-   const b = { ...a, id: 'b', y: 240 };
-   expect(connectorPath(a, b)).toBe('M 90 90 L 90 165 L 90 240');
-   expect(connectorPath(b, a)).toBe('M 90 240 L 90 165 L 90 90');
-   expect(connectorPath(a, { ...b, x: 20 })).toBe('M 90 90 L 90 165 L 110 165 L 110 240');
- });

@@ -4,12 +4,11 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "node scripts/prepare-whiteboard-assets.mjs && WRANGLER_LOG_PATH=./wrangler.log vite",
+    "dev": "pnpm --filter @weave-in/transcribe build && node scripts/prepare-whiteboard-assets.mjs && WRANGLER_LOG_PATH=./wrangler.log vite",
     "build": "node scripts/prepare-whiteboard-assets.mjs && WRANGLER_LOG_PATH=./wrangler.log vite build && node scripts/verify-bundle.mjs",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test": "WRANGLER_LOG_PATH=./wrangler.log vitest run",
-    "deploy": "pnpm build && WRANGLER_LOG_PATH=./wrangler.log wrangler deploy",
     "deploy:dry-run": "pnpm build && WRANGLER_LOG_PATH=./wrangler.log wrangler deploy --dry-run",
     "serve:local": "node scripts/serve-local.mjs"
   },

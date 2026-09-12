@@ -64,7 +64,8 @@ export interface CreateTranscriptionOptions {
 
 /**
  * Creates a local, headless live transcription session. Audio sources are mixed
- * in the page and sent directly to the selected provider; nothing is persisted.
+ * in the page and sent directly to the selected provider. The library retains
+ * transcript text in memory and does not write browser or server storage.
  */
 export function createTranscription(options: CreateTranscriptionOptions = {}): Transcription {
   const session = new TranscriptionSession({

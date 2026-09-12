@@ -190,7 +190,7 @@ function splitTranscript(text: string): string[] {
   const chunks: string[] = [];
   let remaining = text;
   while (remaining.length > MAX_SEGMENT_CHARACTERS) {
-    const candidate = remaining.slice(0, MAX_SEGMENT_CHARACTERS + 1);
+    const candidate = remaining.slice(0, MAX_SEGMENT_CHARACTERS);
     const breakAt = Math.max(
       candidate.lastIndexOf(' '),
       candidate.lastIndexOf('。'),

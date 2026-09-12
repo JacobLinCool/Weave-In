@@ -232,6 +232,30 @@ describe('Gemini connection recovery', () => {
     expect(h.observed.onFatalError).not.toHaveBeenCalled();
   });
 
+  it.each(['scheduled', 'goAway'])('reports reconnecting throughout %s rotation', async (trigger) => {
+    const h = await recoveryHarness();
+    if (trigger === 'scheduled') await vi.advanceTimersByTimeAsync(GEMINI_ROTATION_INTERVAL_MS);
+    else h.sockets[0]!.message({ goAway: { timeLeft: '5s' } });
+
+    expect(h.observed.onReconnecting).toHaveBeenCalledOnce();
+    h.client.sendAudio(new Uint8Array([1, 2]).buffer);
+    expect(JSON.parse(h.sockets[0]!.sent.at(-1)!)).toEqual({
+      realtimeInput: { audioStreamEnd: true },
+    });
+    h.sockets[0]!.message({ serverContent: { inputTranscription: { text: 'Last turn' } } });
+    expect(h.observed.onFinal).toHaveBeenCalledWith('Last turn', 1);
+
+    await vi.advanceTimersByTimeAsync(750);
+    h.ready(1);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.observed.onConnectionReady).toHaveBeenLastCalledWith(2);
+    expect(JSON.parse(h.sockets[1]!.sent.at(-1)!)).toMatchObject({
+      realtimeInput: { audio: { data: 'AQI=' } },
+    });
+    expect(h.observed.onReconnecting).toHaveBeenCalledOnce();
+    await h.stop();
+  });
+
   it('handles duplicate GoAway and close during graceful rotation only once', async () => {
     const h = await recoveryHarness();
     h.sockets[0]!.message({ goAway: { timeLeft: '5s' } });

@@ -41,6 +41,7 @@ export interface EphemeralTokenCredential {
 export type Credential = ApiKeyCredential | EphemeralTokenCredential;
 export type CredentialProvider = (context: {
   reason: 'initial' | 'rotation';
+  /** One-based connection number; failed reconnect attempts reuse the next number. */
   connection: number;
   provider: TranscriptionProvider;
 }) => Promise<Credential>;
@@ -48,7 +49,9 @@ export type CredentialInput = Credential | CredentialProvider;
 
 export interface AudioSourceOptions {
   id?: string;
+  /** Per-track gain in the range 0–4; defaults to 1. */
   gain?: number;
+  /** Stop tracks on removal or audio resource cleanup; defaults to false. */
   owned?: boolean;
 }
 
@@ -82,11 +85,14 @@ export interface TranscriptState {
 
 export interface TranscriptQuery {
   afterSegmentId?: number;
+  /** Finalized-text budget in UTF-16 code units, clamped to 256–50,000. */
   maxChars?: number;
+  /** Include current interim text outside maxChars; defaults to true. */
   includeInterim?: boolean;
 }
 
 export interface TranscriptWaitQuery extends TranscriptQuery {
+  /** Wait for finalized text or lifecycle changes, up to 30,000 ms; defaults to 0. */
   waitMs?: number;
 }
 

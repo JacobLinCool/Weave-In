@@ -52,7 +52,6 @@ export class OpenAiLiveTranscriber implements LiveTranscriber {
   #rotationTimer: ReturnType<typeof setTimeout> | null = null;
   #fatalErrorReported = false;
   #sentAudioSinceCommit = false;
-  #uncommittedAudioBytes = 0;
   #quietAudioBytes = 0;
   #hasSpeech = false;
   #pendingCommits = 0;
@@ -380,7 +379,6 @@ export class OpenAiLiveTranscriber implements LiveTranscriber {
       }),
     );
     this.#sentAudioSinceCommit = true;
-    this.#uncommittedAudioBytes += pcm16.byteLength;
     const view = new DataView(pcm16);
     const samples = Math.floor(view.byteLength / 2);
     let energy = 0;
@@ -438,7 +436,6 @@ export class OpenAiLiveTranscriber implements LiveTranscriber {
     this.#pendingCommits += 1;
     channel.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
     this.#sentAudioSinceCommit = false;
-    this.#uncommittedAudioBytes = 0;
     this.#quietAudioBytes = 0;
     this.#hasSpeech = false;
   }
@@ -478,7 +475,6 @@ export class OpenAiLiveTranscriber implements LiveTranscriber {
     this.#completedItems.clear();
     this.#pendingCommits = 0;
     this.#sentAudioSinceCommit = false;
-    this.#uncommittedAudioBytes = 0;
     this.#quietAudioBytes = 0;
     this.#hasSpeech = false;
     if (channel && channel.readyState < 2) channel.close(1000, 'Transcription stopped');
@@ -525,7 +521,7 @@ function validateOpenAiOptions(options: TranscriptionOptions): void {
   }
 }
 
-/** OpenAI expects ISO 639-1 hints; Chinese variants (`zh`, `cmn`, `yue`) collapse to `zh` with an optional region. */
+/** Send the base language hint; Chinese variants collapse to zh with an optional region. */
 function openAiLanguageHint(languageCode: string): string {
   if (!languageCode) return '';
   const parts = languageCode.toLowerCase().split('-');

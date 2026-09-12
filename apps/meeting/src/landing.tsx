@@ -104,7 +104,7 @@ export function LandingSurface(props: LandingProps): ReactNode {
         <div className="agent-roles">
           <article className="agent-role">
             <div className="agent-role__title"><h3>Omni</h3><span>For the whole room</span></div>
-            <p>Bring an unanswered concern back into view. Notice when the discussion moves away from the agenda. Omni offers a shared prompt; your team decides where to go next.</p>
+            <p>Bring an unanswered concern back into view, or return to an explicit meeting goal. Omni prepares a question silently and speaks after someone approves. Your team decides where to go next.</p>
           </article>
           <article className="agent-role">
             <div className="agent-role__title"><h3>Muse</h3><span>For thinking out loud, privately</span></div>
@@ -170,7 +170,11 @@ export function LandingSurface(props: LandingProps): ReactNode {
           </div>
           <div className="key__row">
             <dt><WovenChip colors={['#303A6B', '#F3EEE3']} /> Our server</dt>
-            <dd>Our signaling Worker connects browsers, issues short-lived caption and TURN credentials, and initializes and coordinates assistants. It does not carry meeting media, chat, files, or whiteboard content. Cloudflare's TURN relay is a separate data path. Automatic reminders send recent transcript text and previous reminders through the Worker to an AI provider for analysis. We do not store this analysis or private conversations. You can pause automatic reminders in Muse.</dd>
+            <dd>Our signaling Worker connects browsers, issues short-lived caption and TURN credentials, and initializes assistants. The room service stores assistant settings and coordination state. Meeting media and shared content use the participant connections; Cloudflare's TURN relay is a separate path. Automatic reminders send recent transcript text and previous reminder evidence through the Worker to an AI provider. The server does not store that analysis or private conversations. Analysis starts automatically; there is currently no pause switch.</dd>
+          </div>
+          <div className="key__row">
+            <dt><WovenChip colors={[THREAD_COLORS[2]!.hex, '#F3EEE3']} /> In this browser</dt>
+            <dd>Your display name and caption preferences stay in local browser storage. A bounded checkpoint in this tab keeps text chat, transcripts, reminders, and private Muse conversation for refresh or rejoin, valid for 12 hours after the last save. Leaving keeps that checkpoint. File bytes and the whiteboard stay in memory, so export before everyone leaves. AI-provider retention is separate from this browser storage.</dd>
           </div>
         </dl>
       </section>

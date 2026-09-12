@@ -92,6 +92,27 @@ describe('TranscriptStore', () => {
     expect(result.hasMore).toBe(true);
   });
 
+  it.each(['.', '。', '！', '？'])('keeps a %s at the query boundary pageable', (punctuation) => {
+    const store = new TranscriptStore();
+    const transcript = 'a'.repeat(256) + punctuation + 'b'.repeat(256);
+    store.appendFinal(transcript, 1);
+
+    let cursor = 0;
+    const received: string[] = [];
+    for (let page = 0; page < 3; page += 1) {
+      const result = store.query({ afterSegmentId: cursor, maxChars: 256 });
+      expect(result.segments.length).toBeGreaterThan(0);
+      expect(result.segments.reduce((length, segment) => length + segment.text.length, 0))
+        .toBeLessThanOrEqual(256);
+      expect(result.cursor).toBeGreaterThan(cursor);
+      received.push(...result.segments.map((segment) => segment.text));
+      cursor = result.cursor;
+      if (!result.hasMore) break;
+    }
+    expect(received.join('')).toBe(transcript);
+    expect(store.query({ afterSegmentId: cursor }).segments).toEqual([]);
+  });
+
   it('reports a cursor older than retained history', () => {
     const state = {
       ...new TranscriptStore().snapshot(),

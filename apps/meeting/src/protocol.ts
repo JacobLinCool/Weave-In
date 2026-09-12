@@ -1,5 +1,4 @@
 import { parseAgentCommand, parseAgentPeerMessage, type AgentCommand, type AgentPeerMessage, type AgentRoomState } from './agents/contracts';
-import { parseBoardElement, type BoardElement } from './whiteboard-model';
 import { parseExcalidrawElement } from './excalidraw-store';
 import type { ExcalidrawElement } from '@excalidraw/excalidraw/element/types';
 
@@ -89,7 +88,6 @@ export type HistoryEntry =
 export type PeerMessage =
   | AgentPeerMessage
   | { type: 'excalidraw'; element: ExcalidrawElement }
-  | { type: 'whiteboard'; element: BoardElement }
   | ({ type: 'state' } & PeerMediaState)
   | { type: 'chat'; id: string; text: string; at: string; agent: string | null }
   | { type: 'transcript'; id: string; text: string; at: string; final: boolean }
@@ -131,10 +129,6 @@ export function parsePeerMessage(value: unknown): PeerMessage | null {
     case 'excalidraw': {
       const element = parseExcalidrawElement(value['element']);
       return element ? { type: 'excalidraw', element } : null;
-    }
-    case 'whiteboard': {
-      const element = parseBoardElement(value['element']);
-      return element ? { type: 'whiteboard', element } : null;
     }
     case 'state': {
       const cameraStreamId = optionalStreamId(value['cameraStreamId']);

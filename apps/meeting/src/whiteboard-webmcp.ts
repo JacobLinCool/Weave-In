@@ -198,7 +198,7 @@ export async function editExcalidrawWhiteboard(store: ExcalidrawToolStore, input
     const shape = nativeShape(element, before);
     if (shape) {
       nativeShapes.set(shape.id, shape);
-      // The legacy edit validator bounds *new input*. Keep a bounded planning proxy while
+      // The edit validator bounds *new input*. Keep a bounded planning proxy while
       // preserving every untouched native value below (e.g. long labels and wide diagrams).
       planner.merge({ ...shape, x: Math.max(-20_000, Math.min(20_000, shape.x)), y: Math.max(-20_000, Math.min(20_000, shape.y)),
         width: Math.min(1200, shape.width), height: Math.min(1200, shape.height), text: shape.text.slice(0, 500), points: shape.points.slice(0, 256) });
