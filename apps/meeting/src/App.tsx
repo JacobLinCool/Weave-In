@@ -531,7 +531,7 @@ export function App(): ReactNode {
         onConnected: (self, initialPeers, startedAt) => {
           setReconnecting(false);
           setError(null);
-          setRoomStartedAt(current => current ?? startedAt);
+          setRoomStartedAt(startedAt);
           selfRef.current = self;
           if (phaseRef.current === 'room') autoReminders.start({log: () => logRef.current, you: () => self.peerId});
           const next = Object.fromEntries(initialPeers.map((peer) => [peer.peerId, { identity: peer, seat: seatFor(peer.peerId), streams: {}, media: null }]));
