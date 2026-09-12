@@ -163,10 +163,10 @@ export class AgentRuntime {
     if (existing) return existing;
     if (this.#creatingPersonal) return this.#creatingPersonal;
     this.#creatingPersonal = (async () => {
-      if (this.#closed || this.#connectionLost) throw new Error('Reconnect to the meeting before using Chat.');
+      if (this.#closed || this.#connectionLost) throw new Error('Reconnect to the meeting before using Muse.');
       this.command({ type: 'agent-create', config });
       return await new Promise<RoomAgent>((resolve, reject) => {
-        const timeout = setTimeout(() => { unsubscribe(); reject(new Error('Chat could not be created. Please try again.')); }, 10_000);
+        const timeout = setTimeout(() => { unsubscribe(); reject(new Error('Muse could not be created. Please try again.')); }, 10_000);
         const unsubscribe = this.subscribe(() => {
           const personal = this.#personal();
           if (personal) { clearTimeout(timeout); unsubscribe(); resolve(personal); }
@@ -295,7 +295,7 @@ export class AgentRuntime {
     if (this.#awaitingRecoveryState && !this.#connectionLost) {
       this.#awaitingRecoveryState = false;
       const config = this.#recoverConfig; this.#recoverConfig = null;
-      if (config && !personal) void this.#ensurePersonal(config).catch((error: unknown) => { this.#error = error instanceof Error ? error.message : 'Unable to restore Chat.'; this.#emit(); });
+      if (config && !personal) void this.#ensurePersonal(config).catch((error: unknown) => { this.#error = error instanceof Error ? error.message : 'Unable to restore Muse.'; this.#emit(); });
     }
     const pending = this.#pendingPeer.splice(0);
     for (const item of pending) if (item.until > Date.now()) this.receive(item.peer, item.message, item.until);
@@ -397,7 +397,7 @@ export class AgentRuntime {
   #line(op: Operation, role: AgentLine['role'], delta: string, start: number, end: number, input: AgentLine['input']): void {
     // Group nearby fragments by timestamp, including late arrivals, without rewriting their text.
     const matching = [...op.rows.values()].find((row) => row.line.role === role && row.line.input === input && start <= row.end + 1_500 && end >= row.start - 1_500 && row.line.text.length + delta.length <= 4_000);
-    const row = matching ?? { line: { id: crypto.randomUUID(), agentId: op.agent.id, name: role === 'user' ? this.ctx.tools.snapshot().you.name : op.agent.config.kind === 'personal' && op.audience === 'public' ? `${this.ctx.tools.snapshot().you.name.slice(0, 24)}’s Chat` : op.agent.config.name,
+    const row = matching ?? { line: { id: crypto.randomUUID(), agentId: op.agent.id, name: role === 'user' ? this.ctx.tools.snapshot().you.name : op.agent.config.kind === 'personal' && op.audience === 'public' ? `${this.ctx.tools.snapshot().you.name.slice(0, 24)}’s Muse` : op.agent.config.name,
       role, input, audience: op.audience, text: '', at: new Date(this.#now()).toISOString(), playback: 'not-played' } as AgentLine, start, end };
     row.line = { ...row.line, text: row.line.text + delta.slice(0, 4_000), playback: role === 'assistant' ? (op.playback ?? (this.#playable(op) && op.heard ? 'playing' : 'not-played')) : 'not-played' };
     row.start = Math.min(row.start, start); row.end = Math.max(row.end, end); op.rows.set(row.line.id, row);

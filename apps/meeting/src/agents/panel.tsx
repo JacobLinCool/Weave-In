@@ -38,7 +38,7 @@ export function AgentPanel({ runtime, isHost, mode = 'all', reminders }: { runti
   </section>;
   return <div className={`agent-panel agent-panel--personal${expanded ? ' agent-panel--expanded' : ''}`}>
     <header className="agent-panel__heading">
-      <div><h2><Bot size={18} aria-hidden="true" /> {view.personal?.config.name ?? 'Chat'}</h2><p>Only you</p></div>
+      <div><h2><Bot size={18} aria-hidden="true" /> {view.personal?.config.name ?? 'Muse'}</h2><p>Only you</p></div>
       <div className="agent-actions">
         {view.personal && <button type="button" onClick={() => setManaging(true)}>Settings</button>}
         <button type="button" className="agent-expand" aria-label={expanded ? 'Narrow panel' : 'Widen panel'} title={expanded ? 'Narrow panel' : 'Widen panel'} aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>{expanded ? <Minimize2 size={16} /> : <Maximize2 size={16} />}</button>
@@ -50,6 +50,7 @@ export function AgentPanel({ runtime, isHost, mode = 'all', reminders }: { runti
     {!view.personal && <div className="agent-empty"><p>Set up your private assistant to start a conversation.</p><button className="agent-action" onClick={() => setCreating(true)}>Create an assistant</button></div>}
     {setup}
     {managing && view.personal && <AgentDialog title={`${view.personal.config.name} settings`} onClose={() => setManaging(false)}>
+      {!view.ready && <button type="button" onClick={() => run(() => runtime.enable())}>Enable assistant audio</button>}
       <ConfigSummary config={view.personal.config} />
       <p className="agent-note">To change sources or permissions, remove this assistant and create a new one.</p>
       <button type="button" onClick={() => { runtime.remove(view.personal!.id); setManaging(false); }}>Remove assistant</button>

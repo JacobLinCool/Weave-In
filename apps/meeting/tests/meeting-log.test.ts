@@ -40,7 +40,7 @@ describe('meeting log', () => {
   });
   it('preserves cursor gaps from agent updates through recovery and permission filtering', () => {
     const log = new MeetingLog();
-    const line = { id: 'line_1', agentId: 'agent_1', name: 'Chat', role: 'assistant' as const,
+    const line = { id: 'line_1', agentId: 'agent_1', name: 'Muse', role: 'assistant' as const,
       input: 'text' as const, audience: 'private' as const, text: 'Draft', at: '2026-09-12T00:00:00Z', playback: 'not-played' as const };
     log.append({ kind: 'presence', at: line.at, participant: alice, event: 'joined' });
     log.upsertAgent(line, alice.peerId);

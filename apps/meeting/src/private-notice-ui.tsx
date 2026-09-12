@@ -118,7 +118,7 @@ function TimedNotice({
     <section
       ref={card}
       className="private-notice-toast"
-      aria-label="Private reminder from Chat"
+      aria-label="Private reminder from Muse"
       style={{ bottom: position.bottom, visibility: position.fits ? 'visible' : 'hidden' }}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
@@ -129,7 +129,7 @@ function TimedNotice({
     >
       <div className="private-notice-dock__heading">
         <span>
-          <LockKeyhole size={13} /> Chat · Only you
+          <LockKeyhole size={13} /> Muse · Only you
         </span>
         <button
           type="button"

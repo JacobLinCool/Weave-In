@@ -84,7 +84,7 @@ async (page, origin = 'http://127.0.0.1:8788') => {
     await page.goto(origin);
     await page.getByRole('textbox', { name: 'Display name', exact: true }).fill('Alice');
     await page.getByRole('button', { name: 'Create a room', exact: true }).click();
-    await tab(page, 'Chat').waitFor(); await personalReady(page);
+    await tab(page, 'Muse').waitFor(); await personalReady(page);
     const roomUrl = page.url();
     await guest.goto(roomUrl);
     await guest.getByRole('textbox', { name: 'Display name', exact: true }).fill('Bob');
@@ -92,15 +92,17 @@ async (page, origin = 'http://127.0.0.1:8788') => {
     for (const p of [page, guest]) {
       if (await p.evaluate(() => window.__agentTest.sessions.length)) throw new Error('Live opened automatically on room entry');
     }
-    await tab(guest, 'Chat').click();
-    await guest.getByRole('button', { name: 'Enable assistant audio on this device', exact: true }).click();
-    await tab(page, 'Chat').click();
-    await page.getByRole('textbox', { name: 'Message Chat', exact: true }).fill('private-secret');
+    await tab(guest, 'Muse').click();
+    await guest.getByRole('button', { name: 'Settings', exact: true }).click();
+    await guest.getByRole('button', { name: 'Enable assistant audio', exact: true }).click();
+    await guest.getByRole('button', { name: 'Close assistant settings', exact: true }).click();
+    await tab(page, 'Muse').click();
+    await page.getByRole('textbox', { name: 'Message Muse', exact: true }).fill('private-secret');
     await page.locator('.agent-personal').getByRole('button', { name: 'Send', exact: true }).click();
     await page.getByRole('log', { name: 'Personal assistant transcript' }).getByText(/Private response/).waitFor();
     await page.getByRole('log', { name: 'Personal assistant transcript' }).getByText(/late/).waitFor();
-    if (await page.evaluate(() => window.__agentTest.sends.some(x => x.channel === 'weave-in' && /private-secret|Private response/.test(JSON.stringify(x.value))))) throw new Error('Private Chat leaked to peers');
-    if (await guest.locator('body').innerText().then(t => /private-secret|Private response/.test(t))) throw new Error('Guest saw private Chat');
+    if (await page.evaluate(() => window.__agentTest.sends.some(x => x.channel === 'weave-in' && /private-secret|Private response/.test(JSON.stringify(x.value))))) throw new Error('Private Muse leaked to peers');
+    if (await guest.locator('body').innerText().then(t => /private-secret|Private response/.test(t))) throw new Error('Guest saw private Muse');
 
     // Seed a real public record, then exercise the reminder action rather than an internal runtime hook.
     await tab(page, 'Room').click();
@@ -117,28 +119,28 @@ async (page, origin = 'http://127.0.0.1:8788') => {
       const shown = await tools.show_private_notice.execute({ id: 'browser-approved-reminder', text: 'Confirm the mute button remains usable before release.', evidenceSeqs: [row.seq] });
       if (shown.isError) throw new Error(JSON.stringify(shown));
     });
-    await page.getByRole('region', { name: 'Private reminder from Chat' }).getByRole('button', { name: 'Speak for me', exact: true }).click();
+    await page.getByRole('region', { name: 'Private reminder from Muse' }).getByRole('button', { name: 'Speak for me', exact: true }).click();
     await tab(guest, 'Transcript').click();
     await guest.getByText('Can we verify that the mute button remains usable?', { exact: true }).waitFor();
-    await guest.getByText('Alice’s Chat', { exact: true }).waitFor();
+    await guest.getByText('Alice’s Muse', { exact: true }).waitFor();
     await guest.waitForFunction(() => window.__agentTest.audible > .01);
     const ownerMicOpen = await page.evaluate(() => Array.from(document.querySelectorAll('[data-local="true"] video')).some(v => v.srcObject?.getAudioTracks().some(t => t.enabled)));
     if (!ownerMicOpen) throw new Error('Speaking on behalf muted the owner microphone');
     const publicRequest = await page.evaluate(() => window.__agentTest.sends.filter(x => x.channel === 'oai-events' && x.value.type === 'response.item.create').findLast(x => JSON.stringify(x.value).includes('Speak once on behalf')));
     if (!publicRequest || JSON.stringify(publicRequest).includes('private-secret')) throw new Error('Public session reused private context');
-    // A real local microphone signal interrupts approved Chat playback; no automatic resume.
+    // A real local microphone signal interrupts approved Muse playback; no automatic resume.
     await page.evaluate(() => { for (const mic of window.__agentTest.microphones) mic.gain.gain.value = .18; });
     await page.waitForFunction(() => window.__agentTest.states.at(-1)?.floor === null);
     await page.evaluate(() => { for (const mic of window.__agentTest.microphones) mic.gain.gain.value = 0; });
     const sessionsAfterInterrupt = await page.evaluate(() => window.__agentTest.sessions.length);
     await page.waitForTimeout(500);
-    if (await page.evaluate(() => window.__agentTest.sessions.length) !== sessionsAfterInterrupt) throw new Error('Chat resumed without fresh approval');
+    if (await page.evaluate(() => window.__agentTest.sessions.length) !== sessionsAfterInterrupt) throw new Error('Muse resumed without fresh approval');
     await page.getByRole('button', { name: 'Collapse reminder', exact: true }).click();
 
-    // Refresh restores only local Chat context and automatically recreates Chat, without opening Live.
-    await page.reload(); await page.getByRole('button', { name: 'Join', exact: true }).click(); await personalReady(page); await tab(page, 'Chat').click();
+    // Refresh restores only local Muse context and automatically recreates Muse, without opening Live.
+    await page.reload(); await page.getByRole('button', { name: 'Join', exact: true }).click(); await personalReady(page); await tab(page, 'Muse').click();
     await page.getByRole('log', { name: 'Personal assistant transcript' }).getByText('private-secret', { exact: true }).waitFor();
-    if (await page.evaluate(() => window.__agentTest.sessions.length)) throw new Error('Restoring Chat opened Live');
+    if (await page.evaluate(() => window.__agentTest.sessions.length)) throw new Error('Restoring Muse opened Live');
     // Also test the actual welcome -> agent-state order after a signaling interruption.
     const oldAgentId = await page.evaluate(() => window.__agentTest.states.at(-1).agents.find(a => a.config.kind === 'personal' && a.owner === window.__agentTest.you).id);
     await page.evaluate(() => window.__agentTest.sockets.find(s => s.readyState === WebSocket.OPEN)?.close());
@@ -146,12 +148,11 @@ async (page, origin = 'http://127.0.0.1:8788') => {
     await page.getByRole('log', { name: 'Personal assistant transcript' }).getByText('private-secret', { exact: true }).waitFor();
 
     await tab(page, 'Room').click(); await tab(guest, 'Room').click();
-    await page.getByText('Omni · Public suggestions', { exact: true }).click();
-    await page.getByRole('button', { name: 'Create an assistant', exact: true }).click();
+    await page.getByRole('button', { name: 'Set up Omni', exact: true }).click();
     await page.getByRole('button', { name: 'Review settings', exact: true }).click();
     await page.getByRole('button', { name: 'Create assistant', exact: true }).click();
     await Promise.all([page, guest].map(p => p.evaluate(() => window.__agentTest.audible = 0)));
-    await page.getByRole('button', { name: 'Trigger review', exact: true }).click();
+    await page.getByRole('button', { name: 'Review now', exact: true }).click();
     await guest.getByTestId('chat-list').getByText('Consider an alternative before deciding.', { exact: true }).waitFor();
     const omniMessage = guest.getByTestId('chat-list').locator('li').filter({ hasText: 'Consider an alternative before deciding.' });
     if (!(await omniMessage.innerText()).includes('Omni')) throw new Error('Public suggestion is missing Omni attribution');
