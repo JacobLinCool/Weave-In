@@ -981,6 +981,9 @@ export function App(): ReactNode {
       if (agentRef.current === runtime) setError(cause instanceof Error ? cause.message : 'Muse could not initialize.');
     });
     if (agentStateRef.current) runtime.update(agentStateRef.current.state, agentStateRef.current.now);
+    // Omni is created by the room. Register this device to run its text
+    // suggestions without requiring the participant to open agent settings.
+    void runtime.enable().catch(() => { /* Runtime exposes a retry if browser audio activation is blocked. */ });
     for (const [peer, participant] of Object.entries(participantsRef.current)) for (const stream of Object.values(participant.streams)) runtime.remoteStream(peer, stream);
     return () => { saveConversation(); runtime.close(); if (agentRef.current === runtime) agentRef.current = null; };
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -38,7 +38,7 @@ describe('MeetingRoom Durable Object', () => {
     expect(messages.findIndex((message) => message.type === 'peer-left')).toBeLessThan(messages.findIndex((message) => message.type === 'peer-joined'));
   });
 
-  it('cleans up abandoned rooms by alarm even when no agents were created', async () => {
+  it('cleans up abandoned rooms by alarm even when no agents were used', async () => {
     const stub = room('STALE2');
     const host = await connect(stub, 'create', 'Sky', peerId(82));
     const closed = new Promise<CloseEvent>((resolve) => host.socket.addEventListener('close', resolve, { once: true }));
@@ -251,7 +251,7 @@ describe('MeetingRoom Durable Object', () => {
     });
   });
 
-  it('arbitrates concurrent Group creation, preserves its epoch across hibernation and fences session initialization', async () => {
+  it('defaults to one Omni, rejects duplicate creation, preserves its epoch across hibernation and fences session initialization', async () => {
     const stub = room('AGENTS');
     const host = await connect(stub, 'create', 'Host', peerId(50));
     const guest = await connect(stub, 'join', 'Guest', peerId(51));
@@ -262,6 +262,9 @@ describe('MeetingRoom Durable Object', () => {
     host.socket.send(JSON.stringify({ type: 'agent-ready', ready: true }));
     guest.socket.send(JSON.stringify({ type: 'agent-ready', ready: true }));
     await vi.waitFor(() => expect(messages.filter((m) => m.type === 'agent-state').length).toBeGreaterThanOrEqual(2));
+    const initial = messages.filter((m) => m.type === 'agent-state').at(-1);
+    expect(initial?.state.agents).toHaveLength(1);
+    expect(initial?.state.agents[0]).toMatchObject({ owner: host.welcome.self.peerId, config: { kind: 'group', name: 'Omni' } });
     const config = { kind: 'group', name: 'Group', instructions: 'Think with the room', language: 'auto', source: 'all', chat: true, system: true, screen: false, files: false, audience: 'public' };
     host.socket.send(JSON.stringify({ type: 'agent-create', config }));
     guest.socket.send(JSON.stringify({ type: 'agent-create', config }));
@@ -463,11 +466,17 @@ async function expectAdmissionError(response: Response, code: string): Promise<v
 
 function nextMessage(socket: WebSocket): Promise<ServerMessage> {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('Timed out waiting for WebSocket message.')), 2_000);
-    socket.addEventListener('message', (event) => {
+    const timer = setTimeout(() => { socket.removeEventListener('message', receive); reject(new Error('Timed out waiting for WebSocket message.')); }, 2_000);
+    const receive = (event: MessageEvent) => {
+      const message = JSON.parse(String(event.data)) as ServerMessage;
+      // Default Omni now publishes state on entry. Signaling assertions wait
+      // for the next non-agent message; agent state is asserted separately.
+      if (message.type === 'agent-state') return;
       clearTimeout(timer);
-      resolve(JSON.parse(String(event.data)) as ServerMessage);
-    }, { once: true });
+      socket.removeEventListener('message', receive);
+      resolve(message);
+    };
+    socket.addEventListener('message', receive);
   });
 }
 

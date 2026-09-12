@@ -204,18 +204,15 @@ async (page, origin = 'http://127.0.0.1:8788') => {
 
     await tab(page, 'Room').click(); await tab(guest, 'Room').click();
     await tab(page, 'Room').click();
-    const add = page.getByRole('button', { name: 'Add Omni', exact: true });
-    const addBox = await add.boundingBox();
-    const titleBox = await page.getByRole('heading', { name: 'Omni', exact: true }).boundingBox();
-    if (!addBox || !titleBox || addBox.x < titleBox.x + titleBox.width || Math.abs((addBox.y + addBox.height / 2) - (titleBox.y + titleBox.height / 2)) > 2) throw new Error('Group add button is not aligned with the title');
-    if (await page.getByText('Not added. One shared agent provides public text suggestions in Room.', { exact: true }).count()) throw new Error('Removed group description remains');
-    await page.screenshot({ path: 'output/playwright/group-add-right.png' });
-    await add.click();
     await page.getByRole('button', { name: 'Omni settings', exact: true }).waitFor();
-    const addedSettingsBox = await page.getByRole('button', { name: 'Omni settings', exact: true }).boundingBox();
-    if (!addedSettingsBox || addedSettingsBox.width !== addBox.width || addedSettingsBox.height !== addBox.height) throw new Error('Omni add and settings button sizes differ');
-    if (await page.locator('.agent-form').count()) throw new Error('Adding a group opened configuration instead of adding it');
-    await page.waitForFunction(() => window.__agentTest.states.at(-1)?.agents.some(a => a.config.kind === 'group' && a.config.language === 'auto'));
+    await guest.getByRole('button', { name: 'Omni settings', exact: true }).waitFor();
+    if (await page.getByRole('button', { name: 'Add Omni', exact: true }).count()) throw new Error('Omni was not created automatically');
+    if (await page.locator('.agent-form').count()) throw new Error('Default Omni opened configuration');
+    await page.waitForFunction(() => {
+      const groups = window.__agentTest.states.at(-1)?.agents.filter(a => a.config.kind === 'group');
+      return groups?.length === 1 && groups[0].config.language === 'auto' && groups[0].runner && groups[0].phase === 'idle';
+    });
+    await page.screenshot({ path: 'output/playwright/group-default.png' });
     await page.getByRole('button', { name: 'Omni settings', exact: true }).click();
     await page.getByRole('button', { name: 'Back to Room', exact: true }).waitFor();
     if (await page.getByTestId('chat-panel').isVisible()) throw new Error('Room chat is still visible behind group settings');
@@ -303,7 +300,7 @@ async (page, origin = 'http://127.0.0.1:8788') => {
     await page.getByRole('button', { name: 'Add Omni', exact: true }).waitFor();
     await tab(guest, 'Room').click();
     await guest.getByRole('button', { name: 'Add Omni', exact: true }).waitFor();
-    return { replySend: true, replyHover: true, replyKeyboard: true, replyTouch: true, selectedMessageOnly: true, oneClickGroupAdd: true, rightAlignedAdd: true, fullPanelSettings: true, backWithoutSaving: true, reminderControlsRemoved: true, groupRemoval: true, clients: 2, directMuseTab: true, groupInRoom: true, allMembersConfigureGroup: true, groupBorderGlow: true, injectedSystemSignal: true, automaticSystemSignal: false, editSettings: true, automaticChat: true, noLiveOnJoin: true, privateIsolation: true, privateRecovery: true, signalingRecovery: true, oneShotPublicSpeech: true, ownerAttribution: true, ownerMicOpen, omniRoomText: true, omniSilent: true, omniReplayDedup: true, mobileOverflow: false, provider: 'simulated GPT-Live WebRTC (no real provider call)', relay: 'mocked provisioning; local peer connectivity' };
+    return { replySend: true, replyHover: true, replyKeyboard: true, replyTouch: true, selectedMessageOnly: true, automaticOmni: true, fullPanelSettings: true, backWithoutSaving: true, reminderControlsRemoved: true, groupRemoval: true, clients: 2, directMuseTab: true, groupInRoom: true, allMembersConfigureGroup: true, groupBorderGlow: true, injectedSystemSignal: true, automaticSystemSignal: false, editSettings: true, automaticChat: true, noLiveOnJoin: true, privateIsolation: true, privateRecovery: true, signalingRecovery: true, oneShotPublicSpeech: true, ownerAttribution: true, ownerMicOpen, omniRoomText: true, omniSilent: true, omniReplayDedup: true, mobileOverflow: false, provider: 'simulated GPT-Live WebRTC (no real provider call)', relay: 'mocked provisioning; local peer connectivity' };
   } finally {
     await Promise.all([ownerContext, guestContext].map(context => context.close()));
   }
