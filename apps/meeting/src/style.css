@@ -504,16 +504,12 @@ button:disabled { cursor: wait; opacity: .55; }
   .meeting-footer .transport-button svg { flex-shrink: 0; }
 }
 
-.private-monitor { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--dim); font-size: 11px; }
 
 .private-unread { width: 6px; height: 6px; flex-shrink: 0; border-radius: 50%; background: var(--accent); }
 .private-notice-toast button { min-height: 28px; }
 
-.personal-chat-panel { min-height: 0; overflow-y: auto; }
-.personal-chat-panel .private-notice-history { overflow: visible; flex: none; }
+.personal-chat-panel { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
+.personal-chat-panel .private-notice-history { overflow-y: auto; flex: none; max-height: 30%; }
 .side-panel__tabs > button { min-width: 0; padding-inline: 8px; }
 
 .room-chat-panel { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: auto; }
-.room-chat-panel > details { flex: none; padding: 8px 14px; border-bottom: 1px solid var(--line); }
-.room-chat-panel > details > summary { cursor: pointer; color: var(--dim); font-size: 12px; }
-.room-chat-panel > details .agent-panel { max-height: 300px; overflow: auto; }

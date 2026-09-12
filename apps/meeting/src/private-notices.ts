@@ -10,11 +10,11 @@ export interface PrivateNotice {
   collapsed?: boolean;
   evidence: Array<{ seq: number; name: string; text: string }>;
 }
-export interface PrivateNoticeState { hidden: boolean; notices: readonly PrivateNotice[] }
+export interface PrivateNoticeState { notices: readonly PrivateNotice[] }
 
 /** Per-tab state, checkpointed by App for room recovery. Never sent to shared room transports. */
 export class PrivateNotices {
-  #state: PrivateNoticeState = { hidden: false, notices: [] };
+  #state: PrivateNoticeState = { notices: [] };
   #listeners = new Set<() => void>();
   getSnapshot = (): PrivateNoticeState => this.#state;
   subscribe = (listener: () => void): (() => void) => {
@@ -65,10 +65,9 @@ export class PrivateNotices {
     if (!this.#state.notices.some((item) => item.status === 'active' && item.expiresAt <= now)) return;
     this.#publish({ ...this.#state, notices: this.#state.notices.map((item) => item.status === 'active' && item.expiresAt <= now ? { ...item, status: 'expired' } : item) });
   }
-  setHidden(hidden: boolean): void { this.#publish({ ...this.#state, hidden }); }
   restore(state: PrivateNoticeState): void {
-    this.#publish(structuredClone(state));
+    this.#publish({ notices: structuredClone(state.notices) });
     this.expire();
   }
-  clear(): void { this.#publish({ hidden: false, notices: [] }); }
+  clear(): void { this.#publish({ notices: [] }); }
 }

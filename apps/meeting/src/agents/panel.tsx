@@ -1,55 +1,91 @@
-import { useState, useSyncExternalStore, type FormEvent, type ReactNode } from 'react';
-import { Bot, Mic, Send, Square, Volume2 } from 'lucide-react';
+import { useLayoutEffect, useRef, useState, useSyncExternalStore, type FormEvent, type ReactNode } from 'react';
+import { ArrowLeft, ArrowUp, Mic, Plus, Settings, Square, Trash2, Volume2 } from 'lucide-react';
 import { parseAgentConfig, type AgentConfig, type AgentKind } from './contracts';
 import { AgentRuntime } from './runtime';
 import { defaultAgentConfig } from './config';
 export { defaultAgentConfig } from './config';
+import { Markdown } from '../markdown';
 import './style.css';
 
-export function AgentPanel({ runtime, isHost, mode = 'all' }: { runtime: AgentRuntime; isHost: boolean; mode?: 'personal' | 'group' | 'all' }): ReactNode {
+export function AgentPanel({ runtime, isHost, mode = 'personal' }: { runtime: AgentRuntime; isHost: boolean; mode?: 'personal' | 'group' }): ReactNode {
   const view = useSyncExternalStore(runtime.subscribe, runtime.snapshot);
-  const [expanded, setExpanded] = useState(false);
-  const [creating, setCreating] = useState(false);
+  const conversation = useRef<HTMLDivElement>(null);
+  const followLatest = useRef(true);
+  const [sending, setSending] = useState(false);
+  const [addingGroup, setAddingGroup] = useState(false);
+  const [creating, setCreating] = useState<AgentKind | null>(null);
+  const [editing, setEditing] = useState<string | null>(null);
   const [text, setText] = useState('');
   const [error, setError] = useState<string | null>(null);
   const run = (action: () => Promise<void>) => { setError(null); void action().catch((cause: unknown) => setError(cause instanceof Error ? cause.message : 'Please try again.')); };
   const group = view.group;
-  const submit = (event: FormEvent) => { event.preventDefault(); if (!text.trim()) return; const value = text; run(async () => { await runtime.ask(value); setText((current) => current === value ? '' : current); }); };
-  return <div className={`agent-panel${expanded ? ' agent-panel--expanded' : ''}`}>
-    <header className="agent-panel__heading"><h2><Bot size={20} /> {mode === 'personal' ? 'Chat' : mode === 'group' ? 'Omni' : 'Assistants'}</h2><button className="agent-expand" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>{expanded ? 'Collapse panel' : 'Expand panel'}</button></header>
-    {!view.ready && <button className="agent-action" onClick={() => run(() => runtime.enable())}><Volume2 size={16} /> Enable assistant audio on this device</button>}
+  const panel = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => { if (panel.current) panel.current.scrollTop = 0; }, [creating, editing]);
+  useLayoutEffect(() => {
+    if (conversation.current && followLatest.current) conversation.current.scrollTop = conversation.current.scrollHeight;
+  }, [view.lines]);
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    if (!text.trim() || sending) return;
+    const value = text;
+    setSending(true);
+    followLatest.current = true;
+    run(async () => {
+      try { await runtime.ask(value); setText((current) => current === value ? '' : current); }
+      finally { setSending(false); }
+    });
+  };
+  return <div ref={panel} className={`agent-panel${mode === 'personal' ? ' agent-panel--personal' : ` agent-panel--group${group && ['preparing', 'raised', 'speaking'].includes(group.phase) ? ' agent-panel--active' : ''}`}`}>
+    {!editing && !view.ready && mode === 'group' && group && <button onClick={() => run(() => runtime.enable())}><Volume2 size={16} /> Enable assistant audio on this device</button>}
     {(error || view.error) && <p className="agent-error" role="alert">{error ?? view.error}</p>}
-    {mode !== 'personal' && <section className="agent-group" aria-label="Group assistant">
-      <h3>{group?.config.name ?? 'Omni'}</h3>
-      {group ? <>
-        <p role="status">{({ idle: 'Listening to public meeting context', preparing: 'Preparing a text suggestion', raised: 'Sharing a text suggestion', speaking: 'Sharing a text suggestion', waiting: 'Waiting for an available device' })[group.phase]}</p>
-        {group.epoch > 1 && <p className="agent-note">Recovered on another device. Earlier meeting history may be incomplete.</p>}
-        <div className="agent-actions">
-          <button onClick={() => runtime.command({ type: 'agent-signal', id: group.id })}>Trigger review</button>
-
-          {group.phase !== 'idle' && <button onClick={() => runtime.command({ type: 'agent-cancel', id: group.id })}><Square size={14} /> Stop</button>}
-          {(isHost || group.owner === runtime.ctx.peerId) && <button onClick={() => runtime.remove(group.id)}>Remove</button>}
-        </div>
-
-      </> : <p>Public text suggestions for this meeting.</p>}
+    {!creating && !editing && mode !== 'personal' && <section className="agent-group" aria-label="Omni">
+      <header className="agent-actions"><h3>Omni</h3>{group ? <><button aria-label="Omni settings" title="Omni settings" onClick={() => { setEditing(group.id); setCreating(null); }}><Settings size={18} /></button>{(isHost || group.owner === runtime.ctx.peerId) && <button aria-label="Remove Omni" title="Remove Omni" onClick={() => runtime.remove(group.id)}><Trash2 size={18} /></button>}</> : <button className="agent-action agent-add" aria-label={addingGroup ? 'Adding Omni' : 'Add Omni'} title="Add Omni" disabled={addingGroup} onClick={() => {
+        setAddingGroup(true);
+        run(async () => { try { await runtime.create(defaultAgentConfig('group')); } finally { setAddingGroup(false); } });
+      }}><Plus size={18} aria-hidden="true" /></button>}</header>
+      {group && group.phase !== 'idle' && <>
+        <p role="status">{({ preparing: 'Preparing a text suggestion', raised: 'Sharing a text suggestion', speaking: 'Sharing a text suggestion', waiting: 'Waiting for an available device' })[group.phase]}</p>
+        <button onClick={() => runtime.command({ type: 'agent-cancel', id: group.id })}><Square size={14} /> Stop</button>
+      </>}
     </section>}
-    {((mode !== 'group' && !view.personal) || (mode !== 'personal' && !group)) && !creating && <button className="agent-action" onClick={() => setCreating(true)}>Create an assistant</button>}
-    {creating && <AgentForm personalAvailable={mode !== 'group' && !view.personal} groupAvailable={mode !== 'personal' && !group} onCancel={() => setCreating(false)} onCreate={async (config) => { await runtime.create(config); setCreating(false); }} />}
-    {mode !== 'group' && view.personal && <section className="agent-personal" aria-label="Personal assistant">
-      <div className="agent-actions"><h3>{view.personal.config.name}</h3><button onClick={() => runtime.remove(view.personal!.id)}>Remove</button></div>
-      <details><summary>Information sources and permissions</summary><ConfigSummary config={view.personal.config} /><p className="agent-note">To change sources or permissions, remove this assistant and create a new one.</p></details>
-      <div className="agent-conversation" role="log" aria-label="Personal assistant transcript" tabIndex={0}>
-        {view.lines.length === 0 && <p className="agent-note">Ask about an idea, question an assumption, or rehearse what you want to say.</p>}
-        {view.lines.map((line) => <article key={line.id} className="agent-line"><strong>{line.name}</strong><span>{line.audience} · {line.input}{line.role === 'assistant' ? ` · ${line.playback}` : ''}</span><p>{line.text}</p></article>)}
+    {!creating && !editing && mode !== 'group' && !view.personal && <section className="agent-personal" aria-label="Muse">
+      <h3>Muse</h3><p className="agent-note">Not added. A private assistant for your questions and ideas.</p>
+      {!creating && <button className="agent-action agent-add" aria-label="Add Muse" title="Add Muse" onClick={() => { setCreating('personal'); setEditing(null); }}><Plus size={18} aria-hidden="true" /></button>}
+    </section>}
+    {creating && <AgentForm key={creating} initialConfig={defaultAgentConfig(creating)} onCancel={() => setCreating(null)} onSave={async (config) => { await runtime.create(config); setCreating(null); }} />}
+    {!creating && !editing && mode !== 'group' && view.personal && <section className="agent-personal" aria-label="Muse">
+      <header className="agent-personal__heading"><div className="agent-actions"><h2>Muse</h2><button aria-label="Muse settings" title="Muse settings" onClick={() => setEditing(view.personal!.id)}><Settings size={18} /></button></div></header>
+      <div ref={conversation} className="agent-conversation" role="log" aria-label="Muse transcript" tabIndex={0} onScroll={(event) => {
+        const node = event.currentTarget;
+        followLatest.current = node.scrollHeight - node.scrollTop - node.clientHeight < 48;
+      }}>
+        {view.lines.length === 0 && <div className="agent-empty"><h3>A little space to think.</h3><p>Explore an idea, question an assumption, or find the words you want to say.</p></div>}
+        {view.lines.map((line) => <article key={line.id} className={`agent-line agent-line--${line.role}`}>
+          <header><strong>{line.role === 'user' ? 'You' : line.name}</strong>{line.audience === 'public' && <span>Shared with the room</span>}{line.playback === 'interrupted' && <span>Interrupted</span>}</header>
+          {line.role === 'assistant' ? <Markdown text={line.text} /> : <p>{line.text}</p>}
+        </article>)}
       </div>
-      <p className="agent-note" role="status">{view.status}{view.queued > 0 ? ` ${view.queued} request(s) queued.` : ''}</p>
-      <form onSubmit={submit} className="agent-compose"><label className="agent-field">Message Chat<textarea value={text} onChange={(event) => setText(event.target.value)} maxLength={4000} rows={3} placeholder="Help me think this through…" /></label><div className="agent-actions"><button className="agent-action" type="submit" disabled={!text.trim()}><Send size={15} /> Send</button><button type="button" onClick={() => view.voice ? runtime.endVoice() : run(() => runtime.ask('', true))}><Mic size={15} /> {view.voice ? 'Finish speaking' : 'Talk to Chat'}</button><button type="button" onClick={() => runtime.stopPersonal()}>Stop</button></div></form>
+      <form onSubmit={submit} className="agent-compose">
+        {(view.personalActive || sending) && <p className="agent-note agent-compose__status" role="status">{sending ? 'Sending…' : view.status}{view.queued > 0 ? ` ${view.queued} queued.` : ''}</p>}
+        <div className="agent-compose__input">
+          <textarea aria-label="Message Muse" value={text} onChange={(event) => setText(event.target.value)} onKeyDown={(event) => {
+            if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); }
+          }} maxLength={4000} rows={2} placeholder="Think it through with Muse…" />
+          <div className="agent-compose__actions">
+            <button type="button" className="agent-voice" aria-pressed={view.voice} disabled={sending || (view.personalActive && !view.voice)} onClick={() => view.voice ? runtime.endVoice() : run(() => runtime.ask('', true))}><Mic size={16} /> {view.voice ? 'Finish speaking' : 'Talk to Muse'}</button>
+            {view.personalActive && !text.trim()
+              ? <button className="agent-send" type="button" aria-label="Stop" title="Stop response" onClick={() => runtime.stopPersonal()}><Square size={16} /></button>
+              : <button className="agent-action agent-send" type="submit" aria-label="Send" title="Send message" disabled={!text.trim() || sending}><ArrowUp size={19} /></button>}
+          </div>
+        </div>
+      </form>
     </section>}
+    {editing && view.room.agents.some((agent) => agent.id === editing) && <AgentForm key={editing} editing initialConfig={view.room.agents.find((agent) => agent.id === editing)!.config} onCancel={() => setEditing(null)} onSave={async (config) => { await runtime.configure(editing, config); setEditing(null); }} />}
   </div>;
 }
 
-function AgentForm({ personalAvailable, groupAvailable, onCreate, onCancel }: { personalAvailable: boolean; groupAvailable: boolean; onCreate(config: AgentConfig): Promise<void>; onCancel(): void }): ReactNode {
-  const [config, setConfig] = useState(() => defaultAgentConfig(personalAvailable ? 'personal' : 'group'));
+function AgentForm({ initialConfig, editing = false, onSave, onCancel }: { initialConfig: AgentConfig; editing?: boolean; onSave(config: AgentConfig): Promise<void>; onCancel(): void }): ReactNode {
+  const [config, setConfig] = useState(initialConfig);
   const [review, setReview] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -57,15 +93,17 @@ function AgentForm({ personalAvailable, groupAvailable, onCreate, onCancel }: { 
   const submit = async (event: FormEvent) => {
     event.preventDefault(); const parsed = parseAgentConfig(config);
     if (!parsed) { setError('Complete the name, instructions, and language.'); return; }
-    if (!review) { setReview(true); return; }
+    if (!editing && !review) { setReview(true); return; }
     setBusy(true); setError(null);
-    try { await onCreate(parsed); } catch (cause) { setError(cause instanceof Error ? cause.message : 'Unable to create the assistant.'); } finally { setBusy(false); }
+    try { await onSave(parsed); } catch (cause) { setError(cause instanceof Error ? cause.message : 'Unable to save agent settings.'); } finally { setBusy(false); }
   };
   return <form className="agent-form" onSubmit={(event) => void submit(event)}>
-    <h3>Create an assistant</h3>
+    <button className="agent-back" type="button" onClick={onCancel} disabled={busy} autoFocus><ArrowLeft size={16} aria-hidden="true" /> Back to {config.kind === 'group' ? 'Room' : 'Muse'}</button>
+    <h3>{editing ? 'Settings' : 'Add'} · {config.kind === 'personal' ? 'Muse' : 'Omni'}</h3>
+    {editing && <p className="agent-note">Saving stops current agent work and applies the new settings. Conversation history is kept.</p>}
     {error && <p role="alert" className="agent-error">{error}</p>}
     <fieldset disabled={busy}><legend>Type and role</legend>
-      <label className="agent-field">Type<select value={config.kind} onChange={(event) => { setConfig(defaultAgentConfig(event.target.value as AgentKind)); setReview(false); }}><option value="personal" disabled={!personalAvailable}>Personal — your own assistant</option><option value="group" disabled={!groupAvailable}>Group — one for the meeting</option></select></label>
+
       <label className="agent-field">Display name<input required maxLength={40} value={config.name} onChange={(event) => set('name', event.target.value)} /></label>
       <label className="agent-field">Role and task instructions (Markdown)<textarea required rows={6} maxLength={8000} value={config.instructions} onChange={(event) => set('instructions', event.target.value)} /></label>
       <label className="agent-field">Response language<input required maxLength={80} value={config.language} onChange={(event) => set('language', event.target.value)} aria-describedby="agent-language-help" /></label><p id="agent-language-help" className="agent-note">Use “auto” to follow the conversation, or name a language.</p>
@@ -85,7 +123,7 @@ function AgentForm({ personalAvailable, groupAvailable, onCreate, onCancel }: { 
       <p className="agent-note">Voice and text are recorded in the transcript for the selected audience. Instructions cannot override permissions.</p>
     </fieldset>
     {review && <div className="agent-review"><h4>Review before creating</h4><ConfigSummary config={parseAgentConfig(config)!} /></div>}
-    <div className="agent-actions"><button className="agent-action" type="submit" disabled={busy}>{busy ? 'Creating…' : review ? 'Create assistant' : 'Review settings'}</button><button type="button" onClick={onCancel} disabled={busy}>Cancel</button></div>
+    <div className="agent-actions"><button className="agent-action" type="submit" disabled={busy}>{busy ? 'Saving…' : editing ? 'Save settings' : review ? 'Create Muse' : 'Review settings'}</button></div>
   </form>;
 }
 function ConfigSummary({ config }: { config: AgentConfig }): ReactNode {

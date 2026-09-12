@@ -159,7 +159,7 @@ describe('automatic private monitoring', () => {
       f.monitor.stop();
     }
   });
-  it.each(['pause', 'leave', 'new reply'])('discards in-flight results after %s', async (action) => {
+  it.each(['leave', 'new reply'])('discards in-flight results after %s', async (action) => {
     let resolve!: (r: Response) => void;
     const f = setup(
       vi.fn<typeof fetch>(
@@ -170,21 +170,16 @@ describe('automatic private monitoring', () => {
       ),
     );
     const pending = f.monitor.check(1000);
-    if (action === 'pause') f.monitor.setEnabled(false);
-    else if (action === 'leave') f.monitor.stop();
+    if (action === 'leave') f.monitor.stop();
     else f.say('We tested recovery; no data loss.');
     resolve(Response.json({ notice: { id: 'auto-1', text: 'Check recovery', evidenceSeqs: [1, 2] } }));
     await pending;
     expect(f.notices.getSnapshot().notices).toHaveLength(0);
     f.monitor.stop();
   });
-  it('does not analyze while paused and retries provider failures with backoff', async () => {
+  it('retries provider failures with backoff', async () => {
     const f = setup(vi.fn<typeof fetch>(async () => new Response('', { status: 503 })));
     try {
-      f.monitor.setEnabled(false);
-      await f.monitor.check(1000);
-      expect(f.request).not.toHaveBeenCalled();
-      f.monitor.setEnabled(true);
       await f.monitor.check(1000);
       expect(f.monitor.getSnapshot().status).toBe('unavailable');
       await f.monitor.check(30000);

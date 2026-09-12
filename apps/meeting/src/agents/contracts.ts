@@ -49,6 +49,7 @@ export type AgentCommand =
   | { type: 'agent-ready'; ready: boolean }
   | { type: 'agent-heartbeat' }
   | { type: 'agent-create'; config: AgentConfig }
+  | { type: 'agent-configure'; id: string; config: AgentConfig }
   | { type: 'agent-remove' | 'agent-signal' | 'agent-floor' | 'agent-cancel'; id: string }
   | { type: 'agent-raised' | 'agent-approve' | 'agent-failed'; id: string; epoch: number; request: number }
   | { type: 'agent-finish'; floorId: string };
@@ -93,6 +94,7 @@ export function parseAgentCommand(value: unknown): AgentCommand | null {
     case 'agent-ready': return typeof value.ready === 'boolean' ? { type: value.type, ready: value.ready } : null;
     case 'agent-heartbeat': return { type: value.type };
     case 'agent-create': { const config = parseAgentConfig(value.config); return config ? { type: value.type, config } : null; }
+    case 'agent-configure': { const config = parseAgentConfig(value.config); return config && identifier(value.id) ? { type: value.type, id: value.id, config } : null; }
     case 'agent-remove': case 'agent-signal': case 'agent-floor': case 'agent-cancel':
       return identifier(value.id) ? { type: value.type, id: value.id } : null;
     case 'agent-raised': case 'agent-approve': case 'agent-failed':
