@@ -18,6 +18,39 @@ function fixture() {
   return { state, host, guest, uuid, agent: state.agents[0]! };
 }
 describe('agent creation, approval and recovery', () => {
+  it('creates one default Omni on room entry and assigns a ready device', () => {
+    const state = emptyAgentRoom(); const host = { ...member('host'), ready: false }; const guest = member('guest', 1);
+    let next = 0; const uuid = () => `default-${++next}`;
+    reconcileAgents(state, [], 1000, uuid);
+    expect(state.agents).toEqual([]);
+    reconcileAgents(state, [host], 1000, uuid);
+    expect(state.agents).toHaveLength(1);
+    const omni = state.agents[0]!;
+    expect(omni).toMatchObject({ owner: 'host', runner: null, phase: 'waiting', config: { kind: 'group', name: 'Omni', source: 'all', chat: true, system: true, audience: 'public' } });
+    reconcileAgents(state, [host, guest], 1001, uuid);
+    reconcileAgents(state, [host, guest], 1002, uuid);
+    expect(state.agents).toHaveLength(1);
+    expect(omni).toMatchObject({ runner: 'guest', phase: 'idle', request: 0 });
+  });
+  it('preserves explicit Omni removal through later joins and persisted room recovery', () => {
+    const state = emptyAgentRoom(); const host = member('host'); const guest = member('guest', 1);
+    const uuid = () => 'default-omni';
+    reconcileAgents(state, [host], 1000, uuid);
+    applyAgentCommand(state, host, { type: 'agent-remove', id: state.agents[0]!.id }, 1001, uuid);
+    const recovered = structuredClone(state);
+    reconcileAgents(recovered, [host, guest], 1002, uuid);
+    expect(recovered.agents).toEqual([]);
+    applyAgentCommand(recovered, host, { type: 'agent-create', config }, 1003, uuid);
+    expect(recovered.agents).toHaveLength(1);
+  });
+  it('preserves existing Omni settings when initializing an older room', () => {
+    const { state, host, uuid, agent } = fixture();
+    delete state.groupInitialized;
+    reconcileAgents(state, [host], 1001, uuid);
+    expect(state.agents).toEqual([agent]);
+    expect(agent.config).toEqual(config);
+    expect(state.groupInitialized).toBe(true);
+  });
   it('updates settings in place, restricts editors and invalidates active work', () => {
     const { state, host, guest, uuid, agent } = fixture();
     const updated = { ...config, language: '繁體中文', files: true };

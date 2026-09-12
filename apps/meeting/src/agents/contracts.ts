@@ -39,6 +39,8 @@ export interface Floor {
 }
 export interface AgentRoomState {
   agents: RoomAgent[];
+  /** Persisted so removing Omni is respected for the rest of this room. */
+  groupInitialized?: boolean;
   floor: Floor | null;
   grants: Floor[];
   queue: string[];
