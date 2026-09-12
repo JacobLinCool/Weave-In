@@ -21,6 +21,17 @@ export const MEETING_TOOL_NAMES = Object.freeze({
   notices: 'read_private_notices',
 });
 
+// Guidance for the connected assistant, not a semantic classifier in the browser.
+const PRIVATE_REMINDER_GUIDANCE = [
+  'Default to no reminder. Reading the meeting or being asked to find a risk does not require calling show_private_notice.',
+  'Notify only when reliable meeting evidence connects a concrete pending decision to an important unresolved concern: a raised objection bypassed as the group moves to closure, an unverified assumption explicitly treated as fact, or claimed agreement without confirmation. These are reasons to check a decision, not proof of Groupthink or anyone’s motives.',
+  'Read enough surrounding finalized records, including later replies and remaining pages, to check whether the concern was already answered. A missing topic in a partial transcript, ordinary agreement, silence, or a hypothetical risk alone is not sufficient evidence.',
+  'Do not notify about speaking speed, unclear wording, transcription errors, spelling, or requests to repeat or verify captions. Treat ambiguous captions as insufficient evidence; do not infer a decision risk from them. Abstain if the concern depends on uncertain words.',
+  'Before sending, check read_private_notices. Do not repeat a resolved, dismissed, expired, or ignored concern merely with a different id; require material new evidence.',
+  'Use the participant’s language: briefly name the pending decision and the specific unresolved concern, then offer one useful question they can say aloud. Put sequence references in evidenceSeqs, not in the visible text. Avoid generic warnings, transcript commentary, labels about people, and diagnosis of Groupthink.',
+  'Example to skip: seq 4 says someone speaks fast and seq 7 contains an unclear API phrase. Example worth checking: someone raises lost data after disconnection, nobody addresses it, and the group then moves to approve Friday’s launch. A useful reminder asks to confirm recovery behavior before deciding.',
+].join(' ');
+
 export const MIN_CAPTURE_WIDTH = 320;
 export const MAX_CAPTURE_WIDTH = 1920;
 export const DEFAULT_CAPTURE_WIDTH = 1280;
@@ -134,6 +145,7 @@ export function createMeetingTools(context: MeetingToolsContext): ToolDefinition
         const snapshot = context.snapshot();
         const page = context.log().read(after, limit);
         return success({
+          privateReminderGuidance: PRIVATE_REMINDER_GUIDANCE,
           room: { code: snapshot.roomCode, captions: snapshot.captions },
           you: snapshot.you,
           participants: snapshot.participants,
@@ -302,12 +314,12 @@ export function createMeetingTools(context: MeetingToolsContext): ToolDefinition
     },
     {
       name: MEETING_TOOL_NAMES.notice,
-      description: 'Leave one private, contextual reminder in this participant’s Weave In page. Never sent to room chat or peers. Reference speech or chat sequence numbers from read_meeting. State a concrete overlooked concern and useful action, in the participant’s language, without judging people. Use a stable id for retries; dismissed or expired ids are not resurfaced while retained. A new reminder replaces the active one. Do not repeatedly nudge someone who ignores it. Does not start background monitoring or send a message to the assistant conversation.',
+      description: 'Leave one private, contextual reminder in this participant’s Weave In page. Never sent to room chat or peers. Reference speech or chat sequence numbers from read_meeting. Use a stable id for retries; dismissed or expired ids are not resurfaced while retained. A new reminder replaces the active one. Do not repeatedly nudge someone who ignores it. Does not start background monitoring or send a message to the assistant conversation. ' + PRIVATE_REMINDER_GUIDANCE,
       inputSchema: {
         type: 'object', additionalProperties: false,
         properties: {
           id: { type: 'string', pattern: '^[a-zA-Z0-9_-]{1,80}$' },
-          text: { type: 'string', minLength: 1, maxLength: 240 },
+          text: { type: 'string', minLength: 1, maxLength: 240, description: 'A concrete pending decision, evidence-backed unresolved concern, and one speakable question. No transcript-quality advice or visible seq numbers. If evidence is insufficient, do not call this tool.' },
           evidenceSeqs: { type: 'array', minItems: 1, maxItems: 5, items: { type: 'integer', minimum: 1 } },
           ttlSeconds: { type: 'integer', minimum: 15, maximum: 300, default: 120 },
         }, required: ['id', 'text', 'evidenceSeqs'],
