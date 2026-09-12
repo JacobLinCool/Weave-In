@@ -4,6 +4,9 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+patchedDependencies:
+  '@excalidraw/mermaid-to-excalidraw@2.2.2': f4949813e1000cc8c70d62a9d24b954b3d3f5297b68547eb6d814fe838301b04
+
 importers:
 
   .:
@@ -22,7 +25,7 @@ importers:
         version: 0.18.1(@types/react-dom@19.2.5(@types/react@19.2.18))(@types/react@19.2.18)(react-dom@19.2.0(react@19.2.0))(react@19.2.0)
       '@excalidraw/mermaid-to-excalidraw':
         specifier: 2.2.2
-        version: 2.2.2
+        version: 2.2.2(patch_hash=f4949813e1000cc8c70d62a9d24b954b3d3f5297b68547eb6d814fe838301b04)
       '@fontsource-variable/azeret-mono':
         specifier: 5.2.8
         version: 5.2.8
@@ -3440,7 +3443,7 @@ snapshots:
     dependencies:
       '@braintree/sanitize-url': 6.0.2
       '@excalidraw/laser-pointer': 1.3.1
-      '@excalidraw/mermaid-to-excalidraw': 2.2.2
+      '@excalidraw/mermaid-to-excalidraw': 2.2.2(patch_hash=f4949813e1000cc8c70d62a9d24b954b3d3f5297b68547eb6d814fe838301b04)
       '@excalidraw/random-username': 1.1.0
       '@radix-ui/react-popover': 1.1.6(@types/react-dom@19.2.5(@types/react@19.2.18))(@types/react@19.2.18)(react-dom@19.2.0(react@19.2.0))(react@19.2.0)
       '@radix-ui/react-tabs': 1.0.2(react-dom@19.2.0(react@19.2.0))(react@19.2.0)
@@ -3480,7 +3483,7 @@ snapshots:
 
   '@excalidraw/markdown-to-text@0.1.2': {}
 
-  '@excalidraw/mermaid-to-excalidraw@2.2.2':
+  '@excalidraw/mermaid-to-excalidraw@2.2.2(patch_hash=f4949813e1000cc8c70d62a9d24b954b3d3f5297b68547eb6d814fe838301b04)':
     dependencies:
       '@excalidraw/markdown-to-text': 0.1.2
       '@mermaid-js/parser': 0.6.3

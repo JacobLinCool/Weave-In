@@ -66,10 +66,10 @@ Two WebMCP tools are available while in a meeting:
   per new label and 256 points per stroke. Edit a label through its container's id.
   Use `action: "mermaid"` with a `source` string to import a Mermaid `flowchart`
   or `graph` as editable nodes, bound labels and arrows. Branches, edge labels
-  and loops are supported. Existing content is preserved; one import is one
+  loops and nested `subgraph` groups are supported. Existing content is preserved; one import is one
   undo step. Imports accept up to 12,000 characters and 300 native elements
-  including labels. `subgraph` blocks, other diagram types and image fallbacks
-  are rejected; the current upstream converter fails on subgraph group IDs.
+  including labels. Other diagram types and image fallbacks are rejected.
+  A pinned converter patch handles Mermaid 11’s diagram-prefixed group IDs.
 - `capture_whiteboard`: capture the actual visible drawing canvas without
   toolbars. Open the board and finish any active text edit before capturing.
 

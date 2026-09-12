@@ -245,6 +245,18 @@ describe('Mermaid import transaction', () => {
     expect(store.size).toBe(0);
   });
 
+  it('allows subgraph definitions to reach the converter', async () => {
+    const grouped = 'flowchart LR\n subgraph P[Planning]\n A-->B\n end';
+    const store = new ExcalidrawStore(() => {});
+    let parsedSource = '';
+    const result = await importMermaidWhiteboard(store, { action: 'mermaid', source: grouped }, importer(async definition => {
+      parsedSource = definition;
+      return { elements: skeleton };
+    }));
+    expect(parsedSource).toBe(grouped);
+    expect(result.imported).toBe(2);
+  });
+
   it('retains a collaborator’s edit received during asynchronous parsing', async () => {
     const store = new ExcalidrawStore(() => {});
     const parser = importer(async () => {
@@ -263,7 +275,6 @@ describe('Mermaid import transaction', () => {
     for (const input of [
       { source: '' }, { source: 'x'.repeat(12_001) }, { source: 'sequenceDiagram\n A->>B: hello' },
       { source: 'flowchart TD\n%%{init: {}}%%\n A-->B' }, { source: 'flowchart TD\n A[<img src="x">]' },
-      { source: 'flowchart LR\n subgraph P[Planning]\n A-->B\n end' },
       { source, x: Infinity }, { source, y: 20_001 }, { source, x: null }, { source, replace: true },
     ]) await expect(importMermaidWhiteboard(store, { action: 'mermaid', ...input }, parser)).rejects.toThrow();
     expect(calls).toBe(0);
