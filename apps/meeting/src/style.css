@@ -125,7 +125,6 @@ button:disabled { cursor: wait; opacity: .55; }
 .transport-button { min-height: 39px; min-width: 105px; padding: 0 15px; border: 1px solid var(--line); border-radius: 12px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; color: var(--muted); background: var(--panel); cursor: pointer; font-size: 10px; font-weight: 650; }
 .transport-button:hover { color: var(--ink); background: var(--raised); }
 .transport-button.is-off { color: var(--coral); border-color: rgba(255,128,109,.3); }
-.stage-caption { height: 20px; display: flex; align-items: center; justify-content: center; gap: 6px; margin: 0; color: var(--dim); font-family: var(--notation); font-size: 11px; text-transform: uppercase; letter-spacing: .075em; }
 @keyframes pulse {
   0% { box-shadow: 0 0 0 0 rgba(151,233,198,.42); }
   70%, 100% { box-shadow: 0 0 0 7px rgba(151,233,198,0); }
@@ -155,7 +154,6 @@ button:disabled { cursor: wait; opacity: .55; }
   .video-grid .video-tile-shell:first-child { grid-row: auto; }
   .meeting-stage { padding: 12px; }
   .live-captions { position: fixed; left: 12px; right: 12px; bottom: calc(86px + env(safe-area-inset-bottom)); width: auto; max-width: none; transform: none; font-size: 15px; }
-  .stage-caption { display: none; }
 }
 
 @media (max-width: 420px) {

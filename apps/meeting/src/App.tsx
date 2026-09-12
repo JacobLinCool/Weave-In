@@ -9,7 +9,7 @@ import {
   type TranscriptState,
   type TranscriptionProvider,
 } from '@weave-in/transcribe';
-import { LoaderCircle, LockKeyhole } from 'lucide-react';
+import { LoaderCircle } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { threadColor, threadStyle } from './brand';
 import {
@@ -1000,7 +1000,6 @@ function MeetingSurface(props: {
             />
             <PrivateNoticeDock monitor={props.autoReminders} store={props.privateNotices} onHistory={() => props.onPanelTab('private')} />
           </div>
-          <p className="stage-caption"><LockKeyhole size={13} /> Full-mesh WebRTC · direct between browsers</p>
         </section>
         <SidePanel
           privateNotices={props.privateNotices}
