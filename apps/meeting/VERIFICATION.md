@@ -1,5 +1,15 @@
 # Agent verification — 2026-09-12
 
+## Muse tool and Room permission revision
+
+Revises the voice extension deployed from main `20ebf3a` after PR #15. Muse no longer receives `search_meeting` or `download_file`. `read_meeting` defaults to and allows 500 complete records per page; the initial read starts at cursor zero, and subsequent pages use the last successfully consumed cursor. `read_shared_file` downloads each complete source file internally before extracting readable content. Native browser WebMCP remains separate.
+
+Personal Room posting now requires `roomMessages: true`, with an unchecked creation setting and an explicit description that Room is visible to everyone. Missing legacy values deny posting. The client removes the tool by default and rechecks permission at execution; the Worker also rejects unauthorized tool declarations. An enabled permission still requires a direct owner request. Omni's existing publication permissions are unchanged.
+
+The 500-record tool limit is separate from the application's conservative cumulative 30,000-byte / 120-item Live event budget. Oversized results produce an explicit error, not silent truncation. This revision does not establish complete large-transcript delivery to the model or add a server transcript archive.
+
+The preceding production release was checked with one real GPT-Live typed request in an isolated test room: initialization returned 201, meeting reading succeeded, the three-node Mermaid workflow was created, and a rendered whiteboard image was delivered to the model. The old requested Room-post step did not complete within 120 seconds and room coordination showed reconnect/lost alerts, so that run was not a full end-to-end pass. The test left its room and closed its browser. It did not verify speech recognition or physical listening.
+
 ## Voice whiteboard and shared-file extension
 
 Implemented on `feat/voice-whiteboard-context` after fetching and fast-forward checking main at `73fd6c3`. The following checks cover this extension; the older agent/browser matrix below does not establish real-provider coverage for the new tools.

@@ -4,6 +4,7 @@ import { emptyAgentRoom, type AgentLine, type RoomAgent } from '../src/agents/co
 import type { LiveCallbacks } from '../src/agents/live';
 import { MeetingLog } from '../src/meeting-log';
 import type { MeetingSnapshot, ToolDefinition } from '../src/webmcp';
+import { defaultAgentConfig } from '../src/agents/config';
 
 const calls = vi.hoisted(() => ({ requests: vi.fn(), contexts: vi.fn(), close: vi.fn(), start: vi.fn(), tools: [] as unknown[][], lives: [] as LiveCallbacks[], enable: vi.fn(async (): Promise<void> => undefined), mute: vi.fn(async (): Promise<void> => undefined), attach: vi.fn((_stream: MediaStream, _allowed: () => boolean, _level: unknown, _error: (message: string) => void) => ({ stop: vi.fn(), output: { id: 'output' } as MediaStream })) }));
 vi.mock('../src/agents/live', () => ({ AgentLive: class {
@@ -35,6 +36,9 @@ function setup(beginVoice: (audience: string, owner: string) => Promise<MediaStr
 
 it('lets a private voice request draw and post as the owner without publishing private speech', async () => {
   const { runtime, publicLine, broadcast, sendAgent, sendAgentMessage, editWhiteboard } = setup(async () => ({ stop: vi.fn() }) as unknown as MediaStreamTrack);
+  const state = structuredClone(runtime.snapshot().room);
+  state.agents[0]!.config.roomMessages = true;
+  runtime.update(state, Date.now());
   await runtime.ask('', true);
   await vi.waitFor(() => expect(calls.tools).toHaveLength(1));
   const tools = calls.tools[0] as ToolDefinition[];
@@ -53,6 +57,19 @@ it('lets a private voice request draw and post as the owner without publishing p
   expect((await draw.execute({ action: 'undo' })).isError).toBe(true);
   expect((await post.execute({ text: 'Late post' })).isError).toBe(true);
   expect(editWhiteboard).toHaveBeenCalledOnce(); expect(sendAgentMessage).toHaveBeenCalledOnce();
+});
+
+it('keeps default Muse tool access read-focused for Room chat without search or raw download tools', async () => {
+  const { runtime, sendAgentMessage } = setup();
+  const state = structuredClone(runtime.snapshot().room);
+  state.agents[0]!.config = defaultAgentConfig('personal');
+  runtime.update(state, Date.now());
+  await runtime.ask('Review the meeting and draw its workflow');
+  await vi.waitFor(() => expect(calls.tools).toHaveLength(1));
+  const tools = calls.tools[0] as ToolDefinition[];
+  expect(tools.map((tool) => tool.name)).toEqual(['read_meeting', 'capture_whiteboard', 'edit_whiteboard', 'read_shared_file']);
+  expect(tools.find((tool) => tool.name === 'read_meeting')!.inputSchema.properties).toMatchObject({ limit: { default: 500, maximum: 500 } });
+  expect(sendAgentMessage).not.toHaveBeenCalled();
 });
 
 it('refreshes file availability and interim captions without a finalized log change', async () => {

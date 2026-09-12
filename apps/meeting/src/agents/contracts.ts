@@ -3,7 +3,7 @@ export const REASONING_MODEL = 'gpt-5.6-terra';
 export const HEARTBEAT_MS = 10_000;
 export const LEASE_MS = 30_000;
 export const MAX_AGENT_TEXT = 4_000;
-export const TOOL_NAMES = ['read_meeting', 'search_meeting', 'capture_screen_share', 'download_file', 'read_shared_file', 'send_chat_message', 'capture_whiteboard', 'edit_whiteboard'] as const;
+export const TOOL_NAMES = ['read_meeting', 'capture_screen_share', 'read_shared_file', 'send_chat_message', 'capture_whiteboard', 'edit_whiteboard'] as const;
 export type AgentKind = 'personal' | 'group';
 export type Audience = 'private' | 'public';
 export interface AgentConfig {
@@ -16,6 +16,8 @@ export interface AgentConfig {
   system: boolean;
   screen: boolean;
   files: boolean;
+  /** Explicit permission to publish Room messages; missing legacy values deny access. */
+  roomMessages?: boolean;
   audience: Audience;
 }
 export interface RoomAgent {
@@ -81,10 +83,11 @@ export function parseAgentConfig(value: unknown): AgentConfig | null {
   if (typeof value.language !== 'string' || !value.language.trim() || value.language.length > 80) return null;
   if (!['none', 'owner', 'all'].includes(String(value.source)) || !['private', 'public'].includes(String(value.audience))) return null;
   if (['chat', 'system', 'screen', 'files'].some((key) => typeof value[key] !== 'boolean')) return null;
+  if (value.roomMessages !== undefined && typeof value.roomMessages !== 'boolean') return null;
   const group = value.kind === 'group';
   return { kind: value.kind, name: value.name.trim(), instructions: value.instructions, language: value.language.trim(),
     source: group ? 'all' : value.source as AgentConfig['source'], chat: group || (value.source !== 'none' && value.chat as boolean),
-    system: group || value.system as boolean, screen: value.screen as boolean, files: value.files as boolean,
+    system: group || value.system as boolean, screen: value.screen as boolean, files: value.files as boolean, roomMessages: value.roomMessages === true,
     audience: group ? 'public' : value.audience as Audience };
 }
 export function parseAgentCommand(value: unknown): AgentCommand | null {

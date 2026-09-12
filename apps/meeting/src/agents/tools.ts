@@ -4,12 +4,10 @@ import { TOOL_NAMES, record, type AgentConfig, type AgentLine } from './contract
 import { readSharedFile, READ_SHARED_FILE_SCHEMA, READ_SHARED_FILE_DESCRIPTION } from './attachments';
 
 export const utf8Bytes = (text: string): number => new TextEncoder().encode(text).byteLength;
-const FILE_PAGE_BYTES = 1024;
 const BOARD_PAGE_SIZE = 10;
 const CONTEXT_BYTES = 6_000;
 const readOnly = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
 const failure = (text = 'This action is not authorized for the current agent turn.'): ToolResult => ({ isError: true, content: [{ type: 'text', text }] });
-const success = (value: unknown): ToolResult => ({ content: [{ type: 'text', text: JSON.stringify(value) }] });
 const mutation = (name: string, input: unknown) => name === 'send_chat_message' || (name === 'edit_whiteboard' && (!record(input) || input.action !== 'read'));
 
 function scopedSnapshot(snapshot: MeetingSnapshot, config: AgentConfig, owner: string): MeetingSnapshot {
@@ -48,11 +46,11 @@ export function scopedTools(base: MeetingToolsContext, config: AgentConfig, owne
       return base.editWhiteboard(input, authorized);
     },
     sendAgentMessage: (text) => {
-      if (!active() || !canPublish()) throw new Error('Public posting is not authorized for this turn.');
+      if (!active() || !canPublish() || (config.kind === 'personal' && config.roomMessages !== true)) throw new Error('Public posting is not authorized for this turn.');
       return base.sendAgentMessage(text, config.name);
     },
   };
-  const tools = [...createMeetingTools(context), searchMeetingTool(context), {
+  const tools = [...createMeetingTools(context), {
     name: 'read_shared_file',
     description: READ_SHARED_FILE_DESCRIPTION,
     inputSchema: READ_SHARED_FILE_SCHEMA,
@@ -60,47 +58,24 @@ export function scopedTools(base: MeetingToolsContext, config: AgentConfig, owne
   }];
   return tools.filter((tool) =>
     TOOL_NAMES.some((name) => name === tool.name) && (tool.name !== 'capture_screen_share' || config.screen) &&
-    (!['download_file', 'read_shared_file'].includes(tool.name) || config.files) &&
+    (tool.name !== 'read_shared_file' || config.files) &&
+    (tool.name !== 'send_chat_message' || config.kind !== 'personal' || config.roomMessages === true) &&
     (!['edit_whiteboard', 'capture_whiteboard'].includes(tool.name) || config.kind === 'personal'),
   ).map((tool): ToolDefinition => ({ ...tool,
-    ...(tool.name === 'download_file' ? { description: `${tool.description} Agent reads are limited to 1024 bytes per call; continue with nextOffset until eof.`,
-      inputSchema: { ...tool.inputSchema, properties: { ...(tool.inputSchema.properties as Record<string, unknown>), length: { type: 'integer', minimum: 1, maximum: FILE_PAGE_BYTES, default: FILE_PAGE_BYTES } } } } : {}),
-    ...(tool.name === 'read_meeting' ? { description: `${tool.description} Agent pages contain at most 5 records; use nextCursor to continue. The record is this browser's available history, including author replay; it may not cover the whole meeting. File inventory is paged separately using fileOffset.`,
-      inputSchema: { ...tool.inputSchema, properties: { ...(tool.inputSchema.properties as Record<string, unknown>), limit: { type: 'integer', minimum: 1, maximum: 5, default: 5 }, fileOffset: { type: 'integer', minimum: 0, default: 0, description: 'Starting file inventory index; each page includes up to 20 files.' } } } } : {}),
+    ...(tool.name === 'read_meeting' ? { description: 'Read every available meeting record from this browser, scoped to the configured sources: finalized transcripts with speakers, Room messages, file announcements and presence. Pages default to 500 complete records, with a maximum of 500. Start at after=0 and continue using nextCursor until hasMore=false to read all available history. Sequence numbers reflect arrival order; replayed records retain their original at timestamp. Also returns current participants, interim captions, screen-share metadata, and file inventory. Use read_shared_file with a file id to download and inspect its contents. File inventory is paged separately using fileOffset. This browser may not have records from the entire meeting.',
+      inputSchema: { ...tool.inputSchema, properties: { ...(tool.inputSchema.properties as Record<string, unknown>), limit: { type: 'integer', minimum: 1, maximum: 500, default: 500 }, fileOffset: { type: 'integer', minimum: 0, default: 0, description: 'Starting file inventory index; each page includes up to 20 files.' } } } } : {}),
     ...(tool.name === 'capture_whiteboard' ? { description: 'Capture the shared whiteboard as an image, automatically opening it in this browser. Use after edit_whiteboard to verify the visual layout and labels. Captures the current viewport; objects outside it may require read pages to inspect. Does not modify board objects.',
       inputSchema: { ...tool.inputSchema, properties: { ...(tool.inputSchema.properties as Record<string, unknown>), quality: { type: 'number', maximum: 1, description: 'JPEG quality from 0.1 to 1; defaults to 0.8.' } } } } : {}),
     ...(tool.name === 'edit_whiteboard' ? { description: `${tool.description} Agent reads return up to 10 compact records; continue with nextOffset. Mutations require the current owner's explicit request.`,
       inputSchema: { ...tool.inputSchema, properties: { ...(tool.inputSchema.properties as Record<string, unknown>), limit: { type: 'integer', minimum: 1, maximum: BOARD_PAGE_SIZE, default: BOARD_PAGE_SIZE } } } } : {}),
     execute: async (input) => {
-    if (!active() || (mutation(tool.name, input) && !canPublish())) return failure();
+    if (!active() || (mutation(tool.name, input) && !canPublish()) || (tool.name === 'send_chat_message' && config.kind === 'personal' && config.roomMessages !== true)) return failure();
     let result: ToolResult;
-    if (tool.name === 'download_file') {
-      const args = record(input) ? input : {};
-      let length = typeof args.length === 'number' && Number.isInteger(args.length) ? Math.min(args.length, FILE_PAGE_BYTES) : args.length ?? FILE_PAGE_BYTES;
-      const offset = args.offset ?? 0;
-      // Keep successive UTF-8 text pages on character boundaries, without changing byte offsets.
-      if (typeof args.fileId === 'string' && typeof length === 'number' && Number.isInteger(length) && length > 0 && typeof offset === 'number' && Number.isSafeInteger(offset) && offset >= 0) {
-        let blob: Blob;
-        try { ({ blob } = await context.download(args.fileId.trim())); }
-        catch (error) { return { isError: true, content: [{ type: 'text', text: error instanceof Error ? error.message : 'The file could not be fetched.' }] }; }
-        if (!active()) return { isError: true, content: [{ type: 'text', text: 'This agent turn has ended.' }] };
-        if (offset + length < blob.size) {
-          const start = Math.max(offset, offset + length - 4);
-          const edge = new Uint8Array(await blob.slice(start, offset + length + 1).arrayBuffer());
-          if (!active()) return failure('This agent turn has ended.');
-          let boundary = edge.length - 1;
-          while (boundary > 0 && (edge[boundary]! & 0xc0) === 0x80) boundary--;
-          const aligned = start + boundary - offset;
-          if (aligned === 0) return { isError: true, content: [{ type: 'text', text: 'This file page is too short for a complete UTF-8 character. Request at least 4 bytes.' }] };
-          if (aligned > 0) length = aligned;
-        }
-      }
-      result = await tool.execute({ ...args, length });
-    } else if (tool.name === 'read_meeting') {
+    if (tool.name === 'read_meeting') {
       const args = record(input) ? input : {};
       const fileOffset = args.fileOffset ?? 0;
       if (!Number.isSafeInteger(fileOffset) || Number(fileOffset) < 0) return failure('fileOffset must be a non-negative integer.');
-      result = await tool.execute({ ...args, limit: typeof args.limit === 'number' && Number.isInteger(args.limit) ? Math.min(args.limit, 5) : args.limit ?? 5 });
+      result = await tool.execute({ ...args, limit: args.limit ?? 500 });
       result = mapPayload(result, (payload) => {
         const { privateReminderGuidance: _privateReminderGuidance, ...meeting } = payload;
         const files = Array.isArray(payload.files) ? payload.files : [];
@@ -147,57 +122,6 @@ function compactBoard(payload: Record<string, unknown>): Record<string, unknown>
   }) };
 }
 
-function searchMeetingTool(context: MeetingToolsContext): ToolDefinition {
-  return {
-    name: 'search_meeting',
-    description: 'Search all meeting records currently available in this browser, including received history replay, within the configured source/chat/files scope. Case-insensitive literal matching covers transcript/chat text, participant names and shared-file names/ids (not file contents). Returns up to 5 excerpts and original sequence ids. Use nextCursor as after to continue; read_meeting after seq-1 with limit=1 retrieves a full matched record and surrounding pages provide context. No match proves only absence from the available scoped records.',
-    inputSchema: { type: 'object', properties: {
-      query: { type: 'string', minLength: 1, maxLength: 200 },
-      after: { type: 'integer', minimum: 0, default: 0 },
-      limit: { type: 'integer', minimum: 1, maximum: 5, default: 5 },
-      kind: { type: 'string', enum: ['transcript', 'chat', 'file', 'presence'] },
-    }, required: ['query'], additionalProperties: false },
-    annotations: readOnly,
-    execute: async (input) => {
-      if (!record(input) || Object.keys(input).some((key) => !['query', 'after', 'limit', 'kind'].includes(key))) return failure('Expected query and optional after, limit and kind.');
-      if (typeof input.query !== 'string' || !input.query.trim() || input.query.length > 200) return failure('query must contain 1–200 characters.');
-      const after = input.after ?? 0, limit = input.limit ?? 5;
-      if (!Number.isSafeInteger(after) || Number(after) < 0 || !Number.isInteger(limit) || Number(limit) < 1 || Number(limit) > 5) return failure('after must be non-negative and limit must be 1–5.');
-      if (input.kind !== undefined && !['transcript', 'chat', 'file', 'presence'].includes(String(input.kind))) return failure('Unknown record kind.');
-      const log = context.log(), query = input.query.trim().toLocaleLowerCase();
-      const matches: MeetingLogEntry[] = [];
-      let cursor = Number(after), more = false;
-      for (;;) {
-        const page = log.read(cursor, 500);
-        for (const entry of page.entries) {
-          if (input.kind !== undefined && entry.kind !== input.kind) continue;
-          if (!searchableText(entry).toLocaleLowerCase().includes(query)) continue;
-          if (matches.length === Number(limit)) { more = true; break; }
-          matches.push(entry);
-        }
-        if (more || !page.hasMore) break;
-        cursor = page.nextCursor;
-      }
-      return success({ records: matches.map((entry) => {
-        if (entry.kind !== 'transcript' && entry.kind !== 'chat') return entry;
-        const at = entry.text.toLocaleLowerCase().indexOf(query), start = Math.max(0, at - 160), end = Math.min(entry.text.length, start + 600);
-        const { text, ...metadata } = entry;
-        // Nested agent transcripts carry the same full text; exclude it from an excerpt response.
-        const agent = metadata.kind === 'transcript' && metadata.agent ? { id: metadata.agent.id, name: metadata.agent.name, role: metadata.agent.role } : metadata.agent;
-        return { ...metadata, ...(agent ? { agent } : {}), text: text.slice(start, end), excerpt: start > 0 || end < text.length, textOffset: start, textLength: text.length };
-      }), nextCursor: more ? matches.at(-1)!.seq : Math.max(log.head, Number(after)), hasMore: more,
-      coverage: { localOnly: true, availableRecords: log.length, throughCursor: log.head } });
-    },
-  };
-}
-
-function searchableText(entry: MeetingLogEntry): string {
-  if (entry.kind === 'transcript') return `${entry.speaker.name}\n${entry.speaker.peerId}\n${entry.text}`;
-  if (entry.kind === 'chat') return `${entry.sender.name}\n${entry.sender.peerId}\n${entry.text}`;
-  if (entry.kind === 'file') return `${entry.sender.name}\n${entry.file.name}\n${entry.file.id}`;
-  return `${entry.participant.name}\n${entry.participant.peerId}\n${entry.event}`;
-}
-
 export function contextText(log: MeetingLog, config: AgentConfig, owner: string, history: AgentLine[], snapshot?: MeetingSnapshot): string {
   const visible: MeetingLogEntry[] = [];
   for (let after = 0; ;) {
@@ -219,7 +143,7 @@ export function contextText(log: MeetingLog, config: AgentConfig, owner: string,
     coverage: { localOnly: true, availableRecords: visible.length, includedRecords: 0, omittedRecords: 0,
       firstAvailableCursor: visible[0]?.seq ?? null, includedFromCursor: null as number | null, throughCursor: log.head,
       availableFiles: scoped?.files.length ?? 0, omittedFiles: 0, availableParticipants: scoped?.participants.length ?? 0, omittedParticipants: 0,
-      retrieval: 'Use read_meeting after=0 for available earlier records, or search_meeting for topics. read_meeting fileOffset pages list every available attachment; read_shared_file retrieves content. Author replay may be incomplete; this browser does not guarantee the whole meeting history.' },
+      retrieval: 'Use read_meeting after=0 with pages of up to 500 full records; follow nextCursor until hasMore=false for all available earlier records. read_meeting fileOffset pages list every available attachment; read_shared_file retrieves content. Author replay may be incomplete; this browser does not guarantee the whole meeting history.' },
   };
   const summarize = () => {
     Object.assign(context.coverage, { includedRecords: context.meeting.length, omittedRecords: visible.length - context.meeting.length,
