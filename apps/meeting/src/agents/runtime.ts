@@ -349,6 +349,7 @@ export class AgentRuntime {
     const op: Operation = { key: crypto.randomUUID(), agent: structuredClone(agent), audience, floorId: this.#state.floor?.agentId === agent.id ? this.#state.floor.id : '', preparing,
       live: null, microphone: null, stopAudio: null, streamId: null, startedAt: Date.now(), lastSound: 0, heard: false, playback: null, voice, timer: null, speechTimer: null, rows: new Map() };
     this.#operations.set(agent.config.kind, op);
+    this.#error = null;
     const behalf = agent.config.kind === 'personal' && audience === 'public';
     const history = agent.config.kind === 'personal' && !behalf ? this.#lines : [];
     if (inputLine) {
@@ -414,13 +415,16 @@ export class AgentRuntime {
       if (!behalf && agent.config.system && this.#state.signal) context += `\nSystem signal: ${JSON.stringify(this.#state.signal)}`;
       if (voice) live.context(context); else live.request(context, text);
       this.#status = voice ? (audience === 'private' ? 'Speak privately to Muse. Your meeting microphone is paused.' : 'Speak publicly to Muse. Everyone can hear you.') : preparing ? 'Preparing a suggestion…' : 'Waiting for Muse’s response…';
-      op.timer = setTimeout(() => {
+      // Muse conversations have no fixed duration limit. Only group suggestion
+      // preparation is bounded by the room's preparation lease.
+      if (preparing) op.timer = setTimeout(() => {
         if (!valid()) return;
-        this.#error = preparing ? 'Omni preparation timed out.' : 'This interaction reached its time limit. Continue with a new request.';
+        this.#error = 'Omni preparation timed out.';
         this.#stop(agent.config.kind, 'interrupted');
-        if (preparing) this.command({ type: 'agent-cancel', id: agent.id });
+        this.command({ type: 'agent-cancel', id: agent.id });
+        this.#drain();
         this.#emit();
-      }, voice ? 180_000 : preparing ? 55_000 : 120_000);
+      }, 55_000);
       this.#emit();
     } catch (error) {
       if (valid()) { this.#error = error instanceof Error ? error.message : 'Unable to start the agent.'; this.#stop(agent.config.kind, 'interrupted'); this.#emit(); }
