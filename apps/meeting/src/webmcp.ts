@@ -333,7 +333,7 @@ export function createMeetingTools(context: MeetingToolsContext): ToolDefinition
         'with other participants. Text belongs to its node; update that same node’s text, x/y or width/height to edit, move or resize it. ' +
         'Create note, rectangle, diamond or text nodes, pen strokes with 2–256 relative points, or connectors using from/to node ids. ' +
         'Use action mermaid with a source string starting with flowchart TD or graph LR to import a complete Mermaid flowchart ' +
-        'as native editable nodes, bound text and arrows. Optional x/y position its top-left corner; by default it is placed to the right ' +
+        'including nested subgraph groups, as native editable nodes, bound text and arrows. Optional x/y position its top-left corner; by default it is placed to the right ' +
         'of existing content. Source is limited to 12000 characters and imports to 300 native elements including labels. Other diagram ' +
         'types, initialization directives and image fallbacks are rejected. Existing content is preserved. ' +
         'Use unique create ids to connect nodes in one batch. Text is limited to 500 characters per node. Deleting a node removes ' +
