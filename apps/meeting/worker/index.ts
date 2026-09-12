@@ -2,6 +2,7 @@ import { emptyAgentRoom, LEASE_MS, type AgentRoomState } from '../src/agents/con
 import { applyAgentCommand, reconcileAgents, type AgentMember } from '../src/agents/room';
 import { initializeLive } from './live';
 import { privateAnalysis } from './private-analysis';
+import { issueIceServers } from './ice-servers';
 import { DurableObject } from 'cloudflare:workers';
 import { GEMINI_MODEL, OPENAI_MODEL, type TranscriptionProvider } from '@weave-in/transcribe';
 import {
@@ -24,6 +25,9 @@ export interface Env {
   TRANSCRIPTION_PROVIDER?: string;
   TOKEN_RATE_LIMITER: RateLimit;
   ANALYSIS_RATE_LIMITER: RateLimit;
+  TURN_KEY_ID?: string;
+  TURN_KEY_SECRET?: string;
+  ICE_RATE_LIMITER: RateLimit;
 }
 
 interface SocketAttachment extends PeerIdentity, AgentMember { startedAt: number; sessionToken: string; liveRequests: number[] }
@@ -46,6 +50,7 @@ type UpstreamFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<R
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
+    if (url.pathname === '/api/ice-servers') return issueIceServers(request, env);
     if (url.pathname === '/api/private-analysis') return privateAnalysis(request, env);
     if (url.pathname === '/api/transcription-token') {
       return issueTranscriptionToken(request, env);

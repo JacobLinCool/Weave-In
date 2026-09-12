@@ -100,6 +100,7 @@ describe('MeetingRoom Durable Object', () => {
         GEMINI_API_KEY: 'test-server-key',
         TOKEN_RATE_LIMITER: allowingRateLimiter(),
         ANALYSIS_RATE_LIMITER: allowingRateLimiter(),
+        ICE_RATE_LIMITER: allowingRateLimiter(),
       } satisfies Env,
     );
     expect(response.headers.get('Permissions-Policy')).toContain('display-capture=(self)');
@@ -504,6 +505,7 @@ function tokenEnv(
     GEMINI_API_KEY: 'test-server-key',
     TOKEN_RATE_LIMITER: rateLimiter,
     ANALYSIS_RATE_LIMITER: rateLimiter,
+    ICE_RATE_LIMITER: rateLimiter,
     ...overrides,
   };
   for (const key of Object.keys(merged)) if (merged[key] === undefined) delete merged[key];
