@@ -413,7 +413,7 @@ Controls are quiet, square-shouldered, and flat; state is told by colour, not by
 ### Navigation
 - **Landing header:** 76px, brand (30px mark plus "Weave In" at 17px/600, -0.01em, 11px gap) on the left; on the right, three in-page links at 14px/500 in Cotton Muted with 22px gaps, hover to Cotton with a gold underline at 5px offset, then the wide Settings icon button. Links hide at 720px; Settings stays.
 - **Room header:** 60px, compact brand (24px mark, 15px word), a Line-ruled identity block ("Room" data label over the mono code), the caption-status pill, then people count, Settings, Copy link (swaps to a check and "Link copied" for 1.6s), and Leave in Coral. Labels and the count collapse at 640px; the brand hides at 360px.
-- **Side-panel tabs:** three equal 46px tabs (Chat, Transcript, Insights), 11px/700 uppercase at 0.04em with a 15px icon, Cotton Muted; the active tab is Cotton with a 2px Weld Gold bottom border. At three tabs the icon and label stay side by side down to 640px, below which the labels drop and the icons centre. Insights carries a count badge only while signals are unread; Chat keeps its existing badge.
+- **Side-panel tabs:** meeting tabs for Room, Transcript and Chat (the proposed Insights surface is not implemented), 11px/700 uppercase at 0.04em with a 15px icon, Cotton Muted; the active tab is Cotton with a 2px Weld Gold bottom border. The public message tab retains its count badge; personal Chat uses a dot for unread reminders. The future Insights panel would have its own signal count.
 - **Footer:** 72px, compact brand and a Cotton Dim 13px line, stacking at 720px.
 
 ### The Draft (signature)
@@ -424,7 +424,9 @@ The live demonstration in the hero. Five warps hang in thread colour with vertic
 ### The Selvedge and the Mark (signature)
 The selvedge is the eight thread colours as equal columns in a 6px stripe along the top edge of the room panel: the whole set of possible seats, before anyone has sat down. The mark is the favicon drawn in the page: an indigo tile rounded at 22%, four warps (madder, weld, verdigris, peach) under four cotton wefts, warp over weft on alternate crossings. It is 30px in the header, 24px compact, 44px at the close.
 
-## The Insight Surfaces
+## The Insight Surfaces (future proposal)
+
+These visualizations and intervention-card rules describe a future room-wide analysis layer. They are not implemented and do not govern the current Chat reminder or Omni interfaces described below. In particular, the older persistent intervention-card proposal does not override the current 15-second private popup.
 
 The analysis layer. Four surfaces, all governed by The Undyed Rule: the room speaks in undyed cotton, participants keep their dyes, and a signal colours a moment rather than a person. Specified against `GROUPTHINK.md`; nothing here renders a measure that file does not define.
 
@@ -497,7 +499,7 @@ New dots arrive with a 300ms fade and a 1px→4px scale; the polyline extends ov
 - **Do** use Coral only for off and wrong, and Verdigris (with the Mint Pale tint) only for live.
 - **Do** draw everything that speaks for the room — the intervention card, the Trace's path, threshold ticks — in undyed cotton, and keep dye for people.
 - **Do** show the threshold beside every measure, and the evidence beside every signal.
-- **Do** let the intervention card draw in as a weft pass (`clip-path` left to right, 900ms, 6px rise, `cubic-bezier(.16,1,.3,1)`) and persist until dismissed.
+- **Do** keep current private reminders silent and allow their 15-second collapse; the persistent animated intervention card belongs only to the future Insights proposal.
 - **Do** hold every analysis surface back until it has enough data to be true, and say what it is waiting for in Cotton Dim.
 
 ### Don't:
@@ -511,13 +513,19 @@ New dots arrive with a 300ms fade and a 1px→4px scale; the polyline extends ov
 - **Don't** put the graph paper on the page ground, the room, or any surface that is not a draft sheet.
 - **Don't** raise headline weight above 500 or invent a second display face.
 - **Don't** fabricate proof: no testimonials, customers, metrics, or screenshots as hero art; the draft is the demonstration and is labelled synthetic.
-- **Don't** give the assistant a thread colour, an avatar, a name, or a chat row; it is the cloth speaking, not a ninth participant.
+- **Don't** present assistants as additional human participants. Label the personal assistant Chat, shared public suggestions Omni, and approved personal speech as the owner’s Chat.
 - **Don't** colour a person by a signal. Coral marks the moment the discussion went wrong, never the speaker who was in it.
 - **Don't** add a charting library, axes, gridlines, or tick labels to the Trace; a PCA axis has no meaning a viewer can use and drawing one implies it does.
 - **Don't** rotate, orbit, parallax, or fog the Trace, and don't pulse, tick, or loop any analysis surface; the instrument is read, not admired.
 - **Don't** render a Hand, a meter, or a Trace before the data supports it, and don't stack intervention cards — if a stack is needed the intervention policy is wrong, not the layout.
 - **Don't** state a measure as a verdict about a person; the Hand describes one meeting and must be labelled as doing so.
 
-## Private reminders
+## Chat reminders and Omni (implemented)
 
-Private reminders use an absolutely positioned card at the lower left of the video stage, above controls. No empty reminder card appears and no stage space is reserved. The card avoids caption/error rectangles; if it cannot fit it remains in Private rather than covering them. One card appears at a time, remains stable while being read, and collapses after 15 seconds excluding hover/focus time. Collapse is distinct from dismissal and read status. The Private tab shows an unread dot and holds history, evidence, visibility and monitoring controls. Cotton text, a lock, and “Omni · Only you” identify the card; no sound, autofocus, or entrance animation. Keyboard activation returns focus to the Private tab when closing or viewing evidence.
+Private reminders use an absolutely positioned card at the lower left of the video stage, above controls. No empty reminder card appears and no stage space is reserved. The card avoids caption/error rectangles; if it cannot fit it remains available in Chat rather than covering them. One card appears at a time, remains stable while being read, and collapses after 15 seconds excluding hover/focus time. Collapse is distinct from dismissal and read status. The Chat tab shows an unread dot and combines reminder history, evidence, visibility and monitoring controls with private assistant discussion. Cotton text, a lock, and “Chat · Only you” identify the card; no sound, autofocus, or entrance animation. Keyboard activation returns focus to the Chat tab when closing or viewing evidence.
+
+Chat is configured for each participant on join, without starting a spoken session. Reminder actions offer **Discuss privately** and **Speak for me**; closing or timing out never grants permission. The latter approves only the displayed reminder for one public turn, with slight elaboration capped around 20 seconds and no new commitments. The owner's microphone stays in its existing state; owner speech interrupts Chat with no automatic resume. Shared transcript labels identify whose Chat spoke.
+
+Omni publishes suggestions of at most 240 characters in shared Room chat, labelled Omni. Its settings use a compact expandable section within Room; there is no separate Omni tab. There is no audio, public-audience toggle, or permission popup for Omni. It uses public meeting context and does not expose individual Chat histories.
+
+Same-tab room recovery includes up to 200 private Chat lines alongside reminder history. Refresh/rejoin restores text and reminder state, never an active spoken turn or its approval. Public Omni suggestions restore/replay as shared messages, not private reminders.

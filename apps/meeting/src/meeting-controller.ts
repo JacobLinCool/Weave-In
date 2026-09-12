@@ -1,3 +1,4 @@
+import type { AgentCommand, AgentRoomState } from './agents/contracts';
 import {
   MAX_PEER_MESSAGE_BYTES,
   parsePeerMessage,
@@ -15,6 +16,7 @@ const ICE_RESTART_WAIT_MS = 10000;
 const ICE_DISCONNECTED_GRACE_MS = 5000;
 
 export interface MeetingControllerEvents {
+  onAgentState?(state: AgentRoomState, serverNow: number): void;
   onReconnecting?(): void;
   onConnected(self: PeerIdentity, peers: PeerIdentity[], startedAt: number): void;
   onPeerJoined(peer: PeerIdentity): void;
@@ -63,6 +65,10 @@ export class MeetingController {
   #connecting = false;
   #generation = 0;
   #lastIceError: IceConfigurationError | null = null;
+  sessionToken = '';
+  sendAgent(command: AgentCommand): void {
+    if (this.#socket?.readyState === WebSocket.OPEN) this.#socket.send(JSON.stringify(command));
+  }
   #args: { roomCode: string; action: 'create' | 'join'; displayName: string; peerId: string } | null = null;
   #retryTimer: ReturnType<typeof setTimeout> | undefined;
   #retryDelay = 1000;
@@ -175,6 +181,7 @@ export class MeetingController {
     this.#connections.clear();
     this.#socket?.close(1000, 'Left meeting');
     this.#socket = null;
+    this.sessionToken = '';
   }
 
   /** Shares an additional local stream (for example a screen capture) with every peer. */
@@ -242,7 +249,11 @@ export class MeetingController {
     }
 
     switch (message.type) {
+      case 'agent-state':
+        this.#events.onAgentState?.(message.state, message.serverNow);
+        return false;
       case 'welcome':
+        this.sessionToken = message.sessionToken;
         this.#generation += 1;
         for (const state of this.#connections.values()) this.#closePeer(state);
         this.#connections.clear();

@@ -56,9 +56,11 @@ export function observeVoiceActivity(
   let stopped = false;
 
   const sample = (): void => {
+    if (stopped) return;
     analyser.getByteTimeDomainData(samples);
     level = calculateVoiceLevel(samples, level);
     onLevel(level);
+    if (stopped) return;
     animationFrame = window.requestAnimationFrame(sample);
   };
 

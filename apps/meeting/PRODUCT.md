@@ -1,5 +1,3 @@
-> Implementation note for PR #2: the automatic private-reminder prototype uses stateless, per-participant Worker analysis of recent transcripts, without room-wide persistence or broadcasts. The architecture and exact privacy wording below describe the broader planned system. Current implementation behavior and user-facing privacy copy are documented in README; they take precedence for this prototype.
-
 # Product
 
 <!-- impeccable:product-schema 1 -->
@@ -21,15 +19,15 @@ Detect groupthink while it is happening and intervene before the decision is mad
 
 Groupthink is the failure mode where a group suppresses dissent to preserve harmony, stops thinking critically, and converges on a low-quality decision that no individual member would have defended alone. It is invisible from inside the room: the meeting feels productive precisely because nobody is arguing.
 
-Weave In runs the meeting, transcribes every participant separately, embeds what they say into a semantic space, and watches that space for the signatures of groupthink — opinions collapsing toward a single point too early, the discussion wandering off its own agenda, one voice carrying the room, agreement that adds no information. When a signature fires, the room says so, and offers the counter-question the group is not asking.
+The current product pairs browser meetings and per-participant transcription with a personal **Chat** and shared **Omni**. Chat is configured on join and gives silent, evidence-based reminders when the owner’s explicit concern remains unresolved while a decision moves ahead. It supports private follow-up and can speak once for the owner after approval. Omni provides brief public text suggestions in Room chat. The wider room-level Groupthink model remains proposed.
 
-Success: a team finishes a meeting, sees the three moments where they stopped disagreeing, and can point to the intervention that reopened the discussion.
+Success means a participant can raise an overlooked concern before a decision is finalized. Post-meeting intervention reports remain future work.
 
 ## Positioning
 
-Every meeting tool on the market records what was said. Weave In reads how the group is thinking while it says it.
+Weave In helps participants notice an unresolved concern while the discussion is still underway.
 
-The meeting itself is the instrument, not the product. Full-mesh video, screen share, chat, and per-speaker live captions exist because they are the cleanest possible sensor: each participant transcribes their own microphone locally, so speaker attribution is structurally correct rather than guessed by diarization, and every utterance arrives tagged, timestamped, and separable. That signal is what the detection engine needs and what a mixed-audio recorder cannot give it.
+The meeting itself is the instrument, not the product. Full-mesh video, screen share, chat, and per-speaker live captions exist because they are the cleanest possible sensor: each participant transcribes their own microphone through the configured provider, so speaker attribution is structurally correct rather than guessed by diarization, and every utterance arrives tagged, timestamped, and separable. That signal is what the detection engine needs and what a mixed-audio recorder cannot give it.
 
 Name: Weave In. "Keep the thread. Weave everyone in." The tagline is the product thesis, not decoration: *keep the thread* is topic drift, *weave everyone in* is participation balance. A meeting is cloth. Groupthink is what happens when every pass of the shuttle takes the same dye.
 
@@ -38,30 +36,34 @@ Name: Weave In. "Keep the thread. Weave everyone in." The tagline is the product
 - The meeting runs in the browser: full-mesh WebRTC with Cloudflare STUN/TURN, up to 8 participants, six-character room codes, invite links of the form `?room=CODE`.
 - Camera, microphone, screen share, chat, files, whiteboard edits, and captions travel over encrypted WebRTC between participants. Connections prefer a direct path and may use Cloudflare TURN to relay encrypted packets. The relay processes connection metadata but cannot decrypt the meeting content. The operator's signaling Worker handles connection setup and credential issuance, not the meeting media or data-channel payloads.
 - Audio for captions travels directly from the speaker's browser to the selected AI provider (Gemini or OpenAI) using a single-use ephemeral token minted by the Worker.
-- **Transcript text is sent to the operator's server.** Finalized utterances go from each browser to that room's Durable Object over the existing signaling socket, where they are stored for the life of the room and analyzed. This is the deliberate cost of the analysis; see Brand Commitments for exactly how it must be described.
-- A Cloudflare Worker with one Durable Object per room relays SDP/ICE signaling, mints transcription tokens, holds the room's utterance log, runs the groupthink detectors, and broadcasts analysis and interventions back to every participant.
-- Embedding and intervention-generation calls are made server-side from the Durable Object. Browsers talk only to the same origin for analysis, so the page's connect-src is unchanged.
-- The room's stored transcript, embeddings, and analysis are deleted when the room closes. There are no accounts and nothing survives the meeting unless a participant exports it.
+- Agent settings and connection descriptions go to the Worker for GPT-Live initialization. Meeting records, private conversations and permitted tools then travel directly between the Client and OpenAI.
+- The room Durable Object coordinates Agent identity, the single Group executor, leases and public speaking rights. It does not store utterances or embeddings. Coordination is deleted when the last member leaves.
+- Personal source permissions are chosen at creation. Private conversations stay out of public replay and the meeting log. Speaking for the owner uses only the specifically approved reminder in a fresh session, without private history or tools; persistent public mode is disabled.
+- Automatic reminder analysis sends bounded human transcript text and prior reminder evidence through the Worker to Gemini, without Worker persistence. It runs while the meeting page is open, without a Codex browser or external assistant session.
+- Same-tab room recovery uses sessionStorage for meeting text, reminders and up to 200 private Chat lines, for up to 12 hours since the last save. It does not restore active audio sessions or queued speaking approvals.
 - Display name and settings (languages spoken, caption style, captions on/off) persist in the browser's localStorage.
 
 ## Capabilities and Constraints
 
-### Shipped
+### Current implementation
 
-- Private, agent-authored reminders in a reserved page dock and a Private history tab. Evidence comes from this browser's meeting record. Reminders remain local, can be hidden or dismissed, expire, and are cleared on leaving. Follow-up stays in the existing assistant conversation. This is a delivery surface, not an implemented Groupthink detector or autonomous monitoring service.
-
-- Camera, microphone, screen share with live renegotiation, chat panel, per-speaker live captions on tiles, and a merged transcript panel.
-- Per-participant local transcription: each browser transcribes only its own microphone (browser echo cancellation keeps remote voices out) and streams interim and final text to everyone.
-- Up to 4 selected BCP-47 languages or automatic detection; caption style Verbatim or Smart.
-- No accounts or recording. Meeting media is encrypted between participants; Cloudflare TURN may relay it without decrypting it.
+- Silent private reminder cards float at the stage's lower left without reserving layout space. They collapse after 15 seconds, pausing while hovered or focused; evidence and history remain in the unified Chat panel. Hiding private content also hides the personal discussion.
+- Automatic analysis covers explicit unresolved concerns bypassed by later decisions, delivered only to the concern's author. The same concern can recur on a substantive new commitment, execution or scope change, not a timer or paraphrased decision. Meaning and novelty remain model judgments, not a validated diagnosis of Groupthink.
+- **Discuss privately** opens follow-up in personal Chat. **Speak for me** grants one brief public turn, allowing slight elaboration without new commitments or private details. The owner's microphone remains in its current state; owner speech stops the assistant without automatic resume. Every new turn needs another approval.
+- One personal Chat is configured automatically per participant; one shared Omni can be created for the room. Role, language, source and tool permissions remain configurable.
+- Omni publishes at most 240 characters to shared Room chat, labelled Omni, without audio or human approval. Compact Omni settings live inside Room; public suggestions replay to late joiners. A ready browser can take over if the runner leaves.
+- Camera, microphone, screen share with live renegotiation, shared messages and files, per-speaker live captions, and a merged transcript.
+- Up to four selected BCP-47 caption languages or automatic detection; Verbatim or Smart captions. Each browser sends its own audio directly to its caption provider.
+- Signaling reconnects automatically while preserving local state. Refresh/rejoin restores the same tab's checkpoint, including private reminder and Chat text history; it does not replay interrupted speech.
+- No accounts or meeting recording. Meeting media is encrypted between participants; Cloudflare TURN may relay it without decrypting it. The signaling Worker does not carry that media. Configured AI providers receive the selected audio/context. GPT-Live uses native browser WebRTC after authorized initialization, with Responses delegation.
 
 ### In development
 
-These are the product. They are not shipped and must never be described as though they were.
+These remain proposals. Do not describe them as running in the current implementation.
 
 - **Semantic space analysis.** Every finalized utterance is embedded; the room maintains a rolling window, a group centroid, and a dispersion measure.
 - **Four groupthink detectors.** Convergence (opinions collapsing too early), drift (the discussion leaving its own agenda), float (one voice running unchecked), and echo (agreement carrying no new information). Specified in `GROUPTHINK.md`.
-- **Visual intervention.** When a detector fires, every participant sees a non-intrusive card on the stage and an entry in the Insights panel, carrying the named signal and a generated counter-question. The assistant never speaks, never injects itself into chat as a participant, and never interrupts someone mid-utterance.
+- **Visual intervention.** When a detector fires, every participant sees a non-intrusive card on the stage and an entry in the Insights panel, carrying the named signal and a generated counter-question. These proposed surfaces do not replace the current silent private Chat cards or text-only Omni behavior.
 - **The Hand.** A six-axis profile of each participant's communication style — airtime, initiative, challenge, inquiry, echo, influence — drawn as a radar in their thread colour.
 - **The Trace.** The discussion's path through semantic space over time, rendered as a dimensionally-reduced trajectory, so convergence and drift are visible as shape rather than asserted as a number.
 - **Post-meeting report.** The signal timeline, each intervention, and whether the discussion reopened after it.
@@ -69,15 +71,14 @@ These are the product. They are not shipped and must never be described as thoug
 ### Explicitly deferred
 
 - Shared whiteboard. The team decided the whiteboard is an instrument for capturing non-verbal interaction data, not a headline feature. It is not part of the first build and must not lead the pitch.
-- Voice intervention (TTS). Considered and set aside: interrupting a live meeting with synthetic speech is a larger product and ethics question than the first build should take on.
-- Host-only dashboards. Analysis is shown to everyone in the room. A group cannot correct a bias that only its most senior member can see.
+- Host-only dashboards. Private assistance belongs to each participant; shared public suggestions are visible to everyone, rather than restricted to the chair.
 
 ## Brand Commitments
 
 - Name: Weave In. Tagline: "Keep the thread. Weave everyone in." (confirmed by the user, 2026-09-12; replaces the working name On Track)
 - Landing page language: English.
 - The animated demonstration on the landing page is built in-page with React/CSS/SVG, not as a video file.
-- Privacy descriptions distinguish encrypted WebRTC (which may use a Cloudflare TURN relay), signaling and credential issuance in the Worker, and transcript analysis. Do not promise that all connections are direct. Cloudflare TURN can process connection metadata but cannot decrypt WebRTC media or data. Current private analysis sends transcript context through the Worker to Gemini without server persistence; any future room-wide storage must ship with matching disclosure and retention behavior. Update the landing page and README with changes to these data paths.
+- Privacy copy must distinguish encrypted peer media (which may use Cloudflare TURN), direct AI connections, and the Worker. TURN handles connection metadata but cannot decrypt WebRTC content. The Worker handles Agent settings, SDP, credential issuance and coordination, plus bounded transcript/reminder evidence for stateless Gemini analysis. It does not persist conversation records. AI providers receive the selected audio/context/tool data. Do not claim that all connections are direct, nothing leaves the browser, or no metadata reaches the server. Update the landing page and README with changes to these data paths.
 - The assistant has no dye: it is not a participant, it is never given a thread colour, and it is never described as a member of the meeting.
 - Detector output is stated as an observation with its evidence, never as a verdict about a person. "Three speakers in a row added no new position" is allowed. "You are being a conformist" is not.
 
@@ -90,9 +91,9 @@ These are the product. They are not shipped and must never be described as thoug
 ## Product Principles
 
 1. **Name the moment, not the person.** Every signal is attached to a timestamp and an utterance the group can go back and look at. The product describes what the discussion did, never what a participant is.
-2. **The group sees what the room sees.** Analysis is broadcast to every participant. A bias visible only to the chair is a new authority problem, not a fix for the old one.
-3. **AI assists thinking and never replaces it.** The assistant asks the question the group is not asking. It does not have an opinion about the decision, and it never tells the group what to conclude.
+2. **Respect private and shared audiences.** Chat reminders and discussion belong to their owner. Only a specifically approved reminder may be spoken for them; Omni uses public context and posts visibly to the room.
+3. **AI assists thinking and never replaces it.** Participants retain decisions. Chat needs approval for each public spoken turn and stops when its owner speaks. Omni offers brief text, never unsolicited audio.
 4. **Truth over slogans.** Privacy claims name exactly what leaves the browser and where it goes. The claim changed when the product changed; the copy changes with it.
 5. **Every voice is its own source.** Each person transcribes themselves; nothing is mixed or attributed by guesswork. Correct attribution is a precondition for every measurement downstream.
-6. **Intervene rarely and well.** An assistant that fires constantly is noise, and a group learns to ignore noise. Cooldowns, warm-up periods, and a hard cap per meeting are features, not limitations.
+6. **Intervene rarely and well.** An assistant that fires constantly is noise, and a group learns to ignore noise. The implemented detector uses cooldowns, evidence checks and substantive-development rules; broader warm-up and per-meeting caps belong to the proposed detector model.
 7. **Zero-friction entry.** A link, a name, a room.

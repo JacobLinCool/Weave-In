@@ -99,12 +99,12 @@ export function LandingSurface(props: LandingProps): ReactNode {
             <dd>Video, voice, screen share, chat, files, whiteboard edits, and captions travel over encrypted WebRTC connections between participants. Connections use a direct path when possible; Cloudflare TURN can relay encrypted packets when the network requires it. The relay handles connection metadata such as IP addresses and timing, but cannot read the encrypted content.</dd>
           </div>
           <div className="key__row">
-            <dt><WovenChip colors={[THREAD_COLORS[0]!.hex, '#F3EEE3']} /> To the caption model</dt>
-            <dd>Your own microphone audio goes from your browser straight to the caption model, carrying a single-use key issued for that session. The text returns to you, and you pass it to the room.</dd>
+            <dt><WovenChip colors={[THREAD_COLORS[0]!.hex, '#F3EEE3']} /> To AI providers</dt>
+            <dd>Your microphone goes directly to your caption provider. Assistants receive their permitted context, conversation and tool results directly through OpenAI; private assistant conversations stay out of the public room.</dd>
           </div>
           <div className="key__row">
             <dt><WovenChip colors={['#303A6B', '#F3EEE3']} /> Our server</dt>
-            <dd>Our signaling Worker connects browsers and issues short-lived caption and TURN credentials. It does not carry meeting media, chat, files, or whiteboard content. Cloudflare's TURN relay is a separate data path. Automatic private reminders send recent transcript text and previous automatic reminders through the Worker to Gemini for analysis. We do not store this analysis on our server. You can pause automatic analysis in the meeting.</dd>
+            <dd>Our signaling Worker connects browsers, issues short-lived caption and TURN credentials, and initializes and coordinates assistants. It does not carry meeting media, chat, files, or whiteboard content. Cloudflare's TURN relay is a separate data path. Automatic reminders send recent transcript text and previous reminders through the Worker to Gemini. We do not store this analysis or private conversations. You can pause automatic reminders in Chat.</dd>
           </div>
         </dl>
       </section>
@@ -130,7 +130,7 @@ export function LandingSurface(props: LandingProps): ReactNode {
             </li>
             <li>
               <h3>AI that keeps you thinking</h3>
-              <p>The captions are the AI in the room: a faithful record of what was said and who said it, there for you to read, quote, and argue with.</p>
+              <p>Discuss a question privately with your assistant, or trigger the shared facilitator. It prepares a perspective, raises its hand and waits for someone to invite it to speak.</p>
             </li>
           </ul>
           <WeaveSwatch />

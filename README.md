@@ -6,12 +6,11 @@ Keep the thread. Weave everyone in.
 
 Groupthink is the failure mode where a group suppresses dissent to preserve harmony, stops thinking critically, and converges on a decision no member would have defended alone. It is invisible from inside the room, because the meeting feels productive precisely when nobody is arguing.
 
-Weave In runs the meeting, transcribes every participant separately in their own browser, embeds what they say into a semantic space, and watches that space for the signatures of groupthink — opinions collapsing toward one point too early, the discussion leaving its own agenda, one voice carrying the room, agreement that adds no information. When a signature fires, the room says so, and asks the question the group is not asking.
+Weave In runs browser meetings with per-participant captions, private Personal assistants and one shared Group facilitator. A Group prepares after a manual signal, raises its hand, and speaks only when a participant invites it. Automated groupthink detectors are specified as future work; they are not running in the current product.
 
 ```
 apps/meeting          Landing page + meeting room (React + Vite), Cloudflare Worker + Durable Object
 packages/transcribe   Headless live transcription core (Gemini, OpenAI)
-packages/groupthink   Detection engine — pure, no I/O, no network            [in development]
 ```
 
 ```bash
@@ -32,6 +31,8 @@ pnpm check            # typecheck + tests + build + deploy dry run
 ## Privacy
 
 Camera, microphone, screen share, chat, files, whiteboard edits, and captions use encrypted WebRTC connections between participants. Browsers prefer direct connections and can use Cloudflare TURN to relay encrypted packets on restricted networks. The relay can process connection metadata, including IP addresses and timing, but cannot read the encrypted meeting content. The signaling Worker issues short-lived TURN credentials and routes connection setup messages; meeting media and data do not pass through that Worker.
+
+Caption audio goes directly to the selected AI provider. Agent context, selected files/screens and conversations go directly to OpenAI after initialization. The Worker handles Agent settings and room coordination; it does not store meeting transcripts or private conversations.
 
 Automatic private analysis separately sends recent transcript text and previous automatic reminders through the Worker to Gemini. The Worker does not persist this analysis data. Participants can pause automatic analysis in the meeting.
 

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MeetingController, type MeetingControllerEvents } from '../src/meeting-controller';
+import { emptyAgentRoom } from '../src/agents/contracts';
 class Socket extends EventTarget {
   static instances: Socket[] = [];
   static OPEN = 1;
@@ -8,7 +9,7 @@ class Socket extends EventTarget {
     super();
     Socket.instances.push(this);
   }
-  send() {}
+  send = vi.fn();
   close() {
     this.readyState = 3;
     this.dispatchEvent(new Event('close'));
@@ -16,11 +17,12 @@ class Socket extends EventTarget {
   message(message: unknown) {
     this.dispatchEvent(new MessageEvent('message', { data: JSON.stringify(message) }));
   }
-  welcome(peers: { peerId: string; name: string; isHost: boolean }[] = []) {
+  welcome(peers: { peerId: string; name: string; isHost: boolean }[] = [], sessionToken = 'initial-token') {
     this.dispatchEvent(
       new MessageEvent('message', {
         data: JSON.stringify({
           type: 'welcome',
+          sessionToken,
           self: { peerId: 'a'.repeat(32), name: 'Alice', isHost: true },
           peers,
           startedAt: 100,
@@ -63,7 +65,7 @@ class PeerConnection extends EventTarget {
 
 function events(): MeetingControllerEvents {
   return {
-    onConnected: vi.fn(), onReconnecting: vi.fn(), onError: vi.fn(), onIceRecovered: vi.fn(),
+    onConnected: vi.fn(), onReconnecting: vi.fn(), onError: vi.fn(), onIceRecovered: vi.fn(), onAgentState: vi.fn(),
     onPeerJoined: vi.fn(), onPeerLeft: vi.fn(), onRemoteStream: vi.fn(), onRemoteStreamEnded: vi.fn(),
     onPeerChannelOpen: vi.fn(), onPeerMessage: vi.fn(), onPeerChannel: vi.fn(),
   };
@@ -105,6 +107,7 @@ describe('signaling recovery', () => {
     await vi.advanceTimersByTimeAsync(0);
     Socket.instances[0]!.welcome();
     await ready;
+    expect(controller.sessionToken).toBe('initial-token');
     Socket.instances[0]!.close();
     expect(events.onReconnecting).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(1000);
@@ -112,15 +115,17 @@ describe('signaling recovery', () => {
     expect(String(Socket.instances[1]!.url)).toContain('peerId=' + 'a'.repeat(32));
     Socket.instances[1]!.close();
     await vi.advanceTimersByTimeAsync(2000);
-    Socket.instances[2]!.welcome();
+    Socket.instances[2]!.welcome([], 'reconnected-token');
     await vi.advanceTimersByTimeAsync(0);
     expect(events.onConnected).toHaveBeenCalledTimes(2);
+    expect(controller.sessionToken).toBe('reconnected-token');
     expect(events.onError).not.toHaveBeenCalled();
     expect(fetch).toHaveBeenCalledTimes(1);
     Socket.instances[2]!.close();
     controller.close();
     await vi.advanceTimersByTimeAsync(60000);
     expect(Socket.instances).toHaveLength(3);
+    expect(controller.sessionToken).toBe('');
   });
   it('ignores a welcome from an obsolete socket', async () => {
     vi.useFakeTimers();
@@ -162,6 +167,31 @@ describe('relay-backed peer connections', () => {
     await ready;
     return { controller, callbacks, socket, connection: PeerConnection.instances[0]! };
   }
+
+  it('keeps agent commands and room-state updates working alongside relay provisioning', async () => {
+    const callbacks = events();
+    const controller = new MeetingController([], callbacks);
+    vi.mocked(callbacks.onConnected).mockImplementation(() => {
+      expect(controller.sessionToken).toBe('agent-session-token');
+      controller.sendAgent({ type: 'agent-ready', ready: true });
+    });
+    const ready = controller.connect(args);
+    await vi.advanceTimersByTimeAsync(0);
+    const socket = Socket.instances[0]!;
+    socket.welcome([peer], 'agent-session-token');
+    const state = emptyAgentRoom();
+    socket.message({ type: 'agent-state', state, serverNow: Date.now() });
+    await ready;
+    await vi.advanceTimersByTimeAsync(0);
+    expect(socket.send).toHaveBeenCalledWith(JSON.stringify({ type: 'agent-ready', ready: true }));
+    expect(callbacks.onAgentState).toHaveBeenCalledWith(state, Date.now());
+    expect(PeerConnection.instances[0]!.configuration.iceServers).toEqual(credentials().iceServers);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    controller.close();
+    controller.sendAgent({ type: 'agent-heartbeat' });
+    expect(socket.send).toHaveBeenCalledTimes(1);
+    expect(controller.sessionToken).toBe('');
+  });
 
   it('provisions credentials before opening signaling or any peer connection', async () => {
     let resolve!: (response: Response) => void;

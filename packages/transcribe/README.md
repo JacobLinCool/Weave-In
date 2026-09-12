@@ -1,6 +1,8 @@
 # @weave-in/transcribe
 
-Headless, framework-agnostic live browser audio transcription. Audio tracks are mixed locally in one Web Audio graph, resampled to PCM16 in an AudioWorklet, and sent directly from the page to the selected provider: Gemini transcribe-live (16 kHz over WebSocket) or OpenAI live transcribe (24 kHz over WebRTC). Both accept a direct API key or a short-lived ephemeral token.
+OpenAI uses native WebSocket PCM streaming and manual commits because `gpt-live-transcribe` does not support server VAD. All PCM, including low-volume audio, is sent; commits occur after an 800 ms pause detected at RMS 0.005. Continuous speech is not cut at fixed intervals, so a quoted phrase cannot become an independent approval command just because it crosses a timer boundary. Transcription uses `minimal` delay. Stop and connection rotation wait for outstanding final transcripts for up to 5 seconds; failures or a finalization timeout are reported visibly instead of silently discarding the last turn. Duplicate completion events are ignored, and parallel stop calls share the same drain. These boundaries should be evaluated with representative microphones and speech, including quiet speech and approval phrases.
+
+Headless, framework-agnostic live browser audio transcription. Audio tracks are mixed locally in one Web Audio graph, resampled to PCM16 in an AudioWorklet, and sent directly from the page to the selected provider: Gemini transcribe-live (16 kHz over WebSocket) or OpenAI live transcribe (24 kHz over WebSocket). Both accept a direct API key or a short-lived ephemeral token.
 
 ```ts
 import { createTranscription } from '@weave-in/transcribe';
