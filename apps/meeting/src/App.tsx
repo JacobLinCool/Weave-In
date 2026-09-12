@@ -38,7 +38,7 @@ import {
 import { FileShare, type SharedFile } from './file-share';
 import { batchHistory, insertByTime, selectHistory } from './history';
 import { LandingSurface } from './landing';
-import { createPeerId, createRoomCode, MeetingController } from './meeting-controller';
+import { connectWithIdentityRecovery, createPeerId, createRoomCode, MeetingController } from './meeting-controller';
 import { MeetingLog, type LogParticipant } from './meeting-log';
 import {
   MAX_FILE_BYTES,
@@ -550,8 +550,8 @@ export function App(): ReactNode {
     nameRef.current = name;
     storeDisplayName(name);
     try {
-      const saved = loadMeetingSession(code);
-      if (roomCodeRef.current !== code) {
+      let saved = loadMeetingSession(code);
+      const restoreSession = (): void => {
         logRef.current.restore(saved?.log ?? []);
         personalChatRef.current = saved?.personalChat ?? [];
         messagesRef.current = saved?.messages ?? [];
@@ -561,7 +561,8 @@ export function App(): ReactNode {
         seenRef.current = new Set([...messagesRef.current, ...transcriptRef.current].filter(r=>!r.own).map(r=>`${r.from}:${r.id}`));
         if (saved) privateNotices.restore(saved.notices); else privateNotices.clear();
         autoReminders.setEnabled(saved?.monitoringEnabled ?? true);
-      }
+      };
+      if (roomCodeRef.current !== code) restoreSession();
       const stream = await prepareMedia();
       const controller = new MeetingController([stream], {
         onAgentState: (state, serverNow) => { agentStateRef.current = { state, now: serverNow }; agentRef.current?.update(state, serverNow); },
@@ -652,7 +653,16 @@ export function App(): ReactNode {
         },
         setFiles,
       );
-      await controller.connect({ roomCode: code, action, displayName: name, peerId: saved?.peerId ?? createPeerId() });
+      await connectWithIdentityRecovery(
+        controller,
+        { roomCode: code, action, displayName: name, peerId: saved?.peerId ?? createPeerId() },
+        () => {
+          // The copied history belongs to the participant still in the room.
+          // Start fresh so this tab cannot replay their words as its own.
+          saved = null;
+          restoreSession();
+        },
+      );
       roomCodeRef.current = code;
       setRoomCode(code);
       setRoomInput(code);

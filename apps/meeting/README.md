@@ -23,6 +23,8 @@ pnpm deploy:dry-run
 
 ## The meeting
 
+- If a duplicated tab inherits an identity that is still connected, its initial join retries once as a new participant. Copied local history is cleared so the new identity cannot replay the original participant's words. Automatic reconnections keep the existing identity. Rejected joins show the server's reason, such as a full room.
+- The room removes connections that have sent no valid message for 90 seconds, checked on admission and by a 10-second cleanup alarm. The existing meeting heartbeat keeps quiet participants present. An expired connection no longer occupies a seat or blocks rejoining with the same identity.
 - Invite links can reopen a room: if no host is connected, the next person joining becomes host under the same room code. A fully empty room starts a new meeting timer; if guests remain, the existing timer is preserved. Joining an active hosted room still makes you a guest. The server does not archive prior chat or captions; a returning browser can restore its own same-tab checkpoint, and connected peers replay their own history.
 
 - The header shows time since the room was created (`mm:ss`, then `h:mm:ss`). The signaling server supplies the shared start time and its current time, so late joiners see the room's duration without depending on their device clock matching the server. Socket attachments retain the timestamp through Durable Object hibernation. A new room starts a new clock.
