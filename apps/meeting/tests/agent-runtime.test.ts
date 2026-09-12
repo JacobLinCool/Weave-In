@@ -1,9 +1,10 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { AgentRuntime } from '../src/agents/runtime';
-import { emptyAgentRoom, type AgentLine, type RoomAgent } from '../src/agents/contracts';
+import { emptyAgentRoom, parseAgentConfig, type AgentLine, type RoomAgent } from '../src/agents/contracts';
 import type { LiveCallbacks } from '../src/agents/live';
 import { MeetingLog } from '../src/meeting-log';
 import type { MeetingSnapshot, ToolDefinition } from '../src/webmcp';
+import { defaultAgentConfig } from '../src/agents/config';
 
 const calls = vi.hoisted(() => ({ requests: vi.fn(), contexts: vi.fn(), close: vi.fn(), start: vi.fn(), tools: [] as unknown[][], lives: [] as LiveCallbacks[], enable: vi.fn(async (): Promise<void> => undefined), mute: vi.fn(async (): Promise<void> => undefined), attach: vi.fn((_stream: MediaStream, _allowed: () => boolean, _level: unknown, _error: (message: string) => void) => ({ stop: vi.fn(), output: { id: 'output' } as MediaStream })) }));
 vi.mock('../src/agents/live', () => ({ AgentLive: class {
@@ -23,7 +24,7 @@ function setup(beginVoice: (audience: string, owner: string) => Promise<MediaStr
   const log = new MeetingLog();
   const snapshot: MeetingSnapshot = { roomCode: 'ABC123', you: { peerId: 'owner', name: 'Owner' }, participants: [], captions: 'idle', presentation: null, live: [], files: [] };
   const sendAgentMessage = vi.fn(() => ({ id: 'posted', at: new Date().toISOString() }));
-  const editWhiteboard = vi.fn(async () => ({ ok: true, shared: true, action: 'mermaid', count: 3, elements: [], changedIds: ['a', 'b', 'arrow'], canUndo: true, canRedo: false }));
+  const editWhiteboard = vi.fn(async (_input: unknown, _authorized?: () => boolean) => ({ ok: true, shared: true, action: 'mermaid', count: 3, elements: [], changedIds: ['a', 'b', 'arrow'], canUndo: true, canRedo: false }));
   const agent: RoomAgent = { id: 'personal', owner: 'owner', runner: 'owner', epoch: 1, phase: 'idle', request: 0, pending: false, leaseUntil: Date.now() + 30000,
     config: { kind: 'personal', name: 'Muse', instructions: 'Help', language: 'auto', source: 'none', chat: false, system: false, screen: false, files: false, audience: 'private' } };
   const ctx = { peerId: 'owner', room: 'ABC123', controller: { broadcast, sendAgent, addStream: vi.fn(), removeStream: vi.fn(), sessionToken: 'token' },
@@ -42,7 +43,7 @@ it('confirms settings from room state, stops old work and keeps private history'
   agent.config.language = '繁體中文'; agent.epoch++; agent.request++;
   let saved = false;
   const save = runtime.configure(agent.id, agent.config).then(() => { saved = true; });
-  expect(sendAgent).toHaveBeenCalledWith({ type: 'agent-configure', id: agent.id, config: agent.config });
+  expect(sendAgent).toHaveBeenCalledWith({ type: 'agent-configure', id: agent.id, config: parseAgentConfig(agent.config) });
   await Promise.resolve(); expect(saved).toBe(false);
   runtime.update(state, Date.now()); await save;
   expect(calls.close).toHaveBeenCalled();
@@ -62,9 +63,51 @@ it('reports personal activity through queued work and clears it on stop', async 
   expect(runtime.snapshot()).toMatchObject({ personalActive: false, queued: 0, voice: false });
 });
 
+it('revokes pending tool work when Room posting is disabled and starts the next session with updated tools', async () => {
+  const { runtime, editWhiteboard, sendAgentMessage } = setup();
+  const enabled = structuredClone(runtime.snapshot().room);
+  enabled.agents[0]!.config.roomMessages = true;
+  runtime.update(enabled, Date.now());
+  await runtime.ask('Draw this workflow and share it');
+  const previousTools = calls.tools[0] as ToolDefinition[];
+  const draw = previousTools.find(tool => tool.name === 'edit_whiteboard')!;
+  const post = previousTools.find(tool => tool.name === 'send_chat_message')!;
+  let release!: () => void;
+  const parsing = new Promise<void>(resolve => { release = resolve; });
+  const commit = vi.fn();
+  editWhiteboard.mockImplementationOnce(async (_input, authorized) => {
+    await parsing;
+    if (!authorized?.()) throw new Error('Cancelled before commit');
+    commit();
+    return { ok: true, shared: true, action: 'mermaid', count: 0, elements: [], changedIds: [], canUndo: false, canRedo: false };
+  });
+  const pending = draw.execute({ action: 'mermaid', source: 'flowchart LR\nA --> B' });
+  expect(editWhiteboard).toHaveBeenCalledOnce();
+  const disabled = structuredClone(enabled);
+  const agent = disabled.agents[0]!;
+  agent.config.roomMessages = false; agent.epoch++; agent.request++;
+  const saving = runtime.configure(agent.id, agent.config);
+  runtime.update(disabled, Date.now());
+  await saving;
+  expect(calls.close).toHaveBeenCalledOnce();
+  expect(runtime.snapshot().personalActive).toBe(false);
+  release();
+  expect((await pending).isError).toBe(true);
+  expect(commit).not.toHaveBeenCalled();
+  expect((await post.execute({ text: 'Late post' })).isError).toBe(true);
+  expect(sendAgentMessage).not.toHaveBeenCalled();
+  await runtime.ask('Continue privately');
+  expect(calls.lives).toHaveLength(2);
+  expect((calls.tools[1] as ToolDefinition[]).some(tool => tool.name === 'send_chat_message')).toBe(false);
+  expect(runtime.snapshot().lines.some(line => line.text === 'Draw this workflow and share it')).toBe(true);
+});
+
 
 it('lets a private voice request draw and post as the owner without publishing private speech', async () => {
   const { runtime, publicLine, broadcast, sendAgent, sendAgentMessage, editWhiteboard } = setup(async () => ({ stop: vi.fn() }) as unknown as MediaStreamTrack);
+  const state = structuredClone(runtime.snapshot().room);
+  state.agents[0]!.config.roomMessages = true;
+  runtime.update(state, Date.now());
   await runtime.ask('', true);
   await vi.waitFor(() => expect(calls.tools).toHaveLength(1));
   const tools = calls.tools[0] as ToolDefinition[];
@@ -83,6 +126,19 @@ it('lets a private voice request draw and post as the owner without publishing p
   expect((await draw.execute({ action: 'undo' })).isError).toBe(true);
   expect((await post.execute({ text: 'Late post' })).isError).toBe(true);
   expect(editWhiteboard).toHaveBeenCalledOnce(); expect(sendAgentMessage).toHaveBeenCalledOnce();
+});
+
+it('keeps default Muse tool access read-focused for Room chat without search or raw download tools', async () => {
+  const { runtime, sendAgentMessage } = setup();
+  const state = structuredClone(runtime.snapshot().room);
+  state.agents[0]!.config = defaultAgentConfig('personal');
+  runtime.update(state, Date.now());
+  await runtime.ask('Review the meeting and draw its workflow');
+  await vi.waitFor(() => expect(calls.tools).toHaveLength(1));
+  const tools = calls.tools[0] as ToolDefinition[];
+  expect(tools.map((tool) => tool.name)).toEqual(['read_meeting', 'capture_whiteboard', 'edit_whiteboard', 'read_shared_file']);
+  expect(tools.find((tool) => tool.name === 'read_meeting')!.inputSchema.properties).toMatchObject({ limit: { default: 500, maximum: 500 } });
+  expect(sendAgentMessage).not.toHaveBeenCalled();
 });
 
 it.each([false, true])('keeps Muse active beyond the former time limit until stopped (voice: %s)', async (voice) => {
@@ -158,11 +214,45 @@ it.each(['personal', 'group'] as const)('waits for acknowledgement before comple
   let completed = false;
   const creating = runtime.create(agent.config).then(() => { completed = true; });
   await vi.advanceTimersByTimeAsync(0);
-  expect(sendAgent).toHaveBeenCalledWith({ type: 'agent-create', config: agent.config });
+  expect(sendAgent).toHaveBeenCalledWith({ type: 'agent-create', config: parseAgentConfig(agent.config) });
   expect(completed).toBe(false);
   runtime.update({ ...emptyAgentRoom(), agents: [agent] }, Date.now());
   await creating;
   expect(completed).toBe(true);
+});
+it.each(['create', 'configure'] as const)('confirms a legacy config %s after server default normalization', async (action) => {
+  const { runtime, sendAgent } = setup();
+  const agent = structuredClone(runtime.snapshot().room.agents[0]!);
+  delete agent.config.roomMessages;
+  const legacy = { ...agent.config };
+  if (action === 'create') runtime.update(emptyAgentRoom(), Date.now());
+  let saved = false;
+  const pending = (action === 'create' ? runtime.create(legacy) : runtime.configure(agent.id, legacy)).then(() => { saved = true; });
+  expect(sendAgent).toHaveBeenCalledWith(expect.objectContaining({ type: `agent-${action}`, config: expect.objectContaining({ roomMessages: false }) }));
+  await Promise.resolve();
+  expect(saved).toBe(false);
+  agent.config = parseAgentConfig(legacy)!;
+  agent.epoch++;
+  runtime.update({ ...emptyAgentRoom(), agents: [agent] }, Date.now());
+  await pending;
+  expect(saved).toBe(true);
+  expect(legacy.roomMessages).toBeUndefined();
+});
+it('rejects settings changes after reconnect until the authoritative room state arrives', async () => {
+  const { runtime, sendAgent } = setup();
+  const state = structuredClone(runtime.snapshot().room);
+  const agent = state.agents[0]!;
+  runtime.connectionLost();
+  runtime.connectionRestored();
+  sendAgent.mockClear();
+  await expect(runtime.create(agent.config)).rejects.toThrow('Reconnect');
+  await expect(runtime.configure(agent.id, agent.config)).rejects.toThrow('Reconnect');
+  expect(sendAgent).not.toHaveBeenCalled();
+  runtime.update(state, Date.now());
+  const saving = runtime.configure(agent.id, agent.config);
+  expect(sendAgent).toHaveBeenCalledWith(expect.objectContaining({ type: 'agent-configure', id: agent.id }));
+  runtime.update(structuredClone(state), Date.now());
+  await saving;
 });
 it('shows a ready status when Muse exists and setup guidance only after it is removed', () => {
   const { runtime } = setup();
@@ -482,6 +572,32 @@ it('reconnects Muse without resuming public speech or losing private conversatio
   runtime.update(newState, Date.now());
   expect(runtime.snapshot().lines).toContainEqual(expect.objectContaining({ text: 'Retain my private context' }));
   expect(runtime.snapshot().publicPersonalSpeaking).toBe(false);
+});
+
+it.each(['personal', 'group'] as const)('rejects removing a %s assistant until reconnect state arrives, preserving local history', async (kind) => {
+  const { runtime, sendAgent } = setup();
+  const state = structuredClone(runtime.snapshot().room);
+  state.agents[0]!.config.roomMessages = true;
+  if (kind === 'group') state.agents.push({ ...state.agents[0]!, id: 'group', config: defaultAgentConfig('group') });
+  runtime.update(state, Date.now());
+  await runtime.ask('Keep my conversation until removal succeeds');
+  runtime.connectionLost();
+  const lines = runtime.snapshot().lines;
+  sendAgent.mockClear();
+  runtime.remove(kind);
+  expect(runtime.snapshot().error).toContain('Reconnect');
+  expect(runtime.snapshot().lines).toEqual(lines);
+  expect(sendAgent).not.toHaveBeenCalledWith({ type: 'agent-remove', id: kind });
+  runtime.connectionRestored();
+  runtime.remove(kind);
+  expect(runtime.snapshot().error).toContain('Reconnect');
+  expect(runtime.snapshot().lines).toEqual(lines);
+  expect(sendAgent).not.toHaveBeenCalledWith({ type: 'agent-remove', id: kind });
+  runtime.update(state, Date.now());
+  runtime.remove(kind);
+  expect(sendAgent).toHaveBeenCalledWith({ type: 'agent-remove', id: kind });
+  expect(runtime.snapshot().error).toBeNull();
+  expect(runtime.snapshot().lines).toEqual(kind === 'personal' ? [] : lines);
 });
 
 it('does not accept late public words after owner interruption', async () => {

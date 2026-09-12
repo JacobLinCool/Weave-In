@@ -55,7 +55,7 @@ describe('agent creation, approval and recovery', () => {
     const { state, host, guest, uuid, agent } = fixture();
     const updated = { ...config, language: '繁體中文', files: true };
     const command = { type: 'agent-configure' as const, id: agent.id, config: updated };
-    expect(parseAgentCommand(command)).toEqual(command);
+    expect(parseAgentCommand(command)).toEqual({ ...command, config: { ...updated, roomMessages: false } });
     expect(parseAgentCommand({ ...command, config: { ...updated, files: 'yes' } })).toBeNull();
     applyAgentCommand(state, guest, command, 1000, uuid);
     expect(agent.config).toEqual(updated);
@@ -71,6 +71,9 @@ describe('agent creation, approval and recovery', () => {
   it('enforces fixed group configuration and validates boundary inputs', () => {
     expect(parseAgentConfig({ ...config, source: 'none', chat: false, system: false, audience: 'private' })).toMatchObject({ source: 'all', chat: true, system: true, audience: 'public' });
     expect(parseAgentConfig({ ...config, name: 'x'.repeat(41) })).toBeNull();
+    expect(parseAgentConfig(config)?.roomMessages).toBe(false);
+    expect(parseAgentConfig({ ...config, roomMessages: true })?.roomMessages).toBe(true);
+    expect(parseAgentConfig({ ...config, roomMessages: 'true' })).toBeNull();
     expect(parseAgentCommand({ type: 'agent-create', config: { ...config, screen: 'yes' } })).toBeNull();
     expect(parseAgentCommand({ type: 'agent-approve', id: 'id', epoch: -1, request: 0 })).toBeNull();
   });
@@ -182,12 +185,12 @@ describe('agent privacy and Live request boundaries', () => {
     expect(log.read().entries.filter((entry) => visibleRecord(entry, settings, 'owner'))).toHaveLength(1);
     let posted = false;
     const context = { log: () => log, snapshot: () => ({ roomCode: 'ABC123', you: { peerId: 'owner', name: 'Owner' }, participants: [], captions: 'idle', presentation: null, live: [{ peerId: 'other', name: 'Other', text: 'secret' }], files: [] }), sendAgentMessage: () => { posted = true; return { id: 'id', at: 'now' }; } } as unknown as MeetingToolsContext;
-    const tools = scopedTools(context, settings, 'owner', () => true, () => false);
-    expect(tools.map((tool) => tool.name)).toEqual(['read_meeting', 'capture_whiteboard', 'edit_whiteboard', 'send_chat_message', 'search_meeting']);
+    const tools = scopedTools(context, settings, 'owner', () => true, () => true);
+    expect(tools.map((tool) => tool.name)).toEqual(['read_meeting', 'capture_whiteboard', 'edit_whiteboard']);
     const read = await tools[0]!.execute({});
     expect(JSON.stringify(read)).not.toContain('not allowed');
     expect(JSON.stringify(read)).not.toContain('secret');
-    expect((await tools.find((tool) => tool.name === 'send_chat_message')!.execute({ text: 'leak' })).isError).toBe(true);
+    expect(tools.find((tool) => tool.name === 'send_chat_message')).toBeUndefined();
     expect(posted).toBe(false);
   });
   it('rejects private peer records and malformed messages', () => {
@@ -270,34 +273,24 @@ describe('public record provenance and incremental context', () => {
     expect(utf8Bytes(text)).toBeLessThanOrEqual(6000);
     expect(JSON.parse(text)).toMatchObject({ meeting: [{ text: '最新結論' }], omitted: 20 });
   });
-  it('reads a large multilingual file in bounded Agent pages without splitting UTF-8 characters', async () => {
-    const blob = new Blob(['中文🙂'.repeat(120_000)], { type: 'text/plain' });
-    expect(blob.size).toBeGreaterThan(1024 * 1024);
-    const base = { download: async (id: string) => {
-      if (id !== 'file') throw new Error('File unavailable');
-      return { file: { id: 'file', name: 'large.txt', mime: 'text/plain', size: blob.size }, blob };
-    } } as unknown as MeetingToolsContext;
-    const read = scopedTools(base, { ...config, files: true }, 'owner', () => true, () => false).find((tool) => tool.name === 'download_file')!;
-    let offset = 0; let accumulated = '';
-    for (let i = 0; i < 3; i++) {
-      const result = await read.execute({ fileId: ' file ', offset, length: 1024 * 1024 });
-      const part = result.content[0]!;
-      if (part.type !== 'text') throw new Error('No file text');
-      const page = JSON.parse(part.text);
-      expect(page.bytes).toBeLessThanOrEqual(1024);
-      expect(page.bytes).toBeGreaterThan(0);
-      expect(page.nextOffset).toBe(offset + page.bytes);
-      expect(page.eof).toBe(false);
-      expect(page.data).not.toContain('\ufffd');
-      accumulated += page.data; offset = page.nextOffset;
-    }
-    expect(accumulated).toBe(await blob.slice(0, offset).text());
-    const final = await read.execute({ fileId: 'file', offset: blob.size - 1000 });
-    const last = final.content[0]!;
-    if (last.type !== 'text') throw new Error('No final file text');
-    expect(JSON.parse(last.text)).toMatchObject({ eof: true, nextOffset: blob.size, bytes: 1000 });
-    expect((await read.execute({ fileId: 'missing' })).isError).toBe(true);
-    expect((await read.execute({ fileId: 'file', length: 1 })).isError).toBe(true);
+  it('downloads an entire shared file automatically before returning readable text', async () => {
+    const { base, settings, snapshot } = personalToolsFixture();
+    const blob = new Blob(['中文🙂'.repeat(80_000)], { type: 'text/plain' });
+    const file = { id: 'document', name: 'discussion.txt', mime: 'text/plain', size: blob.size, at: 'now', sharedBy: snapshot.you, status: 'available' as const };
+    snapshot.files.push(file);
+    let downloads = 0;
+    base.download = async (fileId) => {
+      expect(fileId).toBe('document'); downloads++;
+      return { file: { ...file, owner: 'owner', own: true, received: blob.size, blob, error: null }, blob };
+    };
+    const tools = scopedTools(base, settings, 'owner', () => true, () => false);
+    expect(tools.find((tool) => tool.name === 'download_file')).toBeUndefined();
+    const read = tools.find((tool) => tool.name === 'read_shared_file')!;
+    const result = toolPayload(await read.execute({ fileId: 'document', length: 6000 }));
+    expect(downloads).toBe(1);
+    expect(result).toMatchObject({ fileId: 'document', size: blob.size, eof: false, nextOffset: 6000 });
+    expect(result.text).toBe((await blob.text()).slice(0, 6000));
+    expect(scopedTools(base, { ...settings, files: false }, 'owner', () => true, () => true).find((tool) => tool.name === 'read_shared_file')).toBeUndefined();
   });
 });
 
@@ -331,15 +324,36 @@ function personalToolsFixture() {
 }
 
 describe('personal assistant whiteboard and meeting context tools', () => {
+  it('requires an explicit Room-message setting in addition to an active owner request', async () => {
+    const { base, settings, posted } = personalToolsFixture();
+    for (const config of [settings, { ...settings, roomMessages: false }]) {
+      expect(scopedTools(base, config, 'owner', () => true, () => true).find((tool) => tool.name === 'send_chat_message')).toBeUndefined();
+    }
+    const permitted = { ...settings, roomMessages: true };
+    let active = true, requested = false;
+    const send = scopedTools(base, permitted, 'owner', () => active, () => requested).find((tool) => tool.name === 'send_chat_message')!;
+    expect((await send.execute({ text: 'Not requested' })).isError).toBe(true);
+    requested = true;
+    expect((await send.execute({ text: 'Approved summary' })).isError).not.toBe(true);
+    active = false;
+    expect((await send.execute({ text: 'Cancelled post' })).isError).toBe(true);
+    active = true; permitted.roomMessages = false;
+    expect((await send.execute({ text: 'Permission revoked' })).isError).toBe(true);
+    expect(posted).toEqual(['Facilitator: Approved summary']);
+  });
+
   it('accepts the complete personal tool set at the worker and rejects disabled file or group board access', () => {
     const { base, settings } = personalToolsFixture();
-    const agent = { ...fixture().agent, config: { ...settings, screen: true } };
+    const agent = { ...fixture().agent, config: { ...settings, screen: true, roomMessages: true } };
     const tools = scopedTools(base, agent.config, 'owner', () => true, () => true);
-    expect(tools).toHaveLength(8);
+    expect(tools).toHaveLength(6);
+    expect(tools.map((tool) => tool.name)).not.toContain('download_file');
+    expect(tools.map((tool) => tool.name)).not.toContain('search_meeting');
     const session = liveSettings(agent, tools, false);
     const body = { sdp: 'v=0\r\n', epoch: agent.epoch, request: agent.request, session };
     expect(validLiveRequest(body, agent)).toBe(true);
     expect(validLiveRequest(body, { ...agent, config: { ...agent.config, files: false } })).toBe(false);
+    expect(validLiveRequest(body, { ...agent, config: { ...agent.config, roomMessages: false } })).toBe(false);
     expect(validLiveRequest(body, { ...agent, config: { ...agent.config, kind: 'group' } })).toBe(false);
     const fractionalNumbers: number[] = [];
     JSON.stringify(session, (_key, value) => { if (typeof value === 'number' && !Number.isInteger(value)) fractionalNumbers.push(value); return value; });
@@ -349,7 +363,7 @@ describe('personal assistant whiteboard and meeting context tools', () => {
   it('permits board reading but fences every shared mutation until the current owner request authorizes it', async () => {
     const { base, settings, board, posted } = personalToolsFixture();
     let allowed = false;
-    const tools = scopedTools(base, settings, 'owner', () => true, () => allowed);
+    const tools = scopedTools(base, { ...settings, roomMessages: true }, 'owner', () => true, () => allowed);
     const edit = tools.find((tool) => tool.name === 'edit_whiteboard')!;
     const send = tools.find((tool) => tool.name === 'send_chat_message')!;
     expect(toolPayload(await edit.execute({ action: 'read' }))).toMatchObject({ count: 0, elements: [] });
@@ -407,24 +421,36 @@ describe('personal assistant whiteboard and meeting context tools', () => {
     expect(utf8Bytes(JSON.stringify(result))).toBeLessThan(3000);
   });
 
-  it('finds older discussion and attachments with source-preserving pagination instead of relying on the recent seed', async () => {
+  it('reads all available history in complete 500-record pages while preserving scoped source cursors', async () => {
     const { base, settings, log, snapshot } = personalToolsFixture();
-    for (let i = 0; i < 8; i++) log.append({ kind: 'transcript', at: 'now', speaker: { peerId: 'owner', name: 'Owner' }, text: `DEPLOYMENT decision ${i}` });
-    log.append({ kind: 'chat', at: 'now', sender: { peerId: 'other', name: 'Other' }, agent: null, text: 'deployment hidden chat' });
-    log.append({ kind: 'file', at: 'now', sender: { peerId: 'other', name: 'Other' }, file: { id: 'plan', name: 'deployment.pdf', size: 20, mime: 'application/pdf' } });
-    for (let i = 0; i < 200; i++) log.append({ kind: 'transcript', at: 'now', speaker: { peerId: 'other', name: 'Other' }, text: `Later discussion ${i}` });
-    expect(contextText(log, settings, 'owner', [], snapshot)).not.toContain('DEPLOYMENT decision');
-    const tool = scopedTools(base, { ...settings, source: 'owner', chat: false }, 'owner', () => true, () => false).find((candidate) => candidate.name === 'search_meeting')!;
-    const first = toolPayload(await tool.execute({ query: 'deployment' }));
-    expect(first.records).toHaveLength(5);
-    expect(first).toMatchObject({ nextCursor: 5, hasMore: true });
-    const next = toolPayload(await tool.execute({ query: 'deployment', after: first.nextCursor }));
-    expect(next.records.map((entry: { seq: number }) => entry.seq)).toEqual([6, 7, 8, 10]);
-    expect(next).toMatchObject({ nextCursor: log.head, hasMore: false });
-    expect(JSON.stringify(next)).not.toContain('hidden chat');
-    const none = scopedTools(base, { ...settings, source: 'none', files: false }, 'owner', () => true, () => false).find((candidate) => candidate.name === 'search_meeting')!;
-    expect(toolPayload(await none.execute({ query: 'deployment' })).records).toEqual([]);
-    expect((await tool.execute({ query: '' })).isError).toBe(true);
+    const visible: Array<{ seq: number; text: string }> = [];
+    for (let i = 0; i < 1002; i++) {
+      const text = `Decision ${i}: ${'中文內容'.repeat(100)}`;
+      visible.push({ seq: log.append({ kind: 'transcript', at: 'now', speaker: snapshot.you, text }).seq, text });
+      if (i % 10 === 0) log.append({ kind: 'chat', at: 'now', sender: { peerId: 'other', name: 'Other' }, agent: null, text: `Hidden ${i}` });
+    }
+    expect(contextText(log, settings, 'owner', [], snapshot)).not.toContain('Decision 0:');
+    const tools = scopedTools(base, { ...settings, source: 'owner', chat: false }, 'owner', () => true, () => false);
+    expect(tools.find((tool) => tool.name === 'search_meeting')).toBeUndefined();
+    const read = tools.find((tool) => tool.name === 'read_meeting')!;
+    expect(read.inputSchema.properties).toMatchObject({ limit: { default: 500, maximum: 500 } });
+    const first = toolPayload(await read.execute({}));
+    expect(first.records).toHaveLength(500);
+    expect(first.nextCursor).toBe(visible[499]!.seq);
+    expect(first.hasMore).toBe(true);
+    const second = toolPayload(await read.execute({ after: first.nextCursor, limit: 500 }));
+    expect(second.records).toHaveLength(500);
+    expect(second.nextCursor).toBe(visible[999]!.seq);
+    expect(second.hasMore).toBe(true);
+    const last = toolPayload(await read.execute({ after: second.nextCursor }));
+    expect(last.records).toHaveLength(2);
+    expect(last).toMatchObject({ nextCursor: log.head, hasMore: false });
+    const records = [...first.records, ...second.records, ...last.records];
+    expect(records.map(({ seq, text }) => ({ seq, text }))).toEqual(visible);
+    expect(utf8Bytes(JSON.stringify(first))).toBeGreaterThan(30_000);
+    expect((await read.execute({ limit: 501 })).isError).toBe(true);
+    const none = scopedTools(base, { ...settings, source: 'none', files: false }, 'owner', () => true, () => false).find((tool) => tool.name === 'read_meeting')!;
+    expect(toolPayload(await none.execute({})).records).toEqual([]);
   });
 
   it('retains a compact file inventory and exposes complete inventory pages even without recent file announcements', async () => {

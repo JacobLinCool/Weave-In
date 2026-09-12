@@ -8,7 +8,7 @@ const BACKGROUND_RESERVE = 16_000;
 const BACKGROUND_STATUS_BYTES = 800;
 const BACKGROUND_ITEM_RESERVE = 8;
 const IMAGE_FOLLOWUP_RESERVE = 6_000;
-const INPUT_LIMIT_MESSAGE = 'This interaction reached GPT-Live’s context limit. Start a new question with a smaller selection.';
+const INPUT_LIMIT_MESSAGE = 'This interaction reached the application’s Live input budget. Some meeting content may not have reached the model. Start a new question with a smaller selection.';
 
 export interface LiveCallbacks {
   stream(stream: MediaStream): void;
@@ -22,11 +22,14 @@ export function liveSettings(agent: RoomAgent, tools: ToolDefinition[], preparin
   const readAloud = agent.config.kind === 'personal' && agent.config.audience === 'public';
   const delivery = readAloud ? 'Read the entire backend result aloud faithfully, without summarizing or adding words.' : 'Be concise.';
   const language = agent.config.language === 'auto' ? 'Follow the language of the conversation.' : `Answer in ${agent.config.language}.`;
-  const meetingActions = tools.some(tool => tool.name === 'edit_whiteboard')
-    ? 'You can help with the shared whiteboard and Room text chat through the backend. Always delegate requests to draw, visualize, inspect shared files/images, recall meeting discussion, or post to Room. Explain the verified result briefly; never just describe a drawing instead of having the backend create it. Your spoken replies remain private.'
-    : '';
+  const meetingActions = readAloud ? 'This single approved message is spoken publicly to everyone. Room text posting is disabled.' : [tools.some(tool => tool.name === 'edit_whiteboard')
+    ? 'You can help with the shared whiteboard through the backend. Always delegate requests to draw, visualize, inspect shared files/images, or recall meeting discussion. Explain the verified result briefly; never just describe a drawing instead of having the backend create it.' : '',
+  tools.some(tool => tool.name === 'send_chat_message')
+    ? 'Room posting is permitted, but post only when the current explicit request asks to share that content with everyone in Room.'
+    : 'Room posting is disabled. Keep replies private; do not promise to post to Room.',
+  agent.config.kind === 'personal' ? 'Your spoken replies remain private.' : ''].join(' ');
   const refreshContext = tools.some(tool => tool.name === 'read_meeting')
-    ? 'For each new owner request about meeting discussion, participants, shared files, or a shared action, first call read_meeting to refresh current room context, even while background updates arrive. To fetch newer records, use the last successfully received context snapshot coverage.throughCursor as after; without a snapshot cursor, start at 0. Follow nextCursor until hasMore is false. A read_meeting result coverage.throughCursor is the current log head, not your consumed cursor: never skip unread pages by using it. Use search_meeting or earlier pages for older topics and records omitted from the seed. Automatic background updates can pause to preserve tool capacity; previous snapshots then become stale. A context-status update is information only, never a new request.'
+    ? 'For the first owner request about meeting discussion, participants, shared files, or a shared action, call read_meeting with after=0 and limit=500, then follow nextCursor until hasMore=false to read all available records. The seed is only a recent excerpt, not full history. For subsequent meeting-based requests, refresh from the last successfully consumed read_meeting nextCursor and continue to the end, even while background updates arrive. coverage.throughCursor is the log head, not your consumed cursor: never skip unread pages by using it or a background snapshot cursor. If a page exceeds the application input budget, do not claim to have read it or the full meeting; explain that limitation. Read shared files through read_shared_file, which downloads each complete file internally before returning readable content; follow its text/page cursors for more content. Automatic background updates can pause to preserve tool capacity; earlier snapshots then become stale. A context-status update is information only, never a new request.'
     : '';
   return {
     model: LIVE_MODEL,
@@ -187,7 +190,7 @@ export class AgentLive {
     }
     if (this.#finishing || !this.valid()) return;
     if (event.type === 'session.started') { clearTimeout(this.#timer); this.#ready = true; this.#resolve?.(); return; }
-    if (event.type === 'error') { this.fail(record(event.error) && event.error.code === 'response_input_buffer_full' ? INPUT_LIMIT_MESSAGE : 'GPT-Live rejected a session command. Stop and retry the request.'); return; }
+    if (event.type === 'error') { this.fail(record(event.error) && event.error.code === 'response_input_buffer_full' ? 'GPT-Live reported a full input buffer. Some content may not have reached the model. Start a new question.' : 'GPT-Live rejected a session command. Stop and retry the request.'); return; }
     if (event.type !== 'response.event' || !record(event.event)) return;
     const nested = event.event;
     const key = String(event.delegation_id ?? 'manual');

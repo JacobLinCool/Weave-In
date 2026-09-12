@@ -64,23 +64,23 @@ async (page, origin = 'http://127.0.0.1:8788') => {
             return file.id;
           };
           const steps = [
-            () => ['read_meeting', { limit: 5 }],
-            () => ['search_meeting', { query: 'release-workflow', limit: 5 }],
+            () => ['read_meeting', { limit: 500 }],
             () => ['read_shared_file', { fileId: fileId('workflow-notes.txt') }],
             () => ['read_shared_file', { fileId: fileId('workflow-reference.png') }],
             () => ['edit_whiteboard', { action: 'read', limit: 5 }],
             () => ['edit_whiteboard', { action: 'mermaid', source: 'flowchart LR\n A[Review intake] --> B{Approve?}\n B -->|Yes| C[Ship release]\n B -->|No| A' }],
             () => ['capture_whiteboard', { maxWidth: 640, format: 'jpeg', quality: 0.6 }],
-            () => ['send_chat_message', { text: 'Workflow drawn: review intake, approve, then ship release.' }],
           ];
           const next = () => {
             try {
               if (step > 0) {
                 const previous = state.results.find(result => result.callId === `tool_${step}`);
                 if (!previous || previous.result.isError) throw new Error(`Tool ${step} failed: ${JSON.stringify(previous)}`);
-                if (step === 1) fileInventory = JSON.parse(resultText(previous.result)).files;
-                if (step === 2 && !resultText(previous.result).includes('release-workflow')) throw new Error('Meeting search did not return the guest context');
-                if (step === 3 && !resultText(previous.result).includes('Review intake')) throw new Error('Shared text contents were not read');
+                if (step === 1) {
+                  fileInventory = JSON.parse(resultText(previous.result)).files;
+                  if (!resultText(previous.result).includes('release-workflow')) throw new Error('Meeting read did not return the guest context');
+                }
+                if (step === 2 && !resultText(previous.result).includes('Review intake')) throw new Error('Shared text contents were not read');
               }
               if (step === steps.length) {
                 emit({ type: 'response.event', delegation_id: 'answer', event: { type: 'response.created', response: { id: 'answer' } } });
@@ -112,7 +112,7 @@ async (page, origin = 'http://127.0.0.1:8788') => {
               if (!started && typeof text === 'string' && text.startsWith('Background context only')) {
                 started = true;
                 setTimeout(() => {
-                  emit({ type: 'session.input_transcript.delta', delta: 'private-voice-only: Read the uploaded reference, draw the release workflow on the whiteboard, and post its steps in Room chat.', start_ms: 0, end_ms: 1000 });
+                  emit({ type: 'session.input_transcript.delta', delta: 'private-voice-only: Read the uploaded reference and draw the release workflow on the whiteboard. Keep your reply private.', start_ms: 0, end_ms: 1000 });
                   next();
                 }, 300);
               }
@@ -174,6 +174,9 @@ async (page, origin = 'http://127.0.0.1:8788') => {
     await page.getByTestId('file-card').getByText('workflow-reference.png', { exact: true }).waitFor();
     if (await page.getByRole('region', { name: 'Shared whiteboard', exact: true }).count()) throw new Error('Whiteboard should start closed');
     await tab(page, 'Muse').click();
+    await page.getByRole('button', { name: 'Muse settings', exact: true }).click();
+    if (await page.getByRole('checkbox', { name: 'Allow posting to Room (visible to everyone)', exact: true }).isChecked()) throw new Error('Room posting permission was enabled by default');
+    await page.getByRole('button', { name: 'Back to Muse', exact: true }).click();
     await page.getByRole('button', { name: 'Talk to Muse', exact: true }).click();
     await page.waitForFunction(() => window.__chatToolsTest.complete || window.__chatToolsTest.errors.length, null, { timeout: 60_000 });
     const errors = await page.evaluate(() => window.__chatToolsTest.errors);
@@ -187,7 +190,7 @@ async (page, origin = 'http://127.0.0.1:8788') => {
     if (zoom === null || zoom <= 0 || zoom > 200) throw new Error(`Whiteboard zoom does not frame the diagram: ${zoom}%`);
     if (await page.getByRole('button', { name: 'Scroll back to content', exact: true }).isVisible()) throw new Error('Whiteboard content is outside the viewport');
     const renderedDiagram = await page.evaluate(async () => {
-      const image = window.__chatToolsTest.images.find(entry => entry.call === 7);
+      const image = window.__chatToolsTest.images.find(entry => entry.call === 6);
       if (!image) throw new Error('No rendered whiteboard image reached GPT-Live');
       const [header, data] = image.imageUrl.split(',');
       const bitmap = await createImageBitmap(new Blob([Uint8Array.from(atob(data), character => character.charCodeAt(0))], { type: header.slice(5).split(';')[0] }));
@@ -206,29 +209,32 @@ async (page, origin = 'http://127.0.0.1:8788') => {
     });
     if (renderedDiagram.count < 100 || renderedDiagram.right - renderedDiagram.left < renderedDiagram.width * 0.15 || renderedDiagram.bottom - renderedDiagram.top < renderedDiagram.height * 0.1) throw new Error(`Whiteboard capture does not contain a visible diagram: ${JSON.stringify(renderedDiagram)}`);
     if (renderedDiagram.left < 1 || renderedDiagram.top < 1 || renderedDiagram.right >= renderedDiagram.width - 1 || renderedDiagram.bottom >= renderedDiagram.height - 1) throw new Error(`Whiteboard diagram is clipped at the capture edge: ${JSON.stringify(renderedDiagram)}`);
-    await guest.getByTestId('chat-list').getByText('Workflow drawn: review intake, approve, then ship release.', { exact: true }).waitFor();
-    const post = guest.getByTestId('chat-list').locator('li').filter({ hasText: 'Workflow drawn: review intake, approve, then ship release.' });
-    if (!(await post.innerText()).includes("Alice's agent")) throw new Error('Room post lost owner attribution');
+    if (await guest.getByTestId('chat-list').locator('.is-agent').count()) throw new Error('Muse posted publicly without Room message permission');
     await guest.waitForFunction(async () => {
       const result = await window.__chatToolsTest.tools.edit_whiteboard.execute({ action: 'read', limit: 100 });
       return JSON.stringify(result).includes('Ship release') && JSON.stringify(result).includes('Review intake');
     });
     const provider = await page.evaluate(() => {
       const state = window.__chatToolsTest;
-      return { names: state.sessions[0].session.delegation.responses.tools.map(tool => tool.name), calls: state.calls.map(call => call.name), imageCalls: state.images.map(image => image.call), imagesValid: state.images.every(image => /^data:image\/(jpeg|png);base64,/.test(image.imageUrl)), configs: state.states.at(-1).agents.filter(agent => agent.owner === state.you).map(agent => agent.config), peerLeak: state.sends.some(item => item.channel === 'weave-in' && /private-voice-only|private-reply-only/.test(JSON.stringify(item.value))) };
+      const tools = state.sessions[0].session.delegation.responses.tools;
+      return { names: tools.map(tool => tool.name), meetingLimit: tools.find(tool => tool.name === 'read_meeting')?.parameters?.properties?.limit?.maximum, calls: state.calls.map(call => call.name), imageCalls: state.images.map(image => image.call), imagesValid: state.images.every(image => /^data:image\/(jpeg|png);base64,/.test(image.imageUrl)), configs: state.states.at(-1).agents.filter(agent => agent.owner === state.you).map(agent => agent.config), peerLeak: state.sends.some(item => item.channel === 'weave-in' && /private-voice-only|private-reply-only/.test(JSON.stringify(item.value))) };
     });
-    for (const required of ['read_meeting', 'search_meeting', 'read_shared_file', 'edit_whiteboard', 'capture_whiteboard', 'send_chat_message']) {
+    for (const required of ['read_meeting', 'read_shared_file', 'edit_whiteboard', 'capture_whiteboard']) {
       if (!provider.names.includes(required)) throw new Error(`GPT-Live was not initialized with ${required}`);
     }
+    for (const disabled of ['search_meeting', 'download_file', 'send_chat_message']) {
+      if (provider.names.includes(disabled)) throw new Error(`Default personal session exposed ${disabled}`);
+    }
+    if (provider.meetingLimit !== 500) throw new Error(`Meeting tool limit is ${provider.meetingLimit}, expected 500`);
     if (provider.names.includes('capture_screen_share')) throw new Error('Shared screen capture was enabled without opt-in');
-    if (!provider.configs.some(config => config.kind === 'personal' && config.files && config.source === 'all' && config.chat && !config.screen)) throw new Error('Personal default context permissions are incorrect');
-    if (!provider.imagesValid || !provider.imageCalls.includes(4) || !provider.imageCalls.includes(7)) throw new Error('File or whiteboard image was not forwarded as provider input_image');
+    if (!provider.configs.some(config => config.kind === 'personal' && config.files && config.source === 'all' && config.chat && !config.screen && !config.roomMessages)) throw new Error('Personal default context permissions are incorrect');
+    if (!provider.imagesValid || !provider.imageCalls.includes(3) || !provider.imageCalls.includes(6)) throw new Error('File or whiteboard image was not forwarded as provider input_image');
     if (provider.peerLeak) throw new Error('Private voice conversation was sent to the guest');
     await tab(guest, 'Transcript').click();
     if (/private-voice-only|private-reply-only/.test(await guest.locator('body').innerText())) throw new Error('Guest saw private voice conversation');
     await page.getByRole('button', { name: 'Finish speaking', exact: true }).click();
     await page.getByRole('button', { name: 'Talk to Muse', exact: true }).waitFor();
-    return { clients: 2, calls: provider.calls, guestFileTransfer: true, sharedImageAsProviderVision: true, guestBoardSync: true, boardAutoOpen: true, renderedBoardAsProviderVision: true, diagramInViewport: true, boardZoom: zoom, renderedDiagram, attributedRoomPost: true, privateVoiceIsolation: true, allParticipantContextDefault: true, screenOptInPreserved: true, provider: 'simulated GPT-Live WebRTC with real room and tool execution (no real provider call)' };
+    return { clients: 2, calls: provider.calls, meetingLimit: provider.meetingLimit, guestFileTransfer: true, sharedImageAsProviderVision: true, guestBoardSync: true, boardAutoOpen: true, renderedBoardAsProviderVision: true, diagramInViewport: true, boardZoom: zoom, renderedDiagram, roomPostingDisabledByDefault: true, noSearchOrRawDownloadTools: true, privateVoiceIsolation: true, allParticipantContextDefault: true, screenOptInPreserved: true, provider: 'simulated GPT-Live WebRTC with real room and tool execution (no real provider call)' };
   } finally {
     await Promise.all([ownerContext, guestContext].map(context => context.close()));
   }
