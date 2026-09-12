@@ -116,7 +116,7 @@ Local artifacts are under repository-root `output/playwright/` (ignored, not bun
 - Omni adds immediately using the plus aligned with its heading. Its trash icon is to the right of settings. All participants may configure it; creator/host removal and personal-owner restrictions remain enforced.
 - Removed the empty Omni description, idle listening text, private-chat privacy subtitle, manual review button, and reminder pause/hide controls and persisted state.
 - The Omni border glows for preparing, raised and speaking, then clears when idle, cancelled or waiting. Reduced-motion preference disables the transition.
-- The agent-signal receiver exists, but no automatic public-context signal producer is connected. Browser checks inject a test signal; they do not establish automatic triggering.
+- Historical state at this checkpoint: the signal receiver existed without an automatic producer. Superseded by the automatic Group review implementation documented in GROUPTHINK.md.
 - Local typecheck, 229 meeting tests and production build passed. Two-browser checks passed Muse chat/settings, one-click Omni creation/removal, cross-participant settings, top Back navigation, button alignment, removed controls, border glow/reset, private recovery and mobile overflow. GPT-Live is simulated; these checks do not establish real-provider behavior or deployment.
 - Evidence under repository-root output/playwright/: assistant-browser.log, assistant-tests.log, assistant-build.log, assistant-desktop.png, assistant-mobile.png, group-add-right.png, group-settings-page.png, personal-settings-page.png, group-room-active.png, group-room-mobile.png.
 

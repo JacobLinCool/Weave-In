@@ -43,8 +43,9 @@ export function AgentPanel({ runtime, isHost, mode = 'personal' }: { runtime: Ag
         setAddingGroup(true);
         run(async () => { try { await runtime.create(defaultAgentConfig('group')); } finally { setAddingGroup(false); } });
       }}><Plus size={18} aria-hidden="true" /></button>}</header>
+      {group?.phase === 'idle' && <p role="status">{view.groupStatus}</p>}
       {group && group.phase !== 'idle' && <>
-        <p role="status">{({ preparing: 'Preparing a text suggestion', raised: 'Sharing a text suggestion', speaking: 'Sharing a text suggestion', waiting: 'Waiting for an available device' })[group.phase]}</p>
+        <p role="status">{({ preparing: 'Reviewing public discussion', raised: 'Waiting for a quiet moment', speaking: 'Sharing a text suggestion', waiting: 'Waiting for an available device' })[group.phase]}</p>
         <button onClick={() => runtime.command({ type: 'agent-cancel', id: group.id })}><Square size={14} /> Stop</button>
       </>}
     </section>}

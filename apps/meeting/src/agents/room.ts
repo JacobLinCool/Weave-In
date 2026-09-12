@@ -1,3 +1,4 @@
+import { GROUP_CHECK_MS, GROUP_COOLDOWN_MS, GROUP_MAX_INTERVENTIONS } from './group';
 import { LEASE_MS, type AgentCommand, type AgentRoomState, type RoomAgent } from './contracts';
 
 export interface AgentMember { peerId: string; isHost: boolean; ready: boolean; joinedAt: number; heartbeat: number }
@@ -46,9 +47,15 @@ export function applyAgentCommand(state: AgentRoomState, member: AgentMember, co
     state.agents.push({ id: uuid(), owner: member.peerId, runner: member.peerId, epoch: 1, config, phase: 'idle', request: 0, pending: false, leaseUntil: now + LEASE_MS });
     return;
   }
-  if (command.type === 'agent-finish') {
+  if (command.type === 'agent-finish' || command.type === 'agent-published') {
     if (state.floor?.id === command.floorId && state.floor.runner === member.peerId) {
       const agent = state.agents.find((entry) => entry.id === state.floor?.agentId);
+      if (command.type === 'agent-published') {
+        if (agent?.config.kind !== 'group' || !state.signal || state.floor.expiresAt <= now || agent.runner !== member.peerId || agent.epoch !== state.floor.epoch) return;
+        state.automation.nextPublishAt = now + GROUP_COOLDOWN_MS;
+        state.automation.published++;
+        state.automation.events.push(JSON.stringify(state.signal.evidence));
+      }
       state.floor = null;
       if (agent) settle(agent);
     }
@@ -75,29 +82,29 @@ export function applyAgentCommand(state: AgentRoomState, member: AgentMember, co
       state.queue = state.queue.filter((id) => id !== agent.id);
       if (state.floor?.agentId === agent.id) state.floor = null;
       return;
-    case 'agent-signal':
-      if (!group) throw new Error('Signals target the group agent.');
-      state.signal = { id: (state.signal?.id ?? 0) + 1, by: member.peerId, at: now, kind: 'manual' };
-      if (agent.phase === 'idle') { agent.phase = agent.runner ? 'preparing' : 'waiting'; agent.request++; }
-      else if (agent.phase === 'speaking' || agent.phase === 'waiting') agent.pending = true;
+    case 'agent-review':
+      if (!group || agent.runner !== member.peerId || !member.ready || agent.leaseUntil <= now || agent.epoch !== command.epoch || agent.request !== command.request || agent.phase !== 'idle') return;
+      if (state.floor || now < state.automation.nextCheckAt || now < state.automation.nextPublishAt || state.automation.published >= GROUP_MAX_INTERVENTIONS) return;
+      state.automation.nextCheckAt = now + GROUP_CHECK_MS;
+      agent.phase = 'preparing'; agent.request++;
       return;
     case 'agent-failed':
       if (agent.runner !== member.peerId || agent.epoch !== command.epoch || agent.request !== command.request) return;
       member.ready = false;
       return;
     case 'agent-raised':
-      if (group && agent.runner === member.peerId && agent.epoch === command.epoch && agent.request === command.request && agent.phase === 'preparing') agent.phase = 'raised';
+      if (!group || agent.runner !== member.peerId || agent.epoch !== command.epoch || agent.request !== command.request || agent.phase !== 'preparing' || agent.leaseUntil <= now) return;
+      if (state.automation.events.includes(JSON.stringify(command.signal.evidence))) { agent.phase = 'idle'; return; }
+      state.signal = { ...command.signal, id: (state.signal?.id ?? 0) + 1, by: member.peerId, at: now };
+      agent.phase = 'raised';
       return;
-    case 'agent-approve':
-      if (!group || agent.phase !== 'raised' || agent.epoch !== command.epoch || agent.request !== command.request || !agent.runner || agent.leaseUntil <= now) return;
-      if (state.floor) {
-        const previous = state.agents.find((entry) => entry.id === state.floor?.agentId);
-        if (previous) previous.phase = 'idle';
-      }
+    case 'agent-publish':
+      if (!group || agent.runner !== member.peerId || !member.ready || agent.phase !== 'raised' || agent.epoch !== command.epoch || agent.request !== command.request || agent.leaseUntil <= now || !state.signal) return;
+      if (state.floor || now < state.automation.nextPublishAt || state.automation.published >= GROUP_MAX_INTERVENTIONS) return;
       grant(state, agent, now, uuid);
       return;
     case 'agent-floor':
-      if (group) throw new Error('Group speech requires a raised hand and approval.');
+      if (group) throw new Error('Group publications require an automatic review.');
       if (!member.ready) throw new Error('This device is not ready for audio.');
       if (state.floor?.agentId === agent.id || state.queue.includes(agent.id)) return;
       if (!state.floor) grant(state, agent, now, uuid);

@@ -19,7 +19,7 @@ Detect groupthink while it is happening and intervene before the decision is mad
 
 Groupthink is the failure mode where a group suppresses dissent to preserve harmony, stops thinking critically, and converges on a low-quality decision that no individual member would have defended alone. It is invisible from inside the room: the meeting feels productive precisely because nobody is arguing.
 
-The current product pairs browser meetings and per-participant transcription with a personal **Muse** tab and shared **Omni**. Muse opens directly into private chat with a settings button. Muse is configured on join and gives silent, evidence-based reminders when the owner’s explicit concern remains unresolved while a decision moves ahead. It supports private follow-up and can speak once for the owner after approval. Omni provides brief public text suggestions in Room chat. The wider room-level Groupthink model remains proposed.
+The current product pairs browser meetings and per-participant transcription with a personal **Muse** tab and shared **Omni**. Muse opens directly into private chat with a settings button. Muse is configured on join and gives silent, evidence-based reminders when the owner’s explicit concern remains unresolved while a decision moves ahead. It supports private follow-up and can speak once for the owner after approval. Omni provides brief public text suggestions in Room chat. Omni automatically reviews public discussion for premature closure, sustained drift, domination and repetitive agreement, with grounded questions or abstention.
 
 Success means a participant can raise an overlooked concern before a decision is finalized. Post-meeting intervention reports remain future work.
 

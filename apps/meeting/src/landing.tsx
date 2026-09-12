@@ -130,7 +130,7 @@ export function LandingSurface(props: LandingProps): ReactNode {
             </li>
             <li>
               <h3>AI that keeps you thinking</h3>
-              <p>Discuss a question privately with your assistant, or trigger the shared facilitator. It prepares a perspective, raises its hand and waits for someone to invite it to speak.</p>
+              <p>Discuss a question privately with Muse, or add Omni to watch public discussion and share a brief, relevant question when the group needs one.</p>
             </li>
           </ul>
           <WeaveSwatch />

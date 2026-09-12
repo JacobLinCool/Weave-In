@@ -136,14 +136,15 @@ it('automatically creates Muse with system signals enabled', async () => {
 });
 
 it.each(['personal', 'group'] as const)('delivers new system signals once to an active %s session as background context', async (kind) => {
-  const { runtime } = setup();
+  const { runtime, log } = setup();
+  seedDiscussion(log);
   await runtime.enable();
   const state = structuredClone(runtime.snapshot().room);
   const agent = state.agents[0]!;
   agent.config.system = true;
   agent.config.kind = kind;
   if (kind === 'group') { agent.phase = 'preparing'; agent.request = 1; }
-  state.signal = { id: 1, at: Date.now(), by: 'owner', kind: 'manual' };
+  state.signal = { id: 1, at: Date.now(), by: 'owner', kind: 'convergence', evidence: ['owner/1', 'guest/2'] };
   runtime.update(structuredClone(state), Date.now());
   if (kind === 'personal') await runtime.ask('Review the meeting');
   await Promise.resolve();
@@ -160,7 +161,7 @@ it.each(['personal', 'group'] as const)('delivers new system signals once to an 
 it('does not forward system signals when Muse has opted out', async () => {
   const { runtime } = setup();
   const state = structuredClone(runtime.snapshot().room);
-  state.signal = { id: 1, at: Date.now(), by: 'owner', kind: 'manual' };
+  state.signal = { id: 1, at: Date.now(), by: 'owner', kind: 'convergence', evidence: ['owner/1', 'guest/2'] };
   runtime.update(structuredClone(state), Date.now());
   await runtime.ask('Private question');
   await Promise.resolve();
@@ -174,7 +175,7 @@ it('excludes system signals from approved public Muse speech even when enabled',
   const { runtime } = setup();
   const state = structuredClone(runtime.snapshot().room);
   state.agents[0]!.config.system = true;
-  state.signal = { id: 1, at: Date.now(), by: 'owner', kind: 'manual' };
+  state.signal = { id: 1, at: Date.now(), by: 'owner', kind: 'convergence', evidence: ['owner/1', 'guest/2'] };
   runtime.update(state, Date.now());
   await runtime.speakForMe('Approved concern');
   grantPersonal(runtime);
@@ -311,7 +312,8 @@ it('reports blocked remote audio and retries its receiver after enabling audio',
 
 
 it('releases ended remote audio and does not reattach an obsolete stream', async () => {
-  const { runtime } = setup();
+  const { runtime, log } = setup();
+  seedDiscussion(log);
   await runtime.enable();
   const state = structuredClone(runtime.snapshot().room);
   const group: RoomAgent = { ...state.agents[0]!, id: 'group', owner: 'other', runner: 'other', config: { ...state.agents[0]!.config, kind: 'personal' }, phase: 'speaking' };
@@ -402,15 +404,17 @@ it('creates Muse on an explicit reminder action and waits for room acknowledgeme
 });
 
 it('publishes Omni text once without audible output or a voice approval', async () => {
-  const { runtime, sendAgent, publicLine } = setup(); await runtime.enable();
+  vi.useFakeTimers();
+  const { runtime, sendAgent, publicLine, log } = setup(); seedDiscussion(log); await runtime.enable();
   const state = structuredClone(runtime.snapshot().room);
   const group: RoomAgent = { ...state.agents[0]!, id: 'group', config: { ...state.agents[0]!.config, kind: 'group', name: 'Omni' }, phase: 'preparing', request: 1 };
   state.agents.push(group); runtime.update(state, Date.now()); await Promise.resolve();
   calls.lives.at(-1)!.stream({} as MediaStream);
   expect(calls.attach).not.toHaveBeenCalled();
-  calls.lives.at(-1)!.prepared('A public text suggestion.');
+  await calls.lives.at(-1)!.prepared(JSON.stringify({ kind: 'convergence', severity: 0.8, evidenceSeqs: [1, 4], targetPeerId: null, text: 'A public text suggestion.' }));
+  await vi.advanceTimersByTimeAsync(2000);
   group.phase = 'raised'; runtime.update(structuredClone(state), Date.now());
-  expect(sendAgent).toHaveBeenCalledWith({ type: 'agent-approve', id: 'group', epoch: 1, request: 1 });
+  expect(sendAgent).toHaveBeenCalledWith({ type: 'agent-publish', id: 'group', epoch: 1, request: 1 });
   group.phase = 'speaking'; state.floor = { id: 'text-floor', agentId: 'group', runner: 'owner', epoch: 1, startedAt: Date.now(), expiresAt: Date.now() + 60_000 };
   runtime.update(structuredClone(state), Date.now()); runtime.update(structuredClone(state), Date.now());
   expect(publicLine).toHaveBeenCalledTimes(1);
@@ -465,4 +469,101 @@ it('restores private Muse history before a fresh personal agent exists without r
   expect(publicLine).not.toHaveBeenCalled(); expect(broadcast).not.toHaveBeenCalled(); expect(calls.lives).toHaveLength(0);
   await runtime.ask('What was my concern?');
   expect(calls.requests.mock.calls.at(-1)![0]).toContain('Your earlier private concern');
+});
+
+function seedDiscussion(log: MeetingLog): void {
+  for (let i = 0; i < 4; i++) log.append({ kind: 'chat', at: new Date(Date.now() - 10_000 + i).toISOString(), sender: { peerId: i % 2 ? 'guest' : 'owner', name: 'Person' }, text: ['Should we launch tomorrow?', 'The safety test is still failing.', 'We can consider delaying.', 'Let us launch without waiting for the test.'][i]!, agent: null });
+}
+
+it('automatically requests one review only for fresh public discussion after a quiet period', async () => {
+  vi.useFakeTimers();
+  const { runtime, log, sendAgent, snapshot } = setup();
+  await runtime.enable();
+  const state = structuredClone(runtime.snapshot().room);
+  state.agents.push({ ...state.agents[0]!, id: 'group', config: { ...state.agents[0]!.config, kind: 'group' } });
+  runtime.update(state, Date.now());
+  seedDiscussion(log);
+  runtime.checkGroup();
+  expect(sendAgent.mock.calls.filter(([c]) => c.type === 'agent-review')).toHaveLength(0);
+  snapshot.live = [{ peerId: 'guest', name: 'Guest', text: 'Still speaking' }];
+  await vi.advanceTimersByTimeAsync(4000);
+  expect(sendAgent.mock.calls.filter(([c]) => c.type === 'agent-review')).toHaveLength(0);
+  snapshot.live = [];
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(sendAgent.mock.calls.filter(([c]) => c.type === 'agent-review')).toHaveLength(1);
+  runtime.checkGroup(); runtime.checkGroup();
+  expect(sendAgent.mock.calls.filter(([c]) => c.type === 'agent-review')).toHaveLength(1);
+});
+
+it.each(['replay', 'agent', 'old'] as const)('does not automatically review %s-only updates', async kind => {
+  vi.useFakeTimers();
+  const { runtime, log, sendAgent } = setup(); await runtime.enable();
+  seedDiscussion(log);
+  const state = structuredClone(runtime.snapshot().room);
+  state.agents.push({ ...state.agents[0]!, id: 'group', config: { ...state.agents[0]!.config, kind: 'group' } });
+  runtime.update(state, Date.now());
+  if (kind !== 'old') log.append({ kind: 'chat', at: new Date().toISOString(), sender: { peerId: 'guest', name: 'Guest' }, text: 'No new human discussion', agent: kind === 'agent' ? 'Omni' : null, ...(kind === 'replay' ? { replayed: true as const } : {}) });
+  await vi.advanceTimersByTimeAsync(10_000);
+  expect(sendAgent.mock.calls.filter(([c]) => c.type === 'agent-review')).toHaveLength(0);
+});
+
+it.each(['none', 'newer', 'invalid'] as const)('discards %s review results without public output', async kind => {
+  const { runtime, log, sendAgent, publicLine } = setup(); seedDiscussion(log); await runtime.enable();
+  const state = structuredClone(runtime.snapshot().room);
+  state.agents.push({ ...state.agents[0]!, id: 'group', config: { ...state.agents[0]!.config, kind: 'group' }, phase: 'preparing', request: 1 });
+  runtime.update(state, Date.now()); await Promise.resolve();
+  if (kind === 'newer') log.append({ kind: 'chat', at: new Date().toISOString(), sender: { peerId: 'guest', name: 'Guest' }, text: 'The risk is now resolved; here is the test result.', agent: null });
+  await calls.lives.at(-1)!.prepared(kind === 'invalid' ? 'broken JSON' : JSON.stringify({ kind: kind === 'none' ? 'none' : 'convergence', severity: 0.8, evidenceSeqs: [1, 4], targetPeerId: null, text: 'Should we check the risk?' }));
+  expect(sendAgent).toHaveBeenCalledWith({ type: 'agent-cancel', id: 'group' });
+  expect(sendAgent.mock.calls.some(([c]) => c.type === 'agent-raised')).toBe(false);
+  expect(publicLine).not.toHaveBeenCalled();
+});
+
+it('pauses automatic review while its runner is hidden or cannot monitor audio', async () => {
+  vi.useFakeTimers();
+  const { runtime, log, sendAgent } = setup(); await runtime.enable();
+  const state = structuredClone(runtime.snapshot().room);
+  state.agents.push({ ...state.agents[0]!, id: 'group', config: { ...state.agents[0]!.config, kind: 'group' } });
+  runtime.update(state, Date.now()); seedDiscussion(log);
+  runtime.setGroupForeground(false);
+  await vi.advanceTimersByTimeAsync(4000);
+  runtime.setGroupForeground(true); runtime.setGroupMonitoring(false);
+  await vi.advanceTimersByTimeAsync(4000);
+  expect(sendAgent.mock.calls.some(([c]) => c.type === 'agent-review')).toBe(false);
+  runtime.setGroupMonitoring(true);
+  await vi.advanceTimersByTimeAsync(4000);
+  expect(sendAgent.mock.calls.some(([c]) => c.type === 'agent-review')).toBe(true);
+});
+
+it('withdraws an invitation if the target leaves while waiting for quiet', async () => {
+  vi.useFakeTimers();
+  const { runtime, log, snapshot, sendAgent, publicLine } = setup(); await runtime.enable();
+  snapshot.participants = ['owner', 'Bob', 'Carol'].map(name => ({ peerId: name, name, you: name === 'owner', isHost: name === 'owner', micOn: false, cameraOn: false, sharingScreen: false }));
+  for (let i = 0; i < 6; i++) log.append({ kind: 'chat', at: new Date(Date.now() + i).toISOString(), sender: { peerId: 'owner', name: 'Owner' }, text: `I am continuing my argument ${i}`, agent: null });
+  const state = structuredClone(runtime.snapshot().room);
+  state.agents.push({ ...state.agents[0]!, id: 'group', config: { ...state.agents[0]!.config, kind: 'group' }, phase: 'preparing', request: 1 });
+  runtime.update(state, Date.now()); await Promise.resolve();
+  await calls.lives.at(-1)!.prepared(JSON.stringify({ kind: 'float', severity: .8, evidenceSeqs: [1, 6], targetPeerId: 'Carol', text: 'Carol, how would you evaluate this proposal?' }));
+  expect(sendAgent.mock.calls.some(([c]) => c.type === 'agent-raised')).toBe(true);
+  snapshot.participants = snapshot.participants.filter(person => person.peerId !== 'Carol');
+  state.agents.at(-1)!.phase = 'raised';
+  runtime.update(structuredClone(state), Date.now());
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(sendAgent).toHaveBeenCalledWith({ type: 'agent-cancel', id: 'group' });
+  expect(publicLine).not.toHaveBeenCalled();
+});
+
+it('retries unaccepted review work instead of consuming its discussion cursor', async () => {
+  vi.useFakeTimers();
+  const { runtime, log, sendAgent } = setup(); await runtime.enable();
+  const state = structuredClone(runtime.snapshot().room);
+  const group: RoomAgent = { ...state.agents[0]!, id: 'group', config: { ...state.agents[0]!.config, kind: 'group' }, leaseUntil: Date.now() + 100_000 };
+  state.agents.push(group); runtime.update(state, Date.now()); seedDiscussion(log);
+  await vi.advanceTimersByTimeAsync(4000);
+  expect(sendAgent.mock.calls.filter(([c]) => c.type === 'agent-review')).toHaveLength(1);
+  // The room stayed idle: its response did not accept the requested preparation.
+  await vi.advanceTimersByTimeAsync(25000);
+  runtime.update(structuredClone(state), Date.now());
+  await vi.advanceTimersByTimeAsync(6000);
+  expect(sendAgent.mock.calls.filter(([c]) => c.type === 'agent-review')).toHaveLength(2);
 });

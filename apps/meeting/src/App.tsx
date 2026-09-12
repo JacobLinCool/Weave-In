@@ -261,7 +261,6 @@ export function App(): ReactNode {
       for (const line of lines) {
         controllerRef.current?.broadcast({ type: 'transcript', id: line.id, text: line.text, at: line.at, final: true });
         logRef.current.append({ kind: 'transcript', at: line.at, speaker: logParticipant(SELF), text: line.text });
-        agentRef.current?.humanSpeech(line.text);
       }
       const latest = lines[lines.length - 1];
       if (latest) setCaptions((current) => ({ ...current, [SELF]: { text: clipCaption(latest.text), final: true, at: Date.now() } }));
@@ -1015,6 +1014,33 @@ export function App(): ReactNode {
     const unsubscribe = agentRuntime.subscribe(update);
     return () => { unsubscribe(); stop?.(); };
   }, [agentRuntime, localStream, phase]);
+
+  useEffect(() => {
+    if (!agentRuntime || phase !== 'room') return;
+    const tracks = [localStream?.getAudioTracks()[0], ...Object.values(participants).map(person => cameraStreamFor(person)?.getAudioTracks()[0])].filter((track): track is MediaStreamTrack => !!track);
+    let stops: Array<() => void> = [];
+    let monitoring = false;
+    const visibility = () => agentRuntime.setGroupForeground(document.visibilityState === 'visible');
+    visibility(); document.addEventListener('visibilitychange', visibility);
+    const update = () => {
+      const needed = !!agentRuntime.snapshot().group;
+      if (needed === monitoring) return;
+      monitoring = needed;
+      for (const stop of stops) stop();
+      stops = [];
+      if (needed) {
+        try {
+          for (const track of new Set(tracks)) stops.push(observeVoiceActivity(track, level => {
+            if (track.enabled && level >= 0.12) agentRuntime.noteHumanActivity();
+          }));
+          agentRuntime.setGroupMonitoring(true);
+        } catch { agentRuntime.setGroupMonitoring(false); }
+      }
+    };
+    update();
+    const unsubscribe = agentRuntime.subscribe(update);
+    return () => { unsubscribe(); document.removeEventListener('visibilitychange', visibility); for (const stop of stops) stop(); };
+  }, [agentRuntime, localStream, participants, phase]);
 
   const settingsDialog = (
     <SettingsDialog open={settingsOpen} settings={settings} onChange={updateSettings} onClose={closeSettings} />
