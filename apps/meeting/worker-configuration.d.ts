@@ -10,6 +10,9 @@ declare global {
       TRANSCRIPTION_PROVIDER?: string;
       TOKEN_RATE_LIMITER: RateLimit;
       ANALYSIS_RATE_LIMITER: RateLimit;
+      TURN_KEY_ID?: string;
+      TURN_KEY_SECRET?: string;
+      ICE_RATE_LIMITER: RateLimit;
     }
   }
 }

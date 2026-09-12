@@ -2,3 +2,7 @@
 GEMINI_API_KEY=replace-with-a-server-side-gemini-api-key
 #OPENAI_API_KEY=replace-with-a-server-side-openai-api-key
 #TRANSCRIPTION_PROVIDER=gemini
+
+# Cloudflare Realtime TURN key: both values stay server-side.
+TURN_KEY_ID=replace-with-a-cloudflare-turn-key-id
+TURN_KEY_SECRET=replace-with-a-cloudflare-turn-key-secret

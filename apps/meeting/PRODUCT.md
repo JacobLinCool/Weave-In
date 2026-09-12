@@ -35,8 +35,8 @@ Name: Weave In. "Keep the thread. Weave everyone in." The tagline is the product
 
 ## Operating Context
 
-- The meeting runs entirely in the browser: full-mesh WebRTC, public STUN only, up to 8 participants, six-character room codes, invite links of the form `?room=CODE`.
-- Camera, microphone, and screen share travel peer-to-peer and are never sent to, mixed by, or recorded on the operator's server. Chat travels peer-to-peer over the same data channels.
+- The meeting runs in the browser: full-mesh WebRTC with Cloudflare STUN/TURN, up to 8 participants, six-character room codes, invite links of the form `?room=CODE`.
+- Camera, microphone, screen share, chat, files, whiteboard edits, and captions travel over encrypted WebRTC between participants. Connections prefer a direct path and may use Cloudflare TURN to relay encrypted packets. The relay processes connection metadata but cannot decrypt the meeting content. The operator's signaling Worker handles connection setup and credential issuance, not the meeting media or data-channel payloads.
 - Audio for captions travels directly from the speaker's browser to the selected AI provider (Gemini or OpenAI) using a single-use ephemeral token minted by the Worker.
 - **Transcript text is sent to the operator's server.** Finalized utterances go from each browser to that room's Durable Object over the existing signaling socket, where they are stored for the life of the room and analyzed. This is the deliberate cost of the analysis; see Brand Commitments for exactly how it must be described.
 - A Cloudflare Worker with one Durable Object per room relays SDP/ICE signaling, mints transcription tokens, holds the room's utterance log, runs the groupthink detectors, and broadcasts analysis and interventions back to every participant.
@@ -53,7 +53,7 @@ Name: Weave In. "Keep the thread. Weave everyone in." The tagline is the product
 - Camera, microphone, screen share with live renegotiation, chat panel, per-speaker live captions on tiles, and a merged transcript panel.
 - Per-participant local transcription: each browser transcribes only its own microphone (browser echo cancellation keeps remote voices out) and streams interim and final text to everyone.
 - Up to 4 selected BCP-47 languages or automatic detection; caption style Verbatim or Smart.
-- No accounts, no recording, no media ever reaching the server.
+- No accounts or recording. Meeting media is encrypted between participants; Cloudflare TURN may relay it without decrypting it.
 
 ### In development
 
@@ -77,7 +77,7 @@ These are the product. They are not shipped and must never be described as thoug
 - Name: Weave In. Tagline: "Keep the thread. Weave everyone in." (confirmed by the user, 2026-09-12; replaces the working name On Track)
 - Landing page language: English.
 - The animated demonstration on the landing page is built in-page with React/CSS/SVG, not as a video file.
-- **The privacy claim must be stated exactly this way**: camera, microphone, screen share, and chat never touch our server; transcript text does, so the room can analyze the discussion; it is deleted when the room closes. "Media never touches our server" is true and stays true. "Nothing touches our server" is true *today* and becomes false the moment utterance transport ships (`ARCHITECTURE.md` § Build order, step 2). Rewriting the landing copy — the "Where your data goes" key in `src/landing.tsx`, its empty dashed "Our server" chip, and the STORY note in `index.html` — belongs in that same commit, not after it. Shipping the transport without the copy change is the one failure mode this product cannot afford.
+- Privacy descriptions distinguish encrypted WebRTC (which may use a Cloudflare TURN relay), signaling and credential issuance in the Worker, and transcript analysis. Do not promise that all connections are direct. Cloudflare TURN can process connection metadata but cannot decrypt WebRTC media or data. Current private analysis sends transcript context through the Worker to Gemini without server persistence; any future room-wide storage must ship with matching disclosure and retention behavior. Update the landing page and README with changes to these data paths.
 - The assistant has no dye: it is not a participant, it is never given a thread colour, and it is never described as a member of the meeting.
 - Detector output is stated as an observation with its evidence, never as a verdict about a person. "Three speakers in a row added no new position" is allowed. "You are being a conformist" is not.
 

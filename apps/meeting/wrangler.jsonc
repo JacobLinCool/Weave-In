@@ -32,6 +32,14 @@
         "limit": 30,
         "period": 60
       }
+    },
+    {
+      "name": "ICE_RATE_LIMITER",
+      "namespace_id": "418275",
+      "simple": {
+        "limit": 20,
+        "period": 60
+      }
     }
   ],
   "migrations": [

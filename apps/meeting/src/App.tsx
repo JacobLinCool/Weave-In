@@ -611,6 +611,7 @@ export function App(): ReactNode {
         onPeerMessage: handlePeerMessage,
         onReconnecting: () => { autoReminders.stop(); setReconnecting(true); },
         onError: (_code, message) => setError(message),
+        onIceRecovered: (_code, message) => setError((current) => current === message ? null : current),
       });
       controllerRef.current = controller;
       fileShareRef.current?.close();
