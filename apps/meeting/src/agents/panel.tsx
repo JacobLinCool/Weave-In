@@ -39,11 +39,12 @@ export function AgentPanel({ runtime, isHost, mode = 'all' }: { runtime: AgentRu
       <div className="agent-actions"><h3>{view.personal.config.name}</h3><button onClick={() => runtime.remove(view.personal!.id)}>Remove</button></div>
       <details><summary>Information sources and permissions</summary><ConfigSummary config={view.personal.config} /><p className="agent-note">To change sources or permissions, remove this assistant and create a new one.</p></details>
       <div className="agent-conversation" role="log" aria-label="Personal assistant transcript" tabIndex={0}>
-        {view.lines.length === 0 && <p className="agent-note">Ask about an idea, question an assumption, or rehearse what you want to say.</p>}
+        {view.lines.length === 0 && <p className="agent-note">Ask about the discussion or a shared file. Try “Turn the discussion into a flowchart on the whiteboard” or “Post the agreed next steps in Room chat.”</p>}
         {view.lines.map((line) => <article key={line.id} className="agent-line"><strong>{line.name}</strong><span>{line.audience} · {line.input}{line.role === 'assistant' ? ` · ${line.playback}` : ''}</span><p>{line.text}</p></article>)}
       </div>
       <p className="agent-note" role="status">{view.status}{view.queued > 0 ? ` ${view.queued} request(s) queued.` : ''}</p>
-      <form onSubmit={submit} className="agent-compose"><label className="agent-field">Message Chat<textarea value={text} onChange={(event) => setText(event.target.value)} maxLength={4000} rows={3} placeholder="Help me think this through…" /></label><div className="agent-actions"><button className="agent-action" type="submit" disabled={!text.trim()}><Send size={15} /> Send</button><button type="button" onClick={() => view.voice ? runtime.endVoice() : run(() => runtime.ask('', true))}><Mic size={15} /> {view.voice ? 'Finish speaking' : 'Talk to Chat'}</button><button type="button" onClick={() => runtime.stopPersonal()}>Stop</button></div></form>
+      <p className="agent-note">Replies stay private. Ask explicitly to edit the shared whiteboard or post in Room chat.</p>
+      <form onSubmit={submit} className="agent-compose"><label className="agent-field">Message Chat<textarea value={text} onChange={(event) => setText(event.target.value)} maxLength={4000} rows={3} placeholder="Turn the discussion into a flowchart on the whiteboard…" /></label><div className="agent-actions"><button className="agent-action" type="submit" disabled={!text.trim()}><Send size={15} /> Send</button><button type="button" onClick={() => view.voice ? runtime.endVoice() : run(() => runtime.ask('', true))}><Mic size={15} /> {view.voice ? 'Finish speaking' : 'Talk to Chat'}</button><button type="button" onClick={() => runtime.stopPersonal()}>Stop</button></div></form>
     </section>}
   </div>;
 }
@@ -80,8 +81,9 @@ function AgentForm({ personalAvailable, groupAvailable, onCreate, onCancel }: { 
     </fieldset>
     <fieldset disabled={busy}><legend>Tools and output</legend>
       <label className="agent-check"><input type="checkbox" checked={config.screen} onChange={(event) => set('screen', event.target.checked)} /> Allow viewing the shared screen</label>
-      <label className="agent-check"><input type="checkbox" checked={config.files} onChange={(event) => set('files', event.target.checked)} /> Allow reading shared files</label>
-      <p>{config.kind === 'personal' ? 'Private replies. Speaking for you requires approval for each turn.' : 'Public text suggestions only. Omni does not speak aloud.'}</p>
+      <label className="agent-check"><input type="checkbox" checked={config.files} onChange={(event) => set('files', event.target.checked)} /> Allow reading shared files and images</label>
+      {config.kind === 'personal' && <p className="agent-note">Chat can read the shared whiteboard during a private request. It can edit the board or post in Room chat when you ask. Shared files and images are read as needed; unavailable files cannot be inspected.</p>}
+      <p>{config.kind === 'personal' ? 'Spoken replies stay private. Speak for me approves one public spoken turn about a selected reminder.' : 'Public text suggestions only. Omni does not speak aloud.'}</p>
       <p className="agent-note">Voice and text are recorded in the transcript for the selected audience. Instructions cannot override permissions.</p>
     </fieldset>
     {review && <div className="agent-review"><h4>Review before creating</h4><ConfigSummary config={parseAgentConfig(config)!} /></div>}
@@ -89,5 +91,5 @@ function AgentForm({ personalAvailable, groupAvailable, onCreate, onCancel }: { 
   </form>;
 }
 function ConfigSummary({ config }: { config: AgentConfig }): ReactNode {
-  return <dl className="agent-summary"><dt>Type</dt><dd>{config.kind}</dd><dt>Name</dt><dd>{config.name}</dd><dt>Language</dt><dd>{config.language}</dd><dt>Meeting sources</dt><dd>{config.source}</dd><dt>Public chat</dt><dd>{config.chat ? 'Included' : 'Excluded'}</dd><dt>System signals</dt><dd>{config.system ? 'Included' : 'Excluded'}</dd><dt>Shared screen</dt><dd>{config.screen ? 'Allowed' : 'Not allowed'}</dd><dt>Shared files</dt><dd>{config.files ? 'Allowed' : 'Not allowed'}</dd><dt>Audience</dt><dd>{config.audience}</dd></dl>;
+  return <dl className="agent-summary"><dt>Type</dt><dd>{config.kind}</dd><dt>Name</dt><dd>{config.name}</dd><dt>Language</dt><dd>{config.language}</dd><dt>Meeting sources</dt><dd>{config.source}</dd><dt>Public chat</dt><dd>{config.chat ? 'Included' : 'Excluded'}</dd><dt>System signals</dt><dd>{config.system ? 'Included' : 'Excluded'}</dd><dt>Shared screen</dt><dd>{config.screen ? 'Allowed' : 'Not allowed'}</dd><dt>Shared files and images</dt><dd>{config.files ? 'Allowed' : 'Not allowed'}</dd>{config.kind === 'personal' && <><dt>Shared whiteboard</dt><dd>Read during private requests; edit when asked</dd><dt>Room messages</dt><dd>Post when asked</dd></>}<dt>Audience</dt><dd>{config.audience}</dd></dl>;
 }

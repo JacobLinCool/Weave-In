@@ -3,7 +3,7 @@ export const REASONING_MODEL = 'gpt-5.6-terra';
 export const HEARTBEAT_MS = 10_000;
 export const LEASE_MS = 30_000;
 export const MAX_AGENT_TEXT = 4_000;
-export const TOOL_NAMES = ['read_meeting', 'capture_screen_share', 'download_file', 'send_chat_message'] as const;
+export const TOOL_NAMES = ['read_meeting', 'search_meeting', 'capture_screen_share', 'download_file', 'read_shared_file', 'send_chat_message', 'capture_whiteboard', 'edit_whiteboard'] as const;
 export type AgentKind = 'personal' | 'group';
 export type Audience = 'private' | 'public';
 export interface AgentConfig {
