@@ -9,6 +9,7 @@ declare global {
       OPENAI_API_KEY?: string;
       TRANSCRIPTION_PROVIDER?: string;
       TOKEN_RATE_LIMITER: RateLimit;
+      ANALYSIS_RATE_LIMITER: RateLimit;
     }
   }
 }

@@ -137,3 +137,11 @@ The dependency chain is real; skipping ahead produces a demo with nothing to sho
 8. **Post-meeting report.** Reads `interventions` incl. the `_after` columns.
 
 Whiteboard is not on this list. See `PRODUCT.md` § Explicitly deferred.
+
+## Private reminder delivery and automatic prototype (implemented)
+
+`private-notices.ts` holds one per-tab store independent of `MeetingLog` and shared transports. `meeting-session.ts` checkpoints it with local text history in sessionStorage for room recovery. `show_private_notice` validates and copies evidence from the local log; `read_private_notices` exposes delivery status to the connected agent. `private-notice-ui.tsx` subscribes to this store for the compact dock and history panel. A local timer expires active reminders; leaving clears live state and invalidates registered tool handles; the tab keeps a recovery checkpoint for rejoining.
+
+PR #2 now also includes a scoped automatic detector, as requested for the private-reminder experiment. `auto-reminders.ts` polls new local finalized speech and calls the same-origin `/api/private-analysis` Worker endpoint. `worker/private-analysis.ts` embeds bounded speech context and uses structured Gemini generation to check for an unresolved explicit objection bypassed by a later decision. Only the objection author can receive the result. The controller handles cooldown, history, pausing, stale results and error backoff; no assistant session is needed.
+
+This intentionally differs from the larger proposed build order above: no DO transcript persistence, room-wide detector package, global broadcast, reporting, or embedding cache is introduced. Analysis is stateless and per participant, with bounded context and repeated embedding costs. It does not implement all of the group-wide design. The current data flow and privacy copy are documented in README; the room-wide storage/deletion promises above describe the future design, not this implementation.

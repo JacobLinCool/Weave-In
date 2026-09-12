@@ -45,6 +45,7 @@ describe('MeetingRoom Durable Object', () => {
         } as unknown as Fetcher,
         GEMINI_API_KEY: 'test-server-key',
         TOKEN_RATE_LIMITER: allowingRateLimiter(),
+        ANALYSIS_RATE_LIMITER: allowingRateLimiter(),
       } satisfies Env,
     );
     expect(response.headers.get('Permissions-Policy')).toContain('display-capture=(self)');
@@ -79,11 +80,29 @@ describe('MeetingRoom Durable Object', () => {
     }
   });
 
-  it('requires a host before join and rejects a second create', async () => {
+  it('opens an empty invitation as host through the public WebSocket route', async () => {
+    const response = await SELF.fetch(new Request(
+      `https://demo.example/api/rooms/GONE99/connect?action=join&name=Guest&peerId=${peerId(99)}`,
+      { headers: { Upgrade: 'websocket', Origin: 'https://demo.example' } },
+    ));
+    expect(response.status).toBe(101);
+    const socket = response.webSocket!;
+    sockets.push(socket);
+    const message = new Promise<ServerMessage>((resolve) => {
+      socket.addEventListener('message', (event) => resolve(JSON.parse(String(event.data)) as ServerMessage), { once: true });
+    });
+    socket.accept();
+    await expect(message).resolves.toMatchObject({ type: 'welcome', self: { isHost: true }, peers: [] });
+  });
+
+  it('elects only the first invite arrival as host and rejects a second create', async () => {
     const stub = room('CREATE');
-    expect((await connectResponse(stub, 'join', 'First guest', peerId(1))).status).toBe(404);
-    const host = await connect(stub, 'create', 'Host', peerId(2));
-    expect(host.welcome.self.isHost).toBe(true);
+    const [first, second] = await Promise.all([
+      connect(stub, 'join', 'First guest', peerId(1)),
+      connect(stub, 'join', 'Second guest', peerId(2)),
+    ]);
+    expect([first, second].filter((peer) => peer.welcome.self.isHost)).toHaveLength(1);
+    expect(first.welcome.startedAt).toBe(second.welcome.startedAt);
     expect((await connectResponse(stub, 'create', 'Other host', peerId(3))).status).toBe(409);
   });
 
@@ -149,12 +168,29 @@ describe('MeetingRoom Durable Object', () => {
     });
   });
 
-  it('invalidates the room after the final peer disconnects', async () => {
+  it('makes the next arrival host when the original host leaves but guests remain', async () => {
+    const stub = room('REHOST');
+    const host = await connect(stub, 'create', 'Host', peerId(60));
+    const guest = await connect(stub, 'join', 'Guest', peerId(61));
+    const left = nextMessage(guest.socket);
+    await closeSocket(host.socket);
+    await expect(left).resolves.toMatchObject({ type: 'peer-left', peerId: peerId(60) });
+    const replacement = await connect(stub, 'join', 'Replacement host', peerId(62));
+    expect(replacement.welcome.self.isHost).toBe(true);
+    expect(replacement.welcome.startedAt).toBe(host.welcome.startedAt);
+    expect(replacement.welcome.peers.map((peer) => peer.peerId)).toEqual([peerId(61)]);
+    const later = await connect(stub, 'join', 'Later guest', peerId(63));
+    expect(later.welcome.self.isHost).toBe(false);
+  });
+
+  it('reopens the same invite as a new meeting after the final peer disconnects', async () => {
     const stub = room('EMPTY1');
     const host = await connect(stub, 'create', 'Host', peerId(40));
     await closeSocket(host.socket);
-    expect((await connectResponse(stub, 'join', 'Late guest', peerId(41))).status).toBe(404);
-    expect((await connectResponse(stub, 'create', 'New host', peerId(42))).status).toBe(101);
+    const reopened = await connect(stub, 'join', 'New host', peerId(41));
+    expect(reopened.welcome.self.isHost).toBe(true);
+    expect(reopened.welcome.peers).toEqual([]);
+    expect(reopened.welcome.startedAt).toBeGreaterThanOrEqual(host.welcome.startedAt);
   });
 });
 
@@ -332,6 +368,7 @@ function tokenEnv(
     ASSETS: { fetch: async () => new Response(null, { status: 404 }) } as unknown as Fetcher,
     GEMINI_API_KEY: 'test-server-key',
     TOKEN_RATE_LIMITER: rateLimiter,
+    ANALYSIS_RATE_LIMITER: rateLimiter,
     ...overrides,
   };
   for (const key of Object.keys(merged)) if (merged[key] === undefined) delete merged[key];

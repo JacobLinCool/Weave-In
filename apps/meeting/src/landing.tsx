@@ -103,8 +103,8 @@ export function LandingSurface(props: LandingProps): ReactNode {
             <dd>Your own microphone audio goes from your browser straight to the caption model, carrying a single-use key issued for that session. The text returns to you, and you pass it to the room.</dd>
           </div>
           <div className="key__row">
-            <dt><WovenChip colors={['#303A6B', '#303A6B']} empty /> Our server</dt>
-            <dd>A small worker introduces browsers to each other and issues that key. What it handles is a room code and a display name; everything else stays in the room.</dd>
+            <dt><WovenChip colors={['#303A6B', '#F3EEE3']} /> Our server</dt>
+            <dd>Our server connects browsers and issues caption keys. Automatic private reminders also send recent transcript text and previous automatic reminders through our server to Gemini for analysis. We do not store this analysis on our server. Camera, microphone, screen share, and chat are not sent to our server. You can pause automatic analysis in the meeting.</dd>
           </div>
         </dl>
       </section>
