@@ -1,7 +1,6 @@
 import type { SharedFileMeta } from './protocol';
 
 export type PreviewKind = 'image' | 'pdf' | 'docx' | 'markdown' | 'text';
-export const AUTO_IMAGE_BYTES = 5 * 1024 * 1024;
 export const TEXT_PREVIEW_BYTES = 1024 * 1024;
 export const DOCUMENT_PREVIEW_BYTES = 20 * 1024 * 1024;
 const IMAGE_TYPES: Record<string, string> = {

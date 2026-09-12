@@ -53,6 +53,6 @@ class PreviewBoundary extends Component<{ children: ReactNode }, { failed: boole
   override state = { failed: false };
   static getDerivedStateFromError() { return { failed: true }; }
   override render() {
-    return this.state.failed ? <p role="alert">Preview could not be loaded. Hide it and try again, or save the file.</p> : this.props.children;
+    return this.state.failed ? <p role="alert">Preview could not be loaded. Close it and try again, or save the file.</p> : this.props.children;
   }
 }
