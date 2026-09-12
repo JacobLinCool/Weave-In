@@ -24,6 +24,14 @@
         "limit": 6,
         "period": 60
       }
+    },
+    {
+      "name": "ANALYSIS_RATE_LIMITER",
+      "namespace_id": "418274",
+      "simple": {
+        "limit": 30,
+        "period": 60
+      }
     }
   ],
   "migrations": [

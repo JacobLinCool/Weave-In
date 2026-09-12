@@ -1,3 +1,4 @@
+import { privateAnalysis } from './private-analysis';
 import { DurableObject } from 'cloudflare:workers';
 import { GEMINI_MODEL, OPENAI_MODEL, type TranscriptionProvider } from '@weave-in/transcribe';
 import {
@@ -19,6 +20,7 @@ export interface Env {
   /** Optional: force `gemini` or `openai` when both keys are configured. */
   TRANSCRIPTION_PROVIDER?: string;
   TOKEN_RATE_LIMITER: RateLimit;
+  ANALYSIS_RATE_LIMITER: RateLimit;
 }
 
 interface SocketAttachment extends PeerIdentity {
@@ -40,6 +42,7 @@ type UpstreamFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<R
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
+    if (url.pathname === '/api/private-analysis') return privateAnalysis(request, env);
     if (url.pathname === '/api/transcription-token') {
       return issueTranscriptionToken(request, env);
     }

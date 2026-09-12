@@ -1,3 +1,4 @@
+import { AutoReminders } from './auto-reminders';
 import { PrivateNotices } from './private-notices';
 import { PrivateNoticeDock } from './private-notice-ui';
 import {
@@ -75,6 +76,7 @@ const IDLE_TRANSCRIPTION: TranscriptionView = { status: 'idle', error: null };
 
 export function App(): ReactNode {
   const [privateNotices] = useState(() => new PrivateNotices());
+  const [autoReminders] = useState(() => new AutoReminders(privateNotices));
   const [phase, setPhase] = useState<AppPhase>('lobby');
   const [displayName, setDisplayName] = useState(readStoredDisplayName);
   const [roomInput, setRoomInput] = useState(readRoomCodeFromUrl);
@@ -768,6 +770,7 @@ export function App(): ReactNode {
 
   useEffect(() => {
     if (phase !== 'room') return;
+    autoReminders.start({ log: () => logRef.current, you: () => logParticipant(SELF).peerId });
     const timer = window.setInterval(() => privateNotices.expire(), 1000);
     const unregister = registerMeetingTools({
       privateNotices,
@@ -784,7 +787,7 @@ export function App(): ReactNode {
       captureScreen,
       sendAgentMessage: (text, agent) => sendChat(text, agent ?? 'Assistant'),
     });
-    return () => { window.clearInterval(timer); unregister?.(); privateNotices.clear(); };
+    return () => { autoReminders.stop(); window.clearInterval(timer); unregister?.(); privateNotices.clear(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase]);
 
@@ -811,6 +814,7 @@ export function App(): ReactNode {
         interims={interims}
         joinedAt={joinedAt}
         roomStartedAt={roomStartedAt}
+        autoReminders={autoReminders}
         privateNotices={privateNotices}
         panelTab={panelTab}
         error={error}
@@ -860,6 +864,7 @@ export function App(): ReactNode {
 
 function MeetingSurface(props: {
   privateNotices: PrivateNotices;
+  autoReminders: AutoReminders;
   roomCode: string;
   displayName: string;
   localStream: MediaStream | null;
@@ -956,7 +961,7 @@ function MeetingSurface(props: {
               onToggleCamera={props.onToggleCamera}
               onToggleScreen={props.onToggleScreen}
             />
-            <PrivateNoticeDock store={props.privateNotices} onHistory={() => props.onPanelTab('private')} />
+            <PrivateNoticeDock monitor={props.autoReminders} store={props.privateNotices} onHistory={() => props.onPanelTab('private')} />
           </div>
           <p className="stage-caption"><LockKeyhole size={13} /> Full-mesh WebRTC · direct between browsers</p>
         </section>

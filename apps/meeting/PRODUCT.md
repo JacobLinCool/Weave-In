@@ -1,3 +1,5 @@
+> Implementation note for PR #2: the automatic private-reminder prototype uses stateless, per-participant Worker analysis of recent transcripts, without room-wide persistence or broadcasts. The architecture and exact privacy wording below describe the broader planned system. Current implementation behavior and user-facing privacy copy are documented in README; they take precedence for this prototype.
+
 # Product
 
 <!-- impeccable:product-schema 1 -->

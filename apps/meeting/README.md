@@ -49,9 +49,9 @@ When the browser exposes `navigator.modelContext` (or `document.modelContext`), 
 
 ### Private reminders
 
-A compact card beside the meeting controls shows one reminder at a time. Empty or hidden reminders use one header row; visible reminders expand to fit their text. On narrow screens the controls and card stack. New reminders replace the current reminder; dismissing does not surface older ones. The **Private** tab holds up to 50 reminders with copied evidence. Reminders expire after 120 seconds by default (15–300 configurable), and remain in history. **Hide** hides content in both surfaces, including future reminders. It does not stop the assistant from reading the private history. Screen sharing can reveal any visible private content.
+A compact card beside the meeting controls shows one reminder at a time. Empty or hidden reminders use a compact header and monitoring status; visible reminders expand to fit their text. On narrow screens the controls and card stack. New reminders replace the current reminder; dismissing does not surface older ones. The **Private** tab holds up to 50 reminders with copied evidence. Reminders expire after 120 seconds by default (15–300 configurable), and remain in history. **Hide** hides content in both surfaces, including future reminders. It does not stop the assistant from reading the private history. Screen sharing can reveal any visible private content.
 
-Reminder state exists only in this tab's memory, is cleared on leaving, and is never added to the meeting log, peer messages, server storage, or localStorage. A connected agent must explicitly call the tool: this feature does not implement Groupthink detection, background monitoring, or waking an idle Codex session. Ordinary browsers can render the same UI but need a future producer integration to receive reminders. Follow-up conversation stays in the user's existing assistant session; there is no automatic conversation handoff.
+Reminder state exists only in this tab's memory, is cleared on leaving, and is never added to the meeting log, peer messages, server storage, or localStorage. Automatic monitoring runs in ordinary browsers while the meeting page is open; no MCP or assistant interaction is required. Existing WebMCP tools remain available as an optional manual delivery path. Follow-up conversation can stay in the user's existing assistant session; there is no automatic conversation handoff.
 
 Example, after reading sequence 42 from the current meeting:
 
@@ -61,22 +61,17 @@ Example, after reading sequence 42 from the current meeting:
 
 Tool results are `{ content: [{ type: 'text', text: <JSON> }] }` (plus an `image` block for screen captures), with `isError: true` and `{ ok: false, error }` on invalid input. `read_meeting` also reports `screenShare.presenter` so an agent knows when a capture is worth taking.
 
-## The analysis
+## Automatic private analysis (PR #2)
 
-In development. See `ARCHITECTURE.md` § Build order before starting anything.
+Each browser checks for new finalized **speech** every five seconds, with at least 30 seconds between analyses. It sends up to 40 recent utterances (bounded request size) and up to 20 previous automatic reminders to `/api/private-analysis`. Chat, interim captions, files, and assistant messages are not analyzed. Replayed history alone does not trigger a notification. The Worker calls Gemini Embedding (`gemini-embedding-001`, 256 dimensions) to identify related earlier speech and neighboring replies, then Gemini Flash (`gemini-3.6-flash`) evaluates that context with the complete bounded window and returns a structured decision.
 
-- Finalized utterances and speaking-activity events go from each browser to the room's Durable Object over the **existing signaling socket** — not a new endpoint, and not over the peer data channels.
-- The Durable Object persists them to its SQLite storage, embeds them server-side, runs the detectors from `packages/groupthink`, and broadcasts analysis snapshots and interventions back to every participant.
-- Embedding and generation calls are server-to-server from the Durable Object. The browser only ever talks to the same origin for analysis, so **the CSP needs no new entries**.
-- Everything stored is deleted when the room closes.
+The first detector covers **an explicit unresolved objection bypassed during a later decision**. The server derives the recipient from the objection's author and returns a notice only to that person's browser. It validates both evidence references and decision recency. No public message, assistant action, or broadcast is generated. A stable objection id, existing notice lifecycle, 120-second cooldown and private history suppress repeat reminders. Pause cancels the browser request and discards late results; the upstream provider request may already be processing. Hide affects visibility only. If new speech arrives during analysis, the result is discarded and re-evaluated on the next check. Provider errors show an unavailable/retrying state with a 60-second backoff, without interrupting the meeting.
+
+This is a bounded prototype, not the full room-wide design in `ARCHITECTURE.md`: no shared room corpus, embedding cache, cross-browser coordination, persistent report, or full set of Groupthink detectors. Each participant analyzes their local view, so costs scale with participant count, background-tab throttling can delay checks, and incomplete context can cause misses. Embeddings provide semantic retrieval hints; the model still decides whether an objection remains unresolved. The browser must stay open and connected to receive new speech. This does not run after the tab closes or wake an assistant.
 
 ## Privacy
 
-State it exactly as `PRODUCT.md` § Brand Commitments does, and nowhere else any other way:
-
-> Camera, microphone, screen share, and chat never touch our server. Transcript text does, so the room can analyze the discussion, and it is deleted when the room closes.
-
-The earlier "nothing touches our server" claim is **false as of the analysis work** and must not survive anywhere in copy, docs, or the landing page.
+Camera, microphone, screen share, and chat are not sent to the operator's server. Automatic analysis sends recent transcript text and previous automatic reminders through the Worker to Gemini. The Worker does not persist this data or embeddings. Reminder history remains in the receiving browser's memory and clears on leaving. Google processes the supplied text under the configured Gemini service's terms; this implementation makes no claim about provider retention. Pause stops new analysis requests; it does not stop transcription. The landing page and Private panel disclose this data flow.
 
 ## Local development
 
@@ -136,7 +131,7 @@ This avoids Wrangler's development ProxyWorker, whose fatal `Network connection 
 
 ### When to send a private reminder
 
-The connected assistant receives the same decision-focused guidance in `read_meeting` results and the `show_private_notice` tool description. No reminder is the default. It must find reliable evidence of a pending decision and an important unresolved concern, read surrounding finalized records and later replies, and check private history before notifying. Missing topics, silence, agreement, and hypothetical risks alone do not qualify. Unclear transcription lowers confidence; speaking speed, unclear words, and requests to check or repeat captions must not trigger reminders.
+For the optional MCP path, the connected assistant receives the same decision-focused guidance in `read_meeting` results and the `show_private_notice` tool description. No reminder is the default. It must find reliable evidence of a pending decision and an important unresolved concern, read surrounding finalized records and later replies, and check private history before notifying. Missing topics, silence, agreement, and hypothetical risks alone do not qualify. Unclear transcription lowers confidence; speaking speed, unclear words, and requests to check or repeat captions must not trigger reminders.
 
 Visible text should name the decision and unresolved concern, then offer one question the participant can say aloud. Sequence numbers belong in `evidenceSeqs`, not in the reminder. These are assistant instructions; the browser validates the payload and evidence references, but does not independently judge its meaning or guarantee the assistant follows the guidance.
 
@@ -149,3 +144,11 @@ Manual acceptance scenarios for the connected assistant:
 - A concern already dismissed without material new evidence: no repeated reminder.
 
 Suggested test prompt: “Read the meeting and private history. Send a private reminder only if reliable context shows a pending decision with an important unresolved concern. Otherwise send no notification. Ignore transcript-quality issues.”
+
+### Testing automatic reminders
+
+Run the normal `pnpm check` suite for lifecycle, routing, input validation, retrieval, and error handling. For an opt-in live Gemini check against a running preview, run `node scripts/evaluate-private-analysis.mjs https://your-preview-origin` from this directory. This uses synthetic conversations and makes billable provider calls; it exits nonzero on unexpected results. It checks an unresolved objection, a resolved objection, unclear transcription, ordinary agreement, and prompt injection in speech. Passing these fixtures does not establish accuracy on real meetings.
+
+To test in ordinary browsers, join the same room as two participants with captions on. One person raises an untested data-loss concern; the other moves to approve launch without answering it. Pause briefly after the decision so analysis can finish. Only the objection author should receive a private reminder; chat stays empty. Then test Pause/Resume, Hide/Show, and a new room where the concern is answered before approval (no reminder). No assistant tools are needed.
+
+Provider references: [Gemini embeddings](https://ai.google.dev/gemini-api/docs/embeddings), [structured generation](https://ai.google.dev/gemini-api/docs/generate-content/structured-output).
