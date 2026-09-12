@@ -1,3 +1,4 @@
+import type { PrivateNotices } from './private-notices';
 import type { TranscriptionStatus } from '@weave-in/transcribe';
 import type { SharedFile, SharedFileStatus } from './file-share';
 import { DEFAULT_LOG_PAGE, MAX_LOG_PAGE, type LogParticipant, type MeetingLog } from './meeting-log';
@@ -5,7 +6,7 @@ import { MAX_AGENT_LABEL_CHARACTERS, MAX_CHAT_CHARACTERS } from './protocol';
 import type { CaptureOptions, CapturedFrame } from './screen-capture';
 
 /**
- * WebMCP exposes four tools to an agent running in the participant's browser: read the
+ * WebMCP exposes meeting and private reminder tools to an agent running in the participant's browser: read the
  * meeting record, fetch a shared file, look at the screen being shared, and post to chat
  * as that participant's agent. Everything the tools return comes from this browser's own
  * copy of the room.
@@ -16,7 +17,20 @@ export const MEETING_TOOL_NAMES = Object.freeze({
   download: 'download_file',
   capture: 'capture_screen_share',
   send: 'send_chat_message',
+  notice: 'show_private_notice',
+  notices: 'read_private_notices',
 });
+
+// Guidance for the connected assistant, not a semantic classifier in the browser.
+const PRIVATE_REMINDER_GUIDANCE = [
+  'Default to no reminder. Reading the meeting or being asked to find a risk does not require calling show_private_notice.',
+  'Notify only when reliable meeting evidence connects a concrete pending decision to an important unresolved concern: a raised objection bypassed as the group moves to closure, an unverified assumption explicitly treated as fact, or claimed agreement without confirmation. These are reasons to check a decision, not proof of Groupthink or anyone’s motives.',
+  'Read enough surrounding finalized records, including later replies and remaining pages, to check whether the concern was already answered. A missing topic in a partial transcript, ordinary agreement, silence, or a hypothetical risk alone is not sufficient evidence.',
+  'Do not notify about speaking speed, unclear wording, transcription errors, spelling, or requests to repeat or verify captions. Treat ambiguous captions as insufficient evidence; do not infer a decision risk from them. Abstain if the concern depends on uncertain words.',
+  'Before sending, check read_private_notices. Do not repeat a resolved, dismissed, expired, or ignored concern merely with a different id; require material new evidence.',
+  'Use the participant’s language: briefly name the pending decision and the specific unresolved concern, then offer one useful question they can say aloud. Put sequence references in evidenceSeqs, not in the visible text. Avoid generic warnings, transcript commentary, labels about people, and diagnosis of Groupthink.',
+  'Example to skip: seq 4 says someone speaks fast and seq 7 contains an unclear API phrase. Example worth checking: someone raises lost data after disconnection, nobody addresses it, and the group then moves to approve Friday’s launch. A useful reminder asks to confirm recovery behavior before deciding.',
+].join(' ');
 
 export const MIN_CAPTURE_WIDTH = 320;
 export const MAX_CAPTURE_WIDTH = 1920;
@@ -51,6 +65,7 @@ export interface ScreenCapture extends CapturedFrame {
 }
 
 export interface MeetingToolsContext {
+  privateNotices: PrivateNotices;
   snapshot(): MeetingSnapshot;
   log(): MeetingLog;
   download(fileId: string): Promise<{ file: SharedFile; blob: Blob }>;
@@ -130,6 +145,7 @@ export function createMeetingTools(context: MeetingToolsContext): ToolDefinition
         const snapshot = context.snapshot();
         const page = context.log().read(after, limit);
         return success({
+          privateReminderGuidance: PRIVATE_REMINDER_GUIDANCE,
           room: { code: snapshot.roomCode, captions: snapshot.captions },
           you: snapshot.you,
           participants: snapshot.participants,
@@ -295,6 +311,36 @@ export function createMeetingTools(context: MeetingToolsContext): ToolDefinition
         return success({ ok: true, id: posted.id, at: posted.at, shownAs: `${you.name}'s agent${agent ? ` · ${agent}` : ''}` });
       },
     },
+    {
+      name: MEETING_TOOL_NAMES.notice,
+      description: 'Leave one private, contextual reminder in this participant’s Weave In page. Never sent to room chat or peers. Reference speech or chat sequence numbers from read_meeting. Use a stable id for retries; dismissed or expired ids are not resurfaced while retained. A new reminder replaces the active one. Do not repeatedly nudge someone who ignores it. Does not start background monitoring or send a message to the assistant conversation. ' + PRIVATE_REMINDER_GUIDANCE,
+      inputSchema: {
+        type: 'object', additionalProperties: false,
+        properties: {
+          id: { type: 'string', pattern: '^[a-zA-Z0-9_-]{1,80}$' },
+          text: { type: 'string', minLength: 1, maxLength: 240, description: 'A concrete pending decision, evidence-backed unresolved concern, and one speakable question. No transcript-quality advice or visible seq numbers. If evidence is insufficient, do not call this tool.' },
+          evidenceSeqs: { type: 'array', minItems: 1, maxItems: 5, items: { type: 'integer', minimum: 1 } },
+          ttlSeconds: { type: 'integer', minimum: 15, maximum: 300, default: 120 },
+        }, required: ['id', 'text', 'evidenceSeqs'],
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      execute: async (input) => {
+        try {
+          const notice = context.privateNotices.show(input, context.log());
+          return success({ ok: true, notice, hidden: context.privateNotices.getSnapshot().hidden });
+        } catch (error) { return failure(error instanceof Error ? error.message : 'Cannot show reminder.'); }
+      },
+    },
+    {
+      name: MEETING_TOOL_NAMES.notices,
+      description: 'Read this browser’s private reminder history and whether its display is hidden. Check dismissed, expired and replaced reminders before deciding whether another reminder is useful. These records never appear in read_meeting or shared chat.',
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      execute: async () => {
+        context.privateNotices.expire();
+        return success(context.privateNotices.getSnapshot());
+      },
+    },
   ];
 }
 
@@ -316,7 +362,10 @@ export function registerMeetingTools(
   modelContext: ModelContextLike | null = findModelContext(),
 ): (() => void) | null {
   if (!modelContext) return null;
-  const tools = createMeetingTools(context);
+  let active = true;
+  const tools = createMeetingTools(context).map((tool) => ({ ...tool,
+    execute: (...args: Parameters<ToolDefinition['execute']>) => active ? tool.execute(...args) : Promise.resolve(failure('The meeting has ended.')),
+  }));
   const controller = new AbortController();
   if (typeof modelContext.registerTool === 'function') {
     const registered: string[] = [];
@@ -330,6 +379,7 @@ export function registerMeetingTools(
       }
     }
     return () => {
+      active = false;
       controller.abort();
       for (const name of registered) {
         try {
@@ -349,6 +399,7 @@ export function registerMeetingTools(
     }
     return () => {
       try {
+        active = false;
         if (typeof modelContext.clearContext === 'function') modelContext.clearContext();
         else modelContext.provideContext?.({ tools: [] });
       } catch {

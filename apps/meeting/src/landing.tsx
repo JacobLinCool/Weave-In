@@ -103,8 +103,8 @@ export function LandingSurface(props: LandingProps): ReactNode {
             <dd>Your microphone goes directly to your caption provider. Assistants receive their permitted context, conversation and tool results directly through OpenAI; private assistant conversations stay out of the public room.</dd>
           </div>
           <div className="key__row">
-            <dt><WovenChip colors={['#303A6B', '#303A6B']} empty /> Our server</dt>
-            <dd>Our server connects the room, initializes assistants and coordinates their speaking turns. It handles Agent settings and connection metadata, but does not store meeting transcripts or private conversations.</dd>
+            <dt><WovenChip colors={['#303A6B', '#F3EEE3']} /> Our server</dt>
+            <dd>Our server connects the room, initializes assistants and coordinates their turns. Automatic reminders send recent transcript text and previous reminders through our server to Gemini. We do not store this analysis or private conversations. You can pause automatic reminders in Chat.</dd>
           </div>
         </dl>
       </section>

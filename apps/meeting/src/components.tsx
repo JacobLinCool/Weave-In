@@ -1,3 +1,6 @@
+import type { AutoReminders } from './auto-reminders';
+import { PrivateNoticeHistory, type NoticeActions } from './private-notice-ui';
+import type { PrivateNotices } from './private-notices';
 import type { TranscriptionStatus } from '@weave-in/transcribe';
 import {
   AlertCircle,
@@ -27,7 +30,7 @@ import {
   Users,
   X,
 } from 'lucide-react';
-import { useEffect, useRef, useState, type CSSProperties, type DragEvent, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type DragEvent, type FormEvent, type ReactNode } from 'react';
 import { MAX_CHAT_CHARACTERS, MAX_FILE_BYTES, MAX_PARTICIPANTS } from './protocol';
 import { Brand } from './brand';
 import { formatBytes, type SharedFile } from './file-share';
@@ -82,7 +85,7 @@ export interface TranscriptionView {
   error: { code: string; message: string } | null;
 }
 
-export type SidePanelTab = 'chat' | 'transcript' | 'agents';
+export type SidePanelTab = 'chat' | 'transcript' | 'private';
 
 export function VideoTile({
   name,
@@ -282,6 +285,10 @@ export function MeetingControls({
 
 export function SidePanel({
   agentPanel,
+  groupPanel,
+  noticeActions,
+  autoReminders,
+  privateNotices,
   tab,
   onTabChange,
   messages,
@@ -294,6 +301,10 @@ export function SidePanel({
   onDownloadFile,
 }: {
   agentPanel?: ReactNode;
+  groupPanel?: ReactNode;
+  noticeActions: NoticeActions;
+  autoReminders: AutoReminders;
+  privateNotices: PrivateNotices;
   tab: SidePanelTab;
   onTabChange(tab: SidePanelTab): void;
   messages: ChatMessage[];
@@ -305,19 +316,21 @@ export function SidePanel({
   onShareFiles(files: File[]): void;
   onDownloadFile(id: string): void;
 }): ReactNode {
+  const noticeState = useSyncExternalStore(privateNotices.subscribe, privateNotices.getSnapshot);
+  const unread = noticeState.notices.some(n => !n.read);
   return (
     <aside className="side-panel" aria-label="Meeting panel">
       <div className="side-panel__tabs" role="tablist">
         <button role="tab" type="button" aria-selected={tab === 'chat'} className={tab === 'chat' ? 'is-active' : ''} onClick={() => onTabChange('chat')}>
-          <MessageSquare size={15} /> Chat{messages.length > 0 && <em>{messages.length}</em>}
+          <MessageSquare size={15} /> Room{messages.length > 0 && <em>{messages.length}</em>}
         </button>
         <button role="tab" type="button" aria-selected={tab === 'transcript'} className={tab === 'transcript' ? 'is-active' : ''} onClick={() => onTabChange('transcript')}>
           <Captions size={15} /> Transcript{transcript.length > 0 && <em>{transcript.length}</em>}
         </button>
-        <button role="tab" type="button" aria-selected={tab === 'agents'} className={tab === 'agents' ? 'is-active' : ''} onClick={() => onTabChange('agents')}><Bot size={15} /> Assistants</button>
+        <button data-private-tab role="tab" type="button" aria-selected={tab === 'private'} className={tab === 'private' ? 'is-active' : ''} onClick={() => onTabChange('private')}>Chat{unread && <span className="private-unread" aria-label="Unread reminders" />}</button>
       </div>
-      {tab === 'agents' ? agentPanel : tab === 'chat'
-        ? <ChatPanel messages={messages} files={files} joinedAt={joinedAt} onSend={onSendChat} onShareFiles={onShareFiles} onDownloadFile={onDownloadFile} />
+      {tab === 'private'  ? <div className="personal-chat-panel"><PrivateNoticeHistory store={privateNotices} monitor={autoReminders} {...noticeActions} />{!noticeState.hidden && agentPanel}</div> : tab === 'chat'
+        ? <div className="room-chat-panel">{groupPanel}<ChatPanel messages={messages} files={files} joinedAt={joinedAt} onSend={onSendChat} onShareFiles={onShareFiles} onDownloadFile={onDownloadFile} /></div>
         : <TranscriptPanel transcript={transcript} interims={interims} joinedAt={joinedAt} />}
     </aside>
   );
@@ -501,7 +514,7 @@ function ChatPanel({
             <header>
               <strong style={{ color: message.color }}>
                 {message.kind === 'text' && message.agent !== null
-                  ? <><Bot size={12} aria-hidden="true" /> {message.own ? 'Your agent' : `${message.name}'s agent`}</>
+                  ? <><Bot size={12} aria-hidden="true" /> {message.agent === 'Omni' && message.name === 'Omni' ? 'Omni' : message.own ? 'Your agent' : `${message.name}'s agent`}</>
                   : message.own ? 'You' : message.name}
               </strong>
               {message.kind === 'text' && message.agent && <span className="chat-agent-tag">{message.agent}</span>}

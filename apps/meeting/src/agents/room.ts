@@ -42,7 +42,7 @@ export function applyAgentCommand(state: AgentRoomState, member: AgentMember, co
   if (command.type === 'agent-create') {
     const config = command.config;
     if (state.agents.some((agent) => agent.config.kind === config.kind && (config.kind === 'group' || agent.owner === member.peerId))) throw new Error('This agent already exists.');
-    if (!member.ready) throw new Error('Enable agent audio on this device before creating an agent.');
+    if (!member.ready && config.kind === 'group') throw new Error('Enable the assistant on this device before creating Omni.');
     state.agents.push({ id: uuid(), owner: member.peerId, runner: member.peerId, epoch: 1, config, phase: 'idle', request: 0, pending: false, leaseUntil: now + LEASE_MS });
     return;
   }

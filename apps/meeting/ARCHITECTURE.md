@@ -1,89 +1,114 @@
 # Architecture
 
-Agents run in the browser. The Worker initializes GPT-Live; the room Durable Object coordinates identity, a single Group runner, and public speaking permission. This is the current implementation. Automated groupthink detection in `GROUPTHINK.md` remains a proposal.
+The browser runs a personal **Chat**, a shared **Omni**, and automatic private reminder monitoring. Chat normally replies privately and can speak publicly only for a specific owner-approved reminder. Omni publishes brief public text, without audio or an approval prompt. The broader room-wide analysis model in `GROUPTHINK.md` remains a proposal.
 
 ## Data and authority
 
 ```mermaid
 sequenceDiagram
-    participant C as Client Agent
+    participant C as Browser
     participant R as Worker / Room DO
-    participant O as OpenAI GPT-Live
-    participant P as Other clients
-    C->>R: Create Agent settings on authenticated room socket
-    R-->>C: Authoritative Agent ID, runner, epoch and state
-    C->>R: Session settings + SDP offer + room token
-    R->>O: Initialize session with server API key
-    O-->>R: Session ID + SDP answer
-    R-->>C: Session ID + SDP answer
-    C->>O: Direct WebRTC audio, context and Responses delegation
-    O-->>C: Audio, transcription and tool requests
-    C->>C: Check permissions and execute existing tools
-    C->>P: Public audio and records only, with floor ID and epoch
+    participant O as OpenAI Live
+    participant G as Gemini
+    participant P as Other participants
+    C->>R: Join room; configure personal Chat
+    R-->>C: Agent identity, runner, epoch and room token
+    C->>R: Authorized Live settings and SDP
+    R->>O: Initialize session using server key
+    O-->>C: Direct session via SDP answer relayed by Worker
+    C->>O: Permitted private context or approved public text
+    O-->>C: Response and tool requests
+    C->>P: Approved Chat speech or Omni public text
+    C->>R: Bounded human transcript and reminder evidence
+    R->>G: Embeddings and structured private analysis
+    G-->>R: Evidence-linked decision
+    R-->>C: Private reminder only for concern author
 ```
 
-The server receives Agent settings (including role instructions), connection descriptions and coordination events. It never receives or stores meeting records or private conversations after initialization. Context, screen captures, permitted files and personal conversation are sent directly from the Client to OpenAI. API keys remain Worker secrets. A random token bound to the live room socket authorizes initialization; it is never included in peer lists.
+The Worker receives assistant settings, connection descriptions and room coordination. Conversation context and allowed screen/file tool results for Live go directly from the browser to OpenAI. Automatic analysis is a separate path: its bounded transcript and reminder evidence pass through the Worker to Gemini, without Worker persistence. Private conversations and reminders never enter shared room transports unless the owner explicitly approves the selected reminder for a public turn. API keys remain Worker secrets.
 
-`POST /api/rooms/:room/agents/:id/live` accepts `{ epoch, request, session, sdp }`, requires `X-Room-Token`, and returns `{ session: { id }, transport: { type: "webrtc", sdp } }`. It verifies current runner, lease and Group phase, bounds the request to 64 KiB, validates the model/tool allowlist, and limits each connection to six initializations per minute. The provider request times out after 20 seconds.
+`POST /api/rooms/:room/agents/:id/live` accepts `{ epoch, request, session, sdp }`, requires the current socket's `X-Room-Token`, and returns `{ session: { id }, transport: { type: "webrtc", sdp } }`. It validates runner, lease, phase and allowed models/tools, bounds the request to 64 KiB, and limits each connection to six initializations per minute. Provider initialization times out after 20 seconds. Room tokens never appear in peer lists.
 
 ## Code ownership
 
 | File | Responsibility |
 | --- | --- |
-| `src/agents/contracts.ts` | Settings, wire validation, model constants, epochs and floor checks |
-| `src/agents/room.ts` | Pure room state transitions: uniqueness, approval, queue, leases and takeover |
-| `worker/index.ts`, `worker/live.ts` | Connection identity, durable coordination and authorized provider initialization |
-| `src/agents/live.ts` | Native GPT-Live WebRTC, nested Responses events and function results |
-| `src/agents/tools.ts` | Scoped adapters over the existing four meeting tools |
-| `src/agents/audio.ts`, `runtime.ts` | Client lifecycle, context, transcript routing, microphone and playback gates |
-| `src/agents/panel.tsx` | Creation settings, summary, personal conversation and Group controls |
+| `src/agents/contracts.ts`, `config.ts` | Settings, defaults, wire validation, models, epochs and floor checks |
+| `src/agents/room.ts` | Identity, runner leases, public-turn coordination and takeover |
+| `worker/index.ts`, `worker/live.ts` | Socket identity, durable coordination and provider initialization |
+| `src/agents/live.ts`, `tools.ts` | Live transport, Responses delegation and scoped meeting tools |
+| `src/agents/audio.ts`, `runtime.ts` | Context, personal approval, transcript routing, microphone and playback gates |
+| `src/agents/panel.tsx`, `private-notice-ui.tsx` | Unified Chat discussion/reminders, Omni and floating reminder cards |
+| `src/auto-reminders.ts`, `worker/private-analysis.ts` | Automatic monitoring, semantic retrieval and recurrence validation |
+| `src/private-notices.ts`, `meeting-session.ts` | Reminder lifecycle and same-tab room checkpoints |
 
-No Agent framework or new dependency is needed. React subscribes to the Client runtime; room transitions are independently testable TypeScript.
+## Configuration and private Chat
 
-## Creation settings
+Joining a room automatically configures one personal Chat for that participant. This does not start a continuously running Live session or make a spoken announcement. Public sources default to all participants, public chat is included, and screen/file permissions are separately controlled and off by default. Direct owner requests are always included. Sources and tools are immutable for an agent's lifetime; remove and recreate it to change them. Markdown instructions cannot grant permissions.
 
-The form progresses through type and role, information sources, tools and output, then a review summary.
+Background records update an active private session without requesting a reply. A direct text question, reminder discussion action, or **Talk to Chat** starts a bounded private interaction with permitted public context and personal conversation. Private records stay in the runtime and are excluded from WebMCP's meeting log and peer replay. Agent transcript fragments update stable IDs and receive fresh cursors; permission-filtered logs may contain sequence gaps.
 
-| Setting | Personal | Group |
-| --- | --- | --- |
-| Availability | One per owner | One per meeting; any ready member can create |
-| Name | My assistant | Group assistant |
-| Markdown role | Editable personal default | Editable facilitator default |
-| Answer language | Automatic or specified | Automatic or specified |
-| Public caption sources | None / owner / all; default all | All public speakers |
-| Public chat | On by default; follows source selection | Always on |
-| System signals | Off by default | Always on |
-| Screen capture / shared files | Separate permissions, both off | Separate permissions, both off |
-| Initial audience | Private by default, or public | Public; approval required |
+Private voice input temporarily disables the public microphone track and public captioning. A separate microphone clone feeds Live. Ending private voice restores the previous meeting microphone state. Output uses separate Web Audio nodes and peer tracks; it never feeds human transcription input. Audio activation can require a user gesture.
 
-Owner input is always accepted. Source permissions are immutable for the Agent lifetime: remove and recreate to change them. Role Markdown cannot grant data access, posting or speaking rights. Personal audience may change during the meeting; public mode retains earlier private context and displays a warning, but only subsequent turns are published. Transcription is always recorded with the audience frozen at turn start.
+## Speaking for the owner
 
-## Turn handling
+**Speak for me** grants one turn for the selected reminder. The runtime starts a fresh session with only that approved text and a constrained speaking instruction; personal history, background context and tools are excluded. Modest elaboration is allowed without new positions, promises or private information. Public transcripts identify the owner's Chat. No persistent public audience selector is available.
 
-Personal background captions/chat/signals update context without triggering a response. An explicit owner text question or Talk to assistant starts a bounded GPT-Live session, seeded with the permitted public history and existing personal conversation. This keeps private/public routing attached to one operation even while final transcript fragments arrive after closing. Public Agent records enter the ordinary meeting record and WebMCP; private records never do.
+The owner's meeting microphone remains in its existing state. Local voice activity on an enabled microphone revokes queued public permission and stops the current Chat turn; it never resumes without a new approval. Detection is level-based, so noisy rooms still require listening evaluation. A Stop action remains available. Speech targets 15–20 seconds, with a 20-second runtime limit after audible output starts. Approval is also invalidated by stop, disconnect or removal; it is not carried into a replacement session.
 
-During private voice input, the meeting microphone track is disabled and public captioning is stopped. A separate microphone clone feeds GPT-Live. Public voice input keeps the meeting microphone audible while GPT-Live supplies its transcript, avoiding duplicate captioning. Ending voice restores the previous meeting microphone state. A continuously running silent track drives GPT-Live for typed requests and replaces the microphone when voice input ends. Agent output uses separate Web Audio nodes and separate peer tracks; it is never connected to the human transcription input. A muted media element starts the incoming receiver; only the permission-gated Web Audio graph is audible.
+## Public Omni
 
-Group state is `idle → preparing → raised → speaking → idle`. A button emits a system signal. Preparation permits read-only tools and gates off all audio and public text. An invited Group starts a fresh session with the suggestion and latest public context. It never replays prepared audio. Repeated signals during preparation/raising coalesce; a signal during speaking schedules another preparation after the turn.
+There is one shared Omni per room, created by a participant. Its compact, expandable settings sit inside the Room chat panel. A manual **Trigger review** asks it to prepare a public suggestion using allowed public context. The published text is capped at 240 characters and appears in shared Room chat labelled Omni. Its public agent-line records replay to late joiners through agent history; restored or replayed suggestions are deduplicated. Omni neither plays nor broadcasts audio, and there is no human approval step for its text publication.
 
-Any member can invite or stop Group speech. Voice invitation matches only a complete current human caption: “團隊助理，請發言” or “Weave, go ahead”. Historical text, chat and Agent transcripts never enter this parser. The creator or original meeting host can remove the Group.
+The existing room protocol retains `idle → preparing → raised → speaking → idle` names and `agent-approve` for coordination compatibility. For Omni these are preparation/publication states: the current runner advances them automatically, publishes text with a valid grant, and releases the floor. They are not a user-facing request to speak. Human speech is not parsed as approval. Public turns still use room-authorized floor IDs and epochs; the old Group voice workflow is not the current product behavior.
 
-Only one public Agent has the floor. Personal requests queue; an approved Group preempts them and stops private Personal audio on each Client. The owner resumes explicitly afterwards. Private text may still be submitted while Group speaks and is queued for the next personal turn.
+## Takeover, reconnection and cleanup
 
-Audio generation and playback are separate. Lines carry stable IDs, role, modality, audience and playback status. Stopped/unplayed output is not labelled finished. With GPT-Live's stream rather than per-reply audio-end events, the Client ends a bounded response after two seconds of audible-output silence; a long rhetorical pause can end a reply early. A 60-second public floor, a 55-second text/preparation timeout (180 seconds for private voice), and a 15-second session-close drain bound resource lifetime. Backend work blocks silence-based finalization; typed backend results are passed to the voice frontend through bounded commentary appends, and finalization waits for audio after the result. Longer natural-speech pauses still need listening evaluation.
+The Durable Object stores assistant configuration and coordination, not meeting content. Ready browsers heartbeat every 10 seconds; a 30-second lease expiry or disconnect can transfer Omni to another ready browser. The replacement uses its own public record and may lack earlier history. No interrupted audio is replayed. Epochs, current grants, and bounded recently closed grants constrain delayed transcript handling and replay.
 
-## Takeover and cleanup
+A lost signaling connection retries the same room and participant identity with 1–10 second backoff. The page preserves media and local history, stops assistant operations and monitoring while disconnected, then resumes room coordination and monitoring after reconnecting. Peers replay their own history with duplicate suppression. Closing a socket does not invoke Leave or clear the meeting UI.
 
-The DO stores Group settings, runner, incrementing epoch, request revision, lease, floor, signal and personal metadata. Every ready Client heartbeats each 10 seconds; a 30-second expiry or explicit disconnect assigns the oldest available ready member. Readiness follows the user's Enable assistant audio action. Initialization failure withdraws readiness so another Client can try. If none are available, the Group displays waiting status.
+`meeting-session.ts` checkpoints the current room in sessionStorage: up to 1,000 text messages, 1,000 finalized transcript rows, 2,000 log entries, 50 reminders, and up to 200 private Chat lines, plus identity, local timer and monitoring state. Reminders preserve evidence, read/collapse/dismiss state and visibility. Refresh/rejoin and deliberate Leave/rejoin can restore the same room within 12 hours of its last save. Different rooms replace the checkpoint. Private Chat text restores into the personal runtime after refresh/rejoin; the optional checkpoint field also accepts older saves without it. Active Live sessions, queued approvals, file bodies and screen sharing are not checkpointed. Restoring text never restarts speech. Storage failures preserve live memory and show a recovery warning.
 
-A new runner reconstructs from its local public record and displays that earlier history may be missing. Interrupted work prepares and raises again. Senders and receivers validate current epoch and floor before tools/audio; recently closed floor IDs are retained for 15 seconds only to finalize delayed transcript fragments, never for playback. Late joiners receive authors' public Agent history and a current stream announcement. Replay carries the original runner/epoch/floor and is checked against the last 128 authoritative grants retained by the DO; older unprovable records are omitted. No interrupted audio is replayed.
+Leave/remove immediately stops input, playback and pending tool work. The final participant leaving clears room coordination. A returning browser's checkpoint is separate from that server lifecycle and is not a durable room archive.
 
-Leave/remove stops input and playback immediately, closes provider sessions and discards tool work. The final participant leaving clears DO coordination storage and alarms. This feature does not add accounts, permanent conversation storage, whiteboards, automatic detectors or deployment.
+## Automatic private reminder delivery
 
-## Verification
+`private-notices.ts` stores reminders separately from the meeting log. WebMCP's optional `show_private_notice` validates and copies cited evidence; `read_private_notices` reads local history. These tools remain available, but automatic monitoring does not require an external assistant or special browser.
 
-`pnpm check` covers type checking, existing tests plus Agent reducer/privacy/session validation, builds and a Worker deployment dry-run. The three-context browser check exercises actual room sockets and peer audio with a simulated GPT-Live WebRTC endpoint. A local real-provider pass on 2026-09-12 also verified GPT-Live initialization, Responses delegation, actual audible output and transcripts, private/public routing across three independent Clients, silent Group preparation, approval with fresh context, and automatic takeover. A synthetic spoken question was also fully transcribed and answered with audible speech while the public microphone was isolated. Synthetic input and automated waveform checks do not replace human microphone/listening evaluation across supported browsers.
+`auto-reminders.ts` checks every five seconds for new finalized human speech, with at least 30 seconds between analyses. It excludes chat, interims, agent lines and replay-only changes. Requests contain up to 40 utterances and 20 historical automatic events, trimmed to byte budgets below the endpoint's 64 KiB limit. Gemini embeddings retrieve related speech and neighbors; structured Gemini generation evaluates the bounded context for an explicit, important unresolved concern bypassed by a later concrete decision. Only its author can receive the reminder. Answered or withdrawn concerns, unclear transcription, ordinary agreement, and missing topics do not qualify.
 
-Browser results and unresolved network/speech checks are recorded in `VERIFICATION.md`. Input accounting uses UTF-8 bytes and item counts, below the observed provider ceiling of 32,768 bytes / 128 items. Background records are de-duplicated and cannot consume the foreground reserve; file pages and screen images are bounded before transmission. No undocumented provider reset/delete events are used.
+Event IDs combine concern and decision sequence numbers. Original evidence remains in reminder history after dismissal or collapse. A recurring concern requires a newer substantive commitment, execution starting, or changed scope, linked to its most recent previous decision. Validation rejects the same/older decision, normalized repeated text and invalid links. Semantic paraphrase detection still depends on Gemini's classification. A 120-second cooldown limits frequency; time passing never creates an event. New human speech while analysis runs makes the result stale. Pause cancels/discards work; Hide changes display only. Provider errors back off for 60 seconds.
 
-Provider contract: [WebRTC initialization](https://developers.openai.com/api/docs/guides/voice-webrtc?api=live), [Responses delegation](https://developers.openai.com/api/docs/guides/live-delegation), [conversation events](https://developers.openai.com/api/docs/guides/live-conversations).
+The silent card floats at the stage's lower left without resizing the video or controls. It collapses after 15 seconds of unattended display; hover, keyboard focus and insufficient space pause that timer. Chat combines its history/evidence and private discussion. Collapse is not dismissal or approval. No shared room corpus, embedding cache, all-detector package, or persistent report is introduced.
+
+## Verification boundaries
+
+Run `pnpm check` for type checking, tests, build and Worker dry-run. Focused tests cover permissions, recurrence, stale results, approval isolation, interruption and signaling recovery. Browser/provider observations in `VERIFICATION.md` include historical PR #6 behavior; earlier Group voice or persistent public-mode results do not certify this revised policy. Fresh browser checks must exercise silent Omni publication, owner-approved Chat speech, interruption without resume, and recovery. Human microphone/listening evaluation remains necessary for real-room voice behavior.
+
+Input accounting uses UTF-8 bytes and item counts. Background context cannot consume the foreground reserve, and file pages/screens are bounded. No undocumented provider reset/delete events are used.
+
+## Proposed room-wide analysis (not implemented)
+
+The following analysis visualizations and build order are future design work, not the current reminder or assistant behavior. They do not imply a server-side meeting archive exists.
+
+### Frontend additions
+
+- `SidePanelTab` becomes `'chat' | 'transcript' | 'insights'`.
+- The Trace needs **incremental PCA**, not t-SNE or UMAP. t-SNE and UMAP re-fit on every update and the points jump between frames, which destroys the one thing the visualisation is for — showing a *path*. PCA is stable, cheap, and incremental. Fit on the first window, then project.
+- No charting library is needed or wanted. The radar is an SVG polygon over six axes; the Trace is projected points and a polyline. Both are a few dozen lines and both need to obey the design system exactly, which a chart library will fight. `DESIGN.md` § The Insight Surfaces specifies them.
+
+### Proposed build order
+
+The dependency chain is real; skipping ahead produces a demo with nothing to show.
+
+1. **Activity events.** Turn `voice-activity.ts` RMS into start/stop/overlap events. Unlocks `float`, half the Hand, and every interruption measure. Cheapest, highest leverage, no AI required.
+2. **Utterance transport + storage.** Protocol arms, DO persistence. Now the room has a corpus.
+3. **`packages/groupthink` with fixture tests.** Write the detectors against a hand-written fake conversation that is *designed* to trip each one. This is also the regression suite and the demo script.
+4. **Embeddings in the DO.** Now `convergence`, `drift`, and `echo` come alive.
+5. **Insights panel + the Hand.** First thing a judge can actually see.
+6. **Interventions.** The product thesis, and it needs everything above to exist.
+7. **The Trace.** Highest visual impact per unit of risk once 4 is done — it is a projection of data you already have.
+8. **Post-meeting report.** Reads `interventions` incl. the `_after` columns.
+
+Whiteboard is not on this list. See `PRODUCT.md` § Explicitly deferred.

@@ -1,3 +1,4 @@
+import { PrivateNotices } from '../src/private-notices';
 import { describe, expect, it } from 'vitest';
 import type { SharedFile } from '../src/file-share';
 import type { CaptureOptions } from '../src/screen-capture';
@@ -46,6 +47,7 @@ function fixture(): {
     files: [notes, photo].map((file) => ({ id: file.id, name: file.name, size: file.size, mime: file.mime, at: file.at, sharedBy: bob, status: file.status })),
   };
   const context: MeetingToolsContext = {
+    privateNotices: new PrivateNotices(),
     snapshot: () => snapshot,
     log: () => log,
     download: async (fileId) => {
@@ -86,9 +88,9 @@ async function payload(result: Promise<ToolResult>): Promise<{ body: Record<stri
 }
 
 describe('WebMCP meeting tools', () => {
-  it('exposes exactly four tools with object input schemas', () => {
+  it('exposes meeting and private tools with object input schemas', () => {
     const tools = createMeetingTools(fixture().context);
-    expect(tools.map((item) => item.name)).toEqual([MEETING_TOOL_NAMES.read, MEETING_TOOL_NAMES.download, MEETING_TOOL_NAMES.capture, MEETING_TOOL_NAMES.send]);
+    expect(tools.map((item) => item.name)).toEqual([MEETING_TOOL_NAMES.read, MEETING_TOOL_NAMES.download, MEETING_TOOL_NAMES.capture, MEETING_TOOL_NAMES.send, MEETING_TOOL_NAMES.notice, MEETING_TOOL_NAMES.notices]);
     for (const item of tools) {
       expect(item.inputSchema).toMatchObject({ type: 'object', additionalProperties: false });
       expect(item.description.length).toBeGreaterThan(40);
@@ -194,10 +196,10 @@ describe('WebMCP meeting tools', () => {
       },
     };
     const unregister = registerMeetingTools(fixture().context, modelContext);
-    expect(registry.size).toBe(4);
+    expect(registry.size).toBe(6);
     unregister?.();
     expect(registry.size).toBe(0);
-    expect(unregistered).toEqual([MEETING_TOOL_NAMES.read, MEETING_TOOL_NAMES.download, MEETING_TOOL_NAMES.capture, MEETING_TOOL_NAMES.send]);
+    expect(unregistered).toEqual([MEETING_TOOL_NAMES.read, MEETING_TOOL_NAMES.download, MEETING_TOOL_NAMES.capture, MEETING_TOOL_NAMES.send, MEETING_TOOL_NAMES.notice, MEETING_TOOL_NAMES.notices]);
     expect(registerMeetingTools(fixture().context, null)).toBeNull();
   });
 
@@ -205,11 +207,44 @@ describe('WebMCP meeting tools', () => {
     const provided: ToolDefinition[][] = [];
     const modelContext = { provideContext: (context: { tools: ToolDefinition[] }) => provided.push(context.tools) };
     const unregister = registerMeetingTools(fixture().context, modelContext);
-    expect(provided[0]).toHaveLength(4);
+    expect(provided[0]).toHaveLength(6);
     unregister?.();
     expect(provided[1]).toEqual([]);
     expect(findModelContext({ navigator: { modelContext } })).toBe(modelContext);
     expect(findModelContext({ navigator: {}, document: { modelContext } })).toBe(modelContext);
     expect(findModelContext({})).toBeNull();
+  });
+});
+
+
+describe('private reminder tools', () => {
+  it('stores evidence locally without posting to chat or adding a meeting record', async () => {
+    const { context, log, posted } = fixture();
+    log.append({ kind: 'transcript', at: 'a', speaker: alice, text: 'What about maintenance costs?' });
+    const tools = createMeetingTools(context);
+    const result = await payload(tool(tools, MEETING_TOOL_NAMES.notice).execute({ id: 'cost', text: 'Your cost question is still unanswered.', evidenceSeqs: [1] }));
+    expect(result.isError).toBe(false);
+    expect(posted).toEqual([]);
+    expect(log.head).toBe(1);
+    expect(context.privateNotices.getSnapshot().notices[0]?.evidence[0]?.text).toBe('What about maintenance costs?');
+    context.privateNotices.dismiss('cost');
+    const history = await payload(tool(tools, MEETING_TOOL_NAMES.notices).execute({}));
+    expect(history.body['notices']).toMatchObject([{ id: 'cost', status: 'dismissed' }]);
+    expect((await payload(tool(tools, MEETING_TOOL_NAMES.read).execute({}))).body).not.toHaveProperty('notices');
+  });
+
+  it('rejects unsupported evidence without creating a reminder', async () => {
+    const { context } = fixture();
+    const result = await payload(tool(createMeetingTools(context), MEETING_TOOL_NAMES.notice).execute({ id: 'bad', text: 'A claim', evidenceSeqs: [99] }));
+    expect(result.isError).toBe(true);
+    expect(context.privateNotices.getSnapshot().notices).toEqual([]);
+  });
+
+  it('rejects a stale tool handle after the meeting is closed', async () => {
+    const { context } = fixture();
+    const registered: ToolDefinition[] = [];
+    const cleanup = registerMeetingTools(context, { registerTool: (tool) => { registered.push(tool); } });
+    cleanup?.();
+    expect((await payload(tool(registered, MEETING_TOOL_NAMES.notice).execute({}))).body['error']).toBe('The meeting has ended.');
   });
 });

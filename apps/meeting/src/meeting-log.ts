@@ -27,7 +27,7 @@ export type MeetingLogInput = DistributiveOmit<MeetingLogEntry, 'seq'>;
 
 export interface MeetingLogPage {
   entries: MeetingLogEntry[];
-  /** Pass back as `after` to continue; equals the last returned `seq`, or `after` when nothing was returned. */
+  /** Pass back as `after` to continue; advances past hidden entries when a scoped page is exhausted. */
   nextCursor: number;
   hasMore: boolean;
 }
@@ -78,6 +78,13 @@ export class MeetingLog {
     // Move the updated row to a fresh cursor without duplicating its stable transcript ID.
     if (entry) this.#entries = this.#entries.filter((item) => item !== entry);
     this.append({ kind: 'transcript', at: line.at, speaker: { peerId, name: line.name }, text: line.text, agent: line, ...(replayed ? { replayed } : {}) });
+  }
+
+  snapshot(limit = 2000): MeetingLogEntry[] { return this.#entries.slice(-limit); }
+
+  restore(entries: MeetingLogEntry[]): void {
+    this.#entries = structuredClone(entries);
+    this.#next = (entries.at(-1)?.seq ?? 0) + 1;
   }
 
   clear(): void {

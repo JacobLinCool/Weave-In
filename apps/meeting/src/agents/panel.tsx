@@ -1,16 +1,12 @@
 import { useState, useSyncExternalStore, type FormEvent, type ReactNode } from 'react';
-import { Bot, Hand, Mic, Send, Square, Volume2 } from 'lucide-react';
+import { Bot, Mic, Send, Square, Volume2 } from 'lucide-react';
 import { parseAgentConfig, type AgentConfig, type AgentKind } from './contracts';
 import { AgentRuntime } from './runtime';
-import personalInstructions from './personal.md?raw';
-import groupInstructions from './group.md?raw';
+import { defaultAgentConfig } from './config';
+export { defaultAgentConfig } from './config';
 import './style.css';
 
-export function defaultAgentConfig(kind: AgentKind): AgentConfig {
-  return { kind, name: kind === 'personal' ? 'My assistant' : 'Group assistant', instructions: kind === 'personal' ? personalInstructions : groupInstructions,
-    language: 'auto', source: 'all', chat: true, system: kind === 'group', screen: false, files: false, audience: kind === 'personal' ? 'private' : 'public' };
-}
-export function AgentPanel({ runtime, isHost }: { runtime: AgentRuntime; isHost: boolean }): ReactNode {
+export function AgentPanel({ runtime, isHost, mode = 'all' }: { runtime: AgentRuntime; isHost: boolean; mode?: 'personal' | 'group' | 'all' }): ReactNode {
   const view = useSyncExternalStore(runtime.subscribe, runtime.snapshot);
   const [expanded, setExpanded] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -20,36 +16,34 @@ export function AgentPanel({ runtime, isHost }: { runtime: AgentRuntime; isHost:
   const group = view.group;
   const submit = (event: FormEvent) => { event.preventDefault(); if (!text.trim()) return; const value = text; run(async () => { await runtime.ask(value); setText((current) => current === value ? '' : current); }); };
   return <div className={`agent-panel${expanded ? ' agent-panel--expanded' : ''}`}>
-    <header className="agent-panel__heading"><h2><Bot size={20} /> Meeting assistants</h2><p>Think privately. Invite a different perspective into the room.</p><button className="agent-expand" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>{expanded ? 'Collapse panel' : 'Expand panel'}</button></header>
+    <header className="agent-panel__heading"><h2><Bot size={20} /> {mode === 'personal' ? 'Chat' : mode === 'group' ? 'Omni' : 'Assistants'}</h2><button className="agent-expand" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>{expanded ? 'Collapse panel' : 'Expand panel'}</button></header>
     {!view.ready && <button className="agent-action" onClick={() => run(() => runtime.enable())}><Volume2 size={16} /> Enable assistant audio on this device</button>}
     {(error || view.error) && <p className="agent-error" role="alert">{error ?? view.error}</p>}
-    <section className="agent-group" aria-label="Group assistant">
-      <h3>{group?.config.name ?? 'Group assistant'}</h3>
+    {mode !== 'personal' && <section className="agent-group" aria-label="Group assistant">
+      <h3>{group?.config.name ?? 'Omni'}</h3>
       {group ? <>
-        <p role="status">{({ idle: 'Listening to public meeting context', preparing: 'Preparing a suggestion — audio is off', raised: 'Hand raised — waiting for permission', speaking: 'Has the floor', waiting: 'Waiting for an available device' })[group.phase]}</p>
+        <p role="status">{({ idle: 'Listening to public meeting context', preparing: 'Preparing a text suggestion', raised: 'Sharing a text suggestion', speaking: 'Sharing a text suggestion', waiting: 'Waiting for an available device' })[group.phase]}</p>
         {group.epoch > 1 && <p className="agent-note">Recovered on another device. Earlier meeting history may be incomplete.</p>}
         <div className="agent-actions">
           <button onClick={() => runtime.command({ type: 'agent-signal', id: group.id })}>Trigger review</button>
-          {group.phase === 'raised' && <button className="agent-action" onClick={() => runtime.approve()}><Hand size={15} /> Invite to speak</button>}
+
           {group.phase !== 'idle' && <button onClick={() => runtime.command({ type: 'agent-cancel', id: group.id })}><Square size={14} /> Stop</button>}
           {(isHost || group.owner === runtime.ctx.peerId) && <button onClick={() => runtime.remove(group.id)}>Remove</button>}
         </div>
-        <p className="agent-note">Anyone can say “Weave, go ahead” or “團隊助理，請發言” after its hand is raised.</p>
-      </> : <p>One shared facilitator for this meeting. It prepares a suggestion, raises its hand, and waits to be invited.</p>}
-    </section>
-    {(!view.personal || !group) && !creating && <button className="agent-action" onClick={() => setCreating(true)}>Create an assistant</button>}
-    {creating && <AgentForm personalAvailable={!view.personal} groupAvailable={!group} onCancel={() => setCreating(false)} onCreate={async (config) => { await runtime.create(config); setCreating(false); }} />}
-    {view.personal && <section className="agent-personal" aria-label="Personal assistant">
+
+      </> : <p>Public text suggestions for this meeting.</p>}
+    </section>}
+    {((mode !== 'group' && !view.personal) || (mode !== 'personal' && !group)) && !creating && <button className="agent-action" onClick={() => setCreating(true)}>Create an assistant</button>}
+    {creating && <AgentForm personalAvailable={mode !== 'group' && !view.personal} groupAvailable={mode !== 'personal' && !group} onCancel={() => setCreating(false)} onCreate={async (config) => { await runtime.create(config); setCreating(false); }} />}
+    {mode !== 'group' && view.personal && <section className="agent-personal" aria-label="Personal assistant">
       <div className="agent-actions"><h3>{view.personal.config.name}</h3><button onClick={() => runtime.remove(view.personal!.id)}>Remove</button></div>
-      <label className="agent-field">Conversation audience<select value={view.audience} onChange={(event) => runtime.setAudience(event.target.value as 'private' | 'public')}><option value="private">Private — only you</option><option value="public">Public — everyone in the room</option></select></label>
-      <p className={view.audience === 'public' ? 'agent-warning' : 'agent-note'}>{view.audience === 'public' ? 'PUBLIC: future replies may refer to earlier private discussion. Previous private records are not broadcast.' : 'Private conversation. Only you receive the audio and transcript.'}</p>
       <details><summary>Information sources and permissions</summary><ConfigSummary config={view.personal.config} /><p className="agent-note">To change sources or permissions, remove this assistant and create a new one.</p></details>
       <div className="agent-conversation" role="log" aria-label="Personal assistant transcript" tabIndex={0}>
         {view.lines.length === 0 && <p className="agent-note">Ask about an idea, question an assumption, or rehearse what you want to say.</p>}
         {view.lines.map((line) => <article key={line.id} className="agent-line"><strong>{line.name}</strong><span>{line.audience} · {line.input}{line.role === 'assistant' ? ` · ${line.playback}` : ''}</span><p>{line.text}</p></article>)}
       </div>
       <p className="agent-note" role="status">{view.status}{view.queued > 0 ? ` ${view.queued} request(s) queued.` : ''}</p>
-      <form onSubmit={submit} className="agent-compose"><label className="agent-field">Message your assistant<textarea value={text} onChange={(event) => setText(event.target.value)} maxLength={4000} rows={3} placeholder="Help me think this through…" /></label><div className="agent-actions"><button className="agent-action" type="submit" disabled={!text.trim()}><Send size={15} /> Send</button><button type="button" onClick={() => view.voice ? runtime.endVoice() : run(() => runtime.ask('', true))}><Mic size={15} /> {view.voice ? 'Finish speaking' : 'Talk to assistant'}</button><button type="button" onClick={() => runtime.stopPersonal()}>Stop</button></div></form>
+      <form onSubmit={submit} className="agent-compose"><label className="agent-field">Message Chat<textarea value={text} onChange={(event) => setText(event.target.value)} maxLength={4000} rows={3} placeholder="Help me think this through…" /></label><div className="agent-actions"><button className="agent-action" type="submit" disabled={!text.trim()}><Send size={15} /> Send</button><button type="button" onClick={() => view.voice ? runtime.endVoice() : run(() => runtime.ask('', true))}><Mic size={15} /> {view.voice ? 'Finish speaking' : 'Talk to Chat'}</button><button type="button" onClick={() => runtime.stopPersonal()}>Stop</button></div></form>
     </section>}
   </div>;
 }
@@ -87,7 +81,7 @@ function AgentForm({ personalAvailable, groupAvailable, onCreate, onCancel }: { 
     <fieldset disabled={busy}><legend>Tools and output</legend>
       <label className="agent-check"><input type="checkbox" checked={config.screen} onChange={(event) => set('screen', event.target.checked)} /> Allow viewing the shared screen</label>
       <label className="agent-check"><input type="checkbox" checked={config.files} onChange={(event) => set('files', event.target.checked)} /> Allow reading shared files</label>
-      {config.kind === 'personal' ? <label className="agent-field">Initial audience<select value={config.audience} onChange={(event) => set('audience', event.target.value as AgentConfig['audience'])}><option value="private">Private — only me</option><option value="public">Public — everyone</option></select></label> : <p>Reviews on a system signal, raises its hand, and speaks publicly only after anyone approves. Takes priority over personal audio. Another available device takes over if this one disconnects.</p>}
+      <p>{config.kind === 'personal' ? 'Private replies. Speaking for you requires approval for each turn.' : 'Public text suggestions only. Omni does not speak aloud.'}</p>
       <p className="agent-note">Voice and text are recorded in the transcript for the selected audience. Instructions cannot override permissions.</p>
     </fieldset>
     {review && <div className="agent-review"><h4>Review before creating</h4><ConfigSummary config={parseAgentConfig(config)!} /></div>}
@@ -95,5 +89,5 @@ function AgentForm({ personalAvailable, groupAvailable, onCreate, onCancel }: { 
   </form>;
 }
 function ConfigSummary({ config }: { config: AgentConfig }): ReactNode {
-  return <dl className="agent-summary"><dt>Type</dt><dd>{config.kind}</dd><dt>Name</dt><dd>{config.name}</dd><dt>Language</dt><dd>{config.language}</dd><dt>Meeting sources</dt><dd>{config.source}</dd><dt>Public chat</dt><dd>{config.chat ? 'Included' : 'Excluded'}</dd><dt>System signals</dt><dd>{config.system ? 'Included' : 'Excluded'}</dd><dt>Shared screen</dt><dd>{config.screen ? 'Allowed' : 'Not allowed'}</dd><dt>Shared files</dt><dd>{config.files ? 'Allowed' : 'Not allowed'}</dd><dt>Initial audience</dt><dd>{config.audience}</dd></dl>;
+  return <dl className="agent-summary"><dt>Type</dt><dd>{config.kind}</dd><dt>Name</dt><dd>{config.name}</dd><dt>Language</dt><dd>{config.language}</dd><dt>Meeting sources</dt><dd>{config.source}</dd><dt>Public chat</dt><dd>{config.chat ? 'Included' : 'Excluded'}</dd><dt>System signals</dt><dd>{config.system ? 'Included' : 'Excluded'}</dd><dt>Shared screen</dt><dd>{config.screen ? 'Allowed' : 'Not allowed'}</dd><dt>Shared files</dt><dd>{config.files ? 'Allowed' : 'Not allowed'}</dd><dt>Audience</dt><dd>{config.audience}</dd></dl>;
 }

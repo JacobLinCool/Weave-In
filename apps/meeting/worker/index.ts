@@ -1,6 +1,7 @@
 import { emptyAgentRoom, LEASE_MS, type AgentRoomState } from '../src/agents/contracts';
 import { applyAgentCommand, reconcileAgents, type AgentMember } from '../src/agents/room';
 import { initializeLive } from './live';
+import { privateAnalysis } from './private-analysis';
 import { DurableObject } from 'cloudflare:workers';
 import { GEMINI_MODEL, OPENAI_MODEL, type TranscriptionProvider } from '@weave-in/transcribe';
 import {
@@ -22,6 +23,7 @@ export interface Env {
   /** Optional: force `gemini` or `openai` when both keys are configured. */
   TRANSCRIPTION_PROVIDER?: string;
   TOKEN_RATE_LIMITER: RateLimit;
+  ANALYSIS_RATE_LIMITER: RateLimit;
 }
 
 interface SocketAttachment extends PeerIdentity, AgentMember { startedAt: number; sessionToken: string; liveRequests: number[] }
@@ -41,6 +43,7 @@ type UpstreamFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<R
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
+    if (url.pathname === '/api/private-analysis') return privateAnalysis(request, env);
     if (url.pathname === '/api/transcription-token') {
       return issueTranscriptionToken(request, env);
     }
@@ -232,12 +235,11 @@ export class MeetingRoom extends DurableObject<Env> {
 
     const active = this.#activeSockets();
     if (action === 'create' && active.length !== 0) return jsonError('ROOM_EXISTS', 409);
-    let startedAt = Date.now();
-    if (action === 'join') {
-      const host = active.find(({ attachment }) => attachment.isHost);
-      if (!host) return jsonError('ROOM_NOT_FOUND', 404);
-      startedAt = host.attachment.startedAt;
-    }
+    const host = active.find(({ attachment }) => attachment.isHost);
+    // Admission is synchronous: the first arrival claims an empty/hostless room,
+    // and subsequent arrivals see its accepted socket and join as guests.
+    const isHost = action === 'create' || !host;
+    const startedAt = host?.attachment.startedAt ?? active[0]?.attachment.startedAt ?? Date.now();
     if (active.length >= MAX_PARTICIPANTS) return jsonError('ROOM_FULL', 409);
     if (active.some(({ attachment }) => attachment.peerId === peerId)) {
       return jsonError('DUPLICATE_PEER', 409);
@@ -246,7 +248,7 @@ export class MeetingRoom extends DurableObject<Env> {
     const pair = new WebSocketPair();
     const client = pair[0];
     const server = pair[1];
-    const identity: SocketAttachment = { peerId, name, startedAt, isHost: action === 'create', sessionToken: crypto.randomUUID(), joinedAt: Date.now(), heartbeat: Date.now(), ready: false, liveRequests: [] };
+    const identity: SocketAttachment = { peerId, name, startedAt, isHost, sessionToken: crypto.randomUUID(), joinedAt: Date.now(), heartbeat: Date.now(), ready: false, liveRequests: [] };
     server.serializeAttachment(identity);
     this.ctx.acceptWebSocket(server, [`peer:${peerId}`]);
 

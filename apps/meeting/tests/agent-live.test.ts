@@ -1,6 +1,7 @@
+import { scopedTools } from '../src/agents/tools';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { RoomAgent } from '../src/agents/contracts';
-import { createMeetingTools, type MeetingToolsContext } from '../src/webmcp';
+import { type MeetingToolsContext } from '../src/webmcp';
 import { AgentLive, liveSettings } from '../src/agents/live';
 
 class Channel extends EventTarget {
@@ -106,7 +107,7 @@ it('keeps an input audio track for typed requests and after microphone input end
 
 
 it('keeps all four tool schemas compatible with Live initialization without weakening execution validation', () => {
-  const tools = createMeetingTools({} as MeetingToolsContext);
+  const tools = scopedTools({} as MeetingToolsContext, { source: 'all', chat: true, screen: true, files: true } as RoomAgent['config'], 'owner', () => true, () => true);
   const agent = { config: { language: 'auto', instructions: 'Help' } } as RoomAgent;
   const settings = liveSettings(agent, tools, false);
   const serialized = JSON.stringify(settings);

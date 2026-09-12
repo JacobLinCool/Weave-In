@@ -1,6 +1,6 @@
 import { MeetingLog, type MeetingLogEntry } from '../meeting-log';
 import { createMeetingTools, type MeetingToolsContext, type ToolDefinition } from '../webmcp';
-import { record, type AgentConfig, type AgentLine } from './contracts';
+import { TOOL_NAMES, record, type AgentConfig, type AgentLine } from './contracts';
 
 export const utf8Bytes = (text: string): number => new TextEncoder().encode(text).byteLength;
 const FILE_PAGE_BYTES = 1024;
@@ -29,7 +29,7 @@ export function scopedTools(base: MeetingToolsContext, config: AgentConfig, owne
     },
   };
   return createMeetingTools(context).filter((tool) =>
-    (tool.name !== 'capture_screen_share' || config.screen) && (tool.name !== 'download_file' || config.files),
+    TOOL_NAMES.some((name) => name === tool.name) && (tool.name !== 'capture_screen_share' || config.screen) && (tool.name !== 'download_file' || config.files),
   ).map((tool) => ({ ...tool,
     ...(tool.name === 'download_file' ? { description: `${tool.description} Agent reads are limited to 1024 bytes per call; continue with nextOffset until eof.`,
       inputSchema: { ...tool.inputSchema, properties: { ...(tool.inputSchema.properties as Record<string, unknown>), length: { type: 'integer', minimum: 1, maximum: FILE_PAGE_BYTES, default: FILE_PAGE_BYTES } } } } : {}),
