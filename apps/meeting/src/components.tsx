@@ -34,6 +34,7 @@ import { formatBytes, type SharedFile } from './file-share';
 import { compareTime } from './history';
 import { LANGUAGE_OPTIONS, MAX_SELECTED_LANGUAGES, type MeetingSettings } from './settings';
 import { observeVoiceActivity } from './voice-activity';
+import { MeetingTimer } from './meeting-timer';
 
 const CAPTION_LINGER_MS = 6_000;
 
@@ -146,6 +147,7 @@ function CaptionBubble({ caption }: { caption: CaptionState | null }): ReactNode
 
 export function RoomHeader({
   roomCode,
+  startedAt,
   people,
   transcription,
   onOpenSettings,
@@ -153,6 +155,7 @@ export function RoomHeader({
   onLeave,
 }: {
   roomCode: string;
+  startedAt: number | null;
   people: number;
   transcription: TranscriptionView;
   onOpenSettings(): void;
@@ -172,15 +175,18 @@ export function RoomHeader({
         <span className="data-label">Room</span>
         <strong className="room-code">{roomCode}</strong>
       </div>
-      <div
-        className={`caption-status is-${transcription.status}`}
-        role="status"
-        aria-live="polite"
-        title={captionStatusDescription(transcription)}
-      >
-        <Captions size={14} />
-        <i className="caption-status__dot" aria-hidden="true" />
-        <span>{captionStatusLabel(transcription)}</span>
+      <div className="room-header__status">
+        <div
+          className={`caption-status is-${transcription.status}`}
+          role="status"
+          aria-live="polite"
+          title={captionStatusDescription(transcription)}
+        >
+          <Captions size={14} />
+          <i className="caption-status__dot" aria-hidden="true" />
+          <span>{captionStatusLabel(transcription)}</span>
+        </div>
+        {startedAt !== null && <MeetingTimer startedAt={startedAt} />}
       </div>
       <div className="room-header__spacer" />
       <span className="people-count"><Users size={15} /> {people}/{MAX_PARTICIPANTS}</span>

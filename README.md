@@ -2,6 +2,8 @@
 
 Keep the thread. Weave everyone in.
 
+[Open Weave In](https://weave.nycu.ai/)
+
 Groupthink is the failure mode where a group suppresses dissent to preserve harmony, stops thinking critically, and converges on a decision no member would have defended alone. It is invisible from inside the room, because the meeting feels productive precisely when nobody is arguing.
 
 Weave In runs the meeting, transcribes every participant separately in their own browser, embeds what they say into a semantic space, and watches that space for the signatures of groupthink — opinions collapsing toward one point too early, the discussion leaving its own agenda, one voice carrying the room, agreement that adds no information. When a signature fires, the room says so, and asks the question the group is not asking.

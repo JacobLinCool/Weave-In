@@ -92,6 +92,7 @@ export function App(): ReactNode {
   const [settings, setSettings] = useState<MeetingSettings>(() => readSettings());
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [joinedAt, setJoinedAt] = useState<string | null>(null);
+  const [roomStartedAt, setRoomStartedAt] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const transcriptionRef = useRef<Transcription | null>(null);
@@ -498,7 +499,8 @@ export function App(): ReactNode {
     try {
       const stream = await prepareMedia();
       const controller = new MeetingController([stream], {
-        onConnected: (self, initialPeers) => {
+        onConnected: (self, initialPeers, startedAt) => {
+          setRoomStartedAt(startedAt);
           selfRef.current = self;
           const next = Object.fromEntries(initialPeers.map((peer) => [peer.peerId, { identity: peer, seat: seatFor(peer.peerId), streams: {}, media: null }]));
           participantsRef.current = next;
@@ -609,6 +611,7 @@ export function App(): ReactNode {
     syncingRef.current.clear();
     seenRef.current.clear();
     setJoinedAt(null);
+    setRoomStartedAt(null);
     releaseLocalMedia();
     participantsRef.current = {};
     seatsRef.current.clear();
@@ -801,6 +804,7 @@ export function App(): ReactNode {
         transcript={transcript}
         interims={interims}
         joinedAt={joinedAt}
+        roomStartedAt={roomStartedAt}
         panelTab={panelTab}
         error={error}
         leaving={phase === 'leaving'}
@@ -862,6 +866,7 @@ function MeetingSurface(props: {
   transcript: TranscriptLine[];
   interims: Record<string, LiveInterim>;
   joinedAt: string | null;
+  roomStartedAt: number | null;
   panelTab: SidePanelTab;
   error: string | null;
   leaving: boolean;
@@ -911,6 +916,7 @@ function MeetingSurface(props: {
     <main className="meeting-shell">
       <RoomHeader
         roomCode={props.roomCode}
+        startedAt={props.roomStartedAt}
         people={participants.length + 1}
         transcription={props.transcription}
         onOpenSettings={props.onOpenSettings}

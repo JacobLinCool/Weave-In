@@ -38,7 +38,7 @@ export interface ClientSignalMessage {
 export type ClientMessage = ClientSignalMessage;
 
 export type ServerMessage =
-  | { type: 'welcome'; self: PeerIdentity; peers: PeerIdentity[] }
+  | { type: 'welcome'; self: PeerIdentity; peers: PeerIdentity[]; startedAt: number; serverTime: number }
   | { type: 'peer-joined'; peer: PeerIdentity }
   | { type: 'peer-left'; peerId: string }
   | {

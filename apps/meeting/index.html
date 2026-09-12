@@ -4,28 +4,59 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#141A33" />
-    <meta name="description" content="Weave In: browser meetings where every voice is transcribed on its own device and woven into one shared thread. Video, screen, chat, and captions travel straight between participants." />
+    <meta name="description" content="Meet in your browser with video, screen sharing, chat, and live caption support. Share one link and bring everyone into the conversation. No account needed." />
+    <meta name="application-name" content="Weave In" />
+    <meta name="robots" content="index, follow, max-image-preview:large" />
+    <link rel="canonical" href="https://weave.nycu.ai/" />
+    <link rel="manifest" href="/site.webmanifest" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Weave In" />
+    <meta property="og:locale" content="en_US" />
+    <meta property="og:url" content="https://weave.nycu.ai/" />
+    <meta property="og:title" content="Weave In — Keep the thread. Weave everyone in." />
+    <meta property="og:description" content="Browser meetings with video, screen sharing, chat, and live caption support. One link, no account needed." />
+    <meta property="og:image" content="https://weave.nycu.ai/og-image.png" />
+    <meta property="og:image:secure_url" content="https://weave.nycu.ai/og-image.png" />
+    <meta property="og:image:type" content="image/png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="Weave In: Keep the thread. Weave everyone in. Browser meetings, represented by colourful interwoven threads on an indigo background." />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Weave In — Keep the thread. Weave everyone in." />
+    <meta name="twitter:description" content="Browser meetings with video, screen sharing, chat, and live caption support. One link, no account needed." />
+    <meta name="twitter:image" content="https://weave.nycu.ai/og-image.png" />
+    <meta name="twitter:image:alt" content="Weave In: Keep the thread. Weave everyone in. Colourful threads woven together on indigo." />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "WebSite",
+            "@id": "https://weave.nycu.ai/#website",
+            "name": "Weave In",
+            "url": "https://weave.nycu.ai/",
+            "inLanguage": "en"
+          },
+          {
+            "@type": "WebApplication",
+            "@id": "https://weave.nycu.ai/#app",
+            "name": "Weave In",
+            "url": "https://weave.nycu.ai/",
+            "description": "Browser meetings with video, screen sharing, chat, and live caption support. No account needed.",
+            "applicationCategory": "CommunicationApplication",
+            "operatingSystem": "Web",
+            "image": "https://weave.nycu.ai/og-image.png",
+            "browserRequirements": "Requires JavaScript and a browser with WebRTC support."
+          }
+        ]
+      }
+    </script>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="icon" href="/favicon-32.png" sizes="32x32" type="image/png" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-    <title>Weave In</title>
+    <title>Weave In — Browser meetings, every voice woven in</title>
   </head>
   <body>
-    <!--
-      impeccable direction contract (seed 555f8bb4, direction: The Weaver's Draft, IMPECCABLE'S PICK)
-      THESIS: A meeting is cloth: every voice is a warp thread, every caption a weft pass, the transcript the drawdown.
-        Refuses the dark-SaaS hero with a floating screenshot and three icon cards.
-      OWN-WORLD: Indigo-dyed cloth ground (#141A33) with undyed cotton text (#F3EEE3); eight dyed thread colours
-        (madder, weld, verdigris, woad, lilac, moss, rose, peach) as participant identity; Jost for display and body,
-        Azeret Mono only for draft notation (labels, counts, codes); weld gold as the single action colour.
-      STORY: The visitor sees the draft weaving live, reads that nothing passes through our server and that each
-        person transcribes only themselves, and opens or joins a room from the pattern card.
-      FIRST VIEWPORT: Left, poster-size two-line title over one lede, then the live draft: five named warps, weft
-        rows arriving every ~2s with the speaker's caption beside them, tie-up grid top-right. Right, the room
-        panel with selvedge stripe, preview, name, "Create a room" primary, join-by-code secondary.
-      FORM: The Weaver's Draft, candidate 1 of 7 on the grounded list, chosen over the assigned Table Plan; seed key 555f8bb4; code-led.
-      FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, and DESIGN.md
-    -->
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

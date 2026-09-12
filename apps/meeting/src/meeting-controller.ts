@@ -12,7 +12,7 @@ const ICE_SERVERS: RTCIceServer[] = [{ urls: 'stun:stun.l.google.com:19302' }];
 const DATA_CHANNEL_LABEL = 'weave-in';
 
 export interface MeetingControllerEvents {
-  onConnected(self: PeerIdentity, peers: PeerIdentity[]): void;
+  onConnected(self: PeerIdentity, peers: PeerIdentity[], startedAt: number): void;
   onPeerJoined(peer: PeerIdentity): void;
   onPeerLeft(peerId: string): void;
   onRemoteStream(peerId: string, stream: MediaStream): void;
@@ -174,7 +174,9 @@ export class MeetingController {
     switch (message.type) {
       case 'welcome':
         this.#self = message.self;
-        this.#events.onConnected(message.self, message.peers);
+        // Translate the server's elapsed duration onto this device's clock.
+        const localStartedAt = Date.now() - Math.max(0, message.serverTime - message.startedAt);
+        this.#events.onConnected(message.self, message.peers, localStartedAt);
         for (const peer of message.peers) this.#ensurePeer(peer.peerId);
         return true;
       case 'peer-joined':

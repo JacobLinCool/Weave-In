@@ -47,6 +47,21 @@ describe('MeetingRoom Durable Object', () => {
     await expect(crossOrigin.json()).resolves.toEqual({ ok: false, code: 'INVALID_ORIGIN' });
   });
 
+  it('keeps invitation URLs out of search results without blocking social previews', async () => {
+    const previewHtml = '<html><head><meta property="og:title" content="Weave In"></head></html>';
+    const assetEnv = {
+      ...tokenEnv(),
+      ASSETS: { fetch: async () => new Response(previewHtml, { headers: { 'Content-Type': 'text/html' } }) } as unknown as Fetcher,
+    };
+    const home = await worker.fetch(new Request('https://weave.nycu.ai/'), assetEnv);
+    expect(home.headers.get('X-Robots-Tag')).toBeNull();
+    for (const path of ['/?room=ABC123', '/nonexistent']) {
+      const page = await worker.fetch(new Request(`https://weave.nycu.ai${path}`), assetEnv);
+      expect(page.headers.get('X-Robots-Tag')).toBe('noindex, follow');
+      expect(await page.text()).toBe(previewHtml);
+    }
+  });
+
   it('requires a host before join and rejects a second create', async () => {
     const stub = room('CREATE');
     expect((await connectResponse(stub, 'join', 'First guest', peerId(1))).status).toBe(404);
@@ -64,6 +79,19 @@ describe('MeetingRoom Durable Object', () => {
     const rejected = await connectResponse(stub, 'join', 'Ninth', peerId(19));
     expect(rejected.status).toBe(409);
     expect(await rejected.json()).toEqual({ ok: false, code: 'ROOM_FULL' });
+  });
+
+  it('shares the room start time with late joiners after hibernation', async () => {
+    const stub = room('TIMING');
+    const before = Date.now();
+    const host = await connect(stub, 'create', 'Host', peerId(50));
+    expect(host.welcome.startedAt).toBeGreaterThanOrEqual(before);
+    expect(host.welcome.startedAt).toBeLessThanOrEqual(Date.now());
+    expect(host.welcome.serverTime).toBeGreaterThanOrEqual(host.welcome.startedAt);
+    await evictDurableObject(stub);
+    const guest = await connect(stub, 'join', 'Late guest', peerId(51));
+    expect(guest.welcome.startedAt).toBe(host.welcome.startedAt);
+    expect(guest.welcome.serverTime).toBeGreaterThanOrEqual(host.welcome.serverTime);
   });
 
   it('isolates rooms and rejects signals to absent peers', async () => {

@@ -21,7 +21,9 @@ export interface Env {
   TOKEN_RATE_LIMITER: RateLimit;
 }
 
-interface SocketAttachment extends PeerIdentity {}
+interface SocketAttachment extends PeerIdentity {
+  startedAt: number;
+}
 
 const GEMINI_TOKEN_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/auth_tokens';
 const OPENAI_TOKEN_ENDPOINT = 'https://api.openai.com/v1/realtime/client_secrets';
@@ -187,8 +189,11 @@ export class MeetingRoom extends DurableObject<Env> {
 
     const active = this.#activeSockets();
     if (action === 'create' && active.length !== 0) return jsonError('ROOM_EXISTS', 409);
-    if (action === 'join' && (active.length === 0 || !this.#hasHost(active))) {
-      return jsonError('ROOM_NOT_FOUND', 404);
+    let startedAt = Date.now();
+    if (action === 'join') {
+      const host = active.find(({ attachment }) => attachment.isHost);
+      if (!host) return jsonError('ROOM_NOT_FOUND', 404);
+      startedAt = host.attachment.startedAt;
     }
     if (active.length >= MAX_PARTICIPANTS) return jsonError('ROOM_FULL', 409);
     if (active.some(({ attachment }) => attachment.peerId === peerId)) {
@@ -198,12 +203,12 @@ export class MeetingRoom extends DurableObject<Env> {
     const pair = new WebSocketPair();
     const client = pair[0];
     const server = pair[1];
-    const identity: SocketAttachment = { peerId, name, isHost: action === 'create' };
-    server.serializeAttachment(identity);
+    const identity: PeerIdentity = { peerId, name, isHost: action === 'create' };
+    server.serializeAttachment({ ...identity, startedAt } satisfies SocketAttachment);
     this.ctx.acceptWebSocket(server, [`peer:${peerId}`]);
 
     const peers = active.map(({ attachment }) => attachment);
-    this.#send(server, { type: 'welcome', self: identity, peers });
+    this.#send(server, { type: 'welcome', self: identity, peers, startedAt, serverTime: Date.now() });
     this.#broadcast({ type: 'peer-joined', peer: identity }, peerId);
     return new Response(null, { status: 101, webSocket: client });
   }
@@ -265,10 +270,6 @@ export class MeetingRoom extends DurableObject<Env> {
     });
   }
 
-  #hasHost(active: Array<{ attachment: SocketAttachment }>): boolean {
-    return active.some(({ attachment }) => attachment.isHost);
-  }
-
   #broadcast(message: ServerMessage, excludedPeerId?: string): void {
     for (const { socket, attachment } of this.#activeSockets()) {
       if (attachment.peerId !== excludedPeerId) this.#send(socket, message);
@@ -291,9 +292,12 @@ function readAttachment(socket: WebSocket): SocketAttachment | null {
   if (
     typeof candidate.peerId !== 'string' ||
     typeof candidate.name !== 'string' ||
-    typeof candidate.isHost !== 'boolean'
+    typeof candidate.isHost !== 'boolean' ||
+    typeof candidate.startedAt !== 'number' ||
+    !Number.isSafeInteger(candidate.startedAt) ||
+    candidate.startedAt <= 0
   ) return null;
-  return { peerId: candidate.peerId, name: candidate.name, isHost: candidate.isHost };
+  return { peerId: candidate.peerId, name: candidate.name, isHost: candidate.isHost, startedAt: candidate.startedAt };
 }
 
 function jsonError(code: string, status: number): Response {
@@ -342,5 +346,8 @@ function withSecurityHeaders(response: Response, url: URL): Response {
   headers.set('Referrer-Policy', 'no-referrer');
   headers.set('X-Content-Type-Options', 'nosniff');
   headers.set('X-Frame-Options', 'DENY');
+  if (headers.get('Content-Type')?.includes('text/html') && (url.searchParams.has('room') || url.pathname !== '/')) {
+    headers.set('X-Robots-Tag', 'noindex, follow');
+  }
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }

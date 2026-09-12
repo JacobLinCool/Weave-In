@@ -146,3 +146,6 @@ dist
 # Impeccable review artifacts
 **/.impeccable/review/
 **/.impeccable/questions/
+
+# Local editing guidance
+*.shadow.md
