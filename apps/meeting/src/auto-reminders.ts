@@ -1,9 +1,8 @@
 import type { MeetingLog, MeetingLogEntry } from './meeting-log';
 import type { PrivateNotices } from './private-notices';
 
-export type MonitorStatus = 'watching' | 'checking' | 'paused' | 'unavailable';
+export type MonitorStatus = 'watching' | 'checking' | 'unavailable';
 interface MonitorState {
-  enabled: boolean;
   status: MonitorStatus;
 }
 interface Context {
@@ -13,7 +12,7 @@ interface Context {
 
 /** Runs in ordinary browsers. No MCP, shared chat, or assistant session involved. */
 export class AutoReminders {
-  #state: MonitorState = { enabled: true, status: 'watching' };
+  #state: MonitorState = { status: 'watching' };
   #listeners = new Set<() => void>();
   #abort: AbortController | null = null;
   #timer: ReturnType<typeof setInterval> | undefined;
@@ -36,19 +35,12 @@ export class AutoReminders {
     this.#state = { ...this.#state, status };
     this.#listeners.forEach((fn) => fn());
   }
-  setEnabled(enabled: boolean) {
-    this.#state = { ...this.#state, enabled };
-    this.#generation++;
-    this.#abort?.abort();
-    this.#abort = null;
-    this.#publish(enabled ? 'watching' : 'paused');
-  }
   start(context: Context) {
     this.stop();
     this.#context = context;
     this.#cursor = context.log().head;
     this.#nextCheck = 0;
-    this.#publish(this.#state.enabled ? 'watching' : 'paused');
+    this.#publish('watching');
     this.#timer = setInterval(() => {
       void this.check();
     }, 5000);
@@ -62,7 +54,7 @@ export class AutoReminders {
   }
   async check(now = Date.now()): Promise<void> {
     const context = this.#context;
-    if (!context || !this.#state.enabled || this.#abort || now < this.#nextCheck) return;
+    if (!context || this.#abort || now < this.#nextCheck) return;
     const log = context.log();
     const records = log
       .read(Math.max(0, log.head - 100), 100)

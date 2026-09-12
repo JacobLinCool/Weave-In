@@ -18,6 +18,23 @@ function fixture() {
   return { state, host, guest, uuid, agent: state.agents[0]! };
 }
 describe('agent creation, approval and recovery', () => {
+  it('updates settings in place, restricts editors and invalidates active work', () => {
+    const { state, host, guest, uuid, agent } = fixture();
+    const updated = { ...config, language: '繁體中文', files: true };
+    const command = { type: 'agent-configure' as const, id: agent.id, config: updated };
+    expect(parseAgentCommand(command)).toEqual(command);
+    expect(parseAgentCommand({ ...command, config: { ...updated, files: 'yes' } })).toBeNull();
+    applyAgentCommand(state, guest, command, 1000, uuid);
+    expect(agent.config).toEqual(updated);
+    expect(() => applyAgentCommand(state, host, { ...command, config: { ...updated, kind: 'personal' } }, 1000, uuid)).toThrow('type');
+    agent.phase = 'preparing'; agent.pending = true; state.queue.push(agent.id);
+    state.floor = { id: 'floor', agentId: agent.id, runner: host.peerId, epoch: 1, startedAt: 1000, expiresAt: 2000 };
+    applyAgentCommand(state, host, command, 1001, uuid);
+    expect(agent).toMatchObject({ id: command.id, config: updated, epoch: 3, phase: 'idle', pending: false });
+    expect(state.floor).toBeNull(); expect(state.queue).toEqual([]);
+    applyAgentCommand(state, guest, { type: 'agent-create', config: { ...config, kind: 'personal' } }, 1002, uuid);
+    expect(() => applyAgentCommand(state, host, { ...command, id: state.agents[1]!.id, config: { ...updated, kind: 'personal' } }, 1003, uuid)).toThrow('owner');
+  });
   it('enforces fixed group configuration and validates boundary inputs', () => {
     expect(parseAgentConfig({ ...config, source: 'none', chat: false, system: false, audience: 'private' })).toMatchObject({ source: 'all', chat: true, system: true, audience: 'public' });
     expect(parseAgentConfig({ ...config, name: 'x'.repeat(41) })).toBeNull();

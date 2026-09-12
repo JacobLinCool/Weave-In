@@ -80,7 +80,7 @@ export interface TranscriptionView {
   error: { code: string; message: string } | null;
 }
 
-export type SidePanelTab = 'chat' | 'transcript' | 'private';
+export type SidePanelTab = 'chat' | 'transcript' | 'assistant';
 
 export function VideoTile({
   name,
@@ -302,7 +302,7 @@ export function SidePanel({
   onShareFiles,
   onDownloadFile,
 }: {
-  agentPanel?: ((reminders: ReactNode) => ReactNode) | undefined;
+  agentPanel?: ReactNode;
   groupPanel?: ReactNode;
   noticeActions: NoticeActions;
   autoReminders: AutoReminders;
@@ -320,7 +320,6 @@ export function SidePanel({
 }): ReactNode {
   const noticeState = useSyncExternalStore(privateNotices.subscribe, privateNotices.getSnapshot);
   const unread = noticeState.notices.some(n => !n.read);
-  const reminders = <PrivateNoticeHistory store={privateNotices} monitor={autoReminders} {...noticeActions} />;
   return (
     <aside className="side-panel" aria-label="Meeting panel">
       <div className="side-panel__tabs" role="tablist">
@@ -330,9 +329,9 @@ export function SidePanel({
         <button role="tab" type="button" aria-selected={tab === 'transcript'} className={tab === 'transcript' ? 'is-active' : ''} onClick={() => onTabChange('transcript')}>
           <Captions size={15} /> Transcript{transcript.length > 0 && <em>{transcript.length}</em>}
         </button>
-        <button data-private-tab role="tab" type="button" aria-selected={tab === 'private'} className={tab === 'private' ? 'is-active' : ''} onClick={() => onTabChange('private')}>Muse{unread && <span className="private-unread" aria-label="Unread reminders" />}</button>
+        <button data-private-tab role="tab" type="button" aria-selected={tab === 'assistant'} className={tab === 'assistant' ? 'is-active' : ''} onClick={() => onTabChange('assistant')}><Bot size={15} /> Muse{unread && <span className="private-unread" aria-label="Unread reminders" />}</button>
       </div>
-      {tab === 'private'  ? <div className="personal-chat-panel">{noticeState.hidden ? reminders : agentPanel?.(reminders) ?? reminders}</div> : tab === 'chat'
+      {tab === 'assistant'  ? <div className="personal-chat-panel"><PrivateNoticeHistory store={privateNotices} monitor={autoReminders} {...noticeActions} />{agentPanel}</div> : tab === 'chat'
         ? <div className="room-chat-panel">{groupPanel}<ChatPanel messages={messages} files={files} joinedAt={joinedAt} onSend={onSendChat} onShareFiles={onShareFiles} onDownloadFile={onDownloadFile} /></div>
         : <TranscriptPanel transcript={transcript} interims={interims} joinedAt={joinedAt} />}
     </aside>

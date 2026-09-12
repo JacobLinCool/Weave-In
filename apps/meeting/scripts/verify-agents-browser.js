@@ -2,6 +2,8 @@ async (page, origin = 'http://127.0.0.1:8788') => {
   const browser = page.context().browser();
   const setup = async (context) => {
     context.setDefaultTimeout(15_000);
+    // This UI harness uses local peer connectivity, not the external TURN service.
+    await context.route('**/api/ice-servers', (route) => route.fulfill({ json: { ok: true, expiresAt: Date.now() + 86_400_000, iceServers: [{ urls: 'turn:127.0.0.1:9', username: 'test', credential: 'test' }] } }));
     await context.grantPermissions(['microphone', 'camera']);
     await context.addInitScript(() => {
       localStorage.setItem('weave-in:settings', JSON.stringify({ captionsEnabled: false, languageCodes: [], mode: 'VERBATIM' }));
@@ -64,7 +66,7 @@ async (page, origin = 'http://127.0.0.1:8788') => {
           dc.onmessage=({data})=>{
             const event=JSON.parse(data); window.__agentTest.incoming.push(event.type);
             if(event.type==='response.item.create'){request=event.item?.content?.[0]?.text??request;if(request.startsWith('Background context only'))setTimeout(()=>{emit({type:'session.input_transcript.delta',delta:'voice-secret',start_ms:0,end_ms:1000});answer();},500);}
-            if(event.type==='response.create')answer();
+            if(event.type==='response.create'){if(body.session.instructions.includes('prepares a suggestion silently'))setTimeout(answer,800);else answer();}
             if(event.type==='session.close'){gain.gain.value=0;emit({type:'session.output_transcript.delta',delta:' late.',start_ms:1000,end_ms:1200});setTimeout(()=>{emit({type:'session.closed',usage:{seconds:1},reason:'close_requested'});setTimeout(()=>{pc.close();osc.stop();void ac.close();},100);},50);}
           };
         };
@@ -78,13 +80,17 @@ async (page, origin = 'http://127.0.0.1:8788') => {
   const guestContext = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
   const personalReady = (p) => p.waitForFunction(() => window.__agentTest.states.at(-1)?.agents.some(a => a.config.kind === 'personal' && a.owner === window.__agentTest.you));
   const tab = (p, name) => p.getByRole('tab', { name: new RegExp(`^${name}`) });
+  const openConversation = async (p) => {
+    await tab(p, 'Muse').click();
+  };
   try {
     await setup(ownerContext); await setup(guestContext);
     page = await ownerContext.newPage(); const guest = await guestContext.newPage();
     await page.goto(origin);
     await page.getByRole('textbox', { name: 'Display name', exact: true }).fill('Alice');
     await page.getByRole('button', { name: 'Create a room', exact: true }).click();
-    await tab(page, 'Muse').waitFor(); await personalReady(page);
+    await tab(page, 'Muse').waitFor();
+    if (await page.getByRole('tab', { name: /^(Chat|Agents|Assistant)$/ }).count()) throw new Error('Obsolete Chat or Agents tab remains'); await personalReady(page);
     const roomUrl = page.url();
     await guest.goto(roomUrl);
     await guest.getByRole('textbox', { name: 'Display name', exact: true }).fill('Bob');
@@ -92,17 +98,19 @@ async (page, origin = 'http://127.0.0.1:8788') => {
     for (const p of [page, guest]) {
       if (await p.evaluate(() => window.__agentTest.sessions.length)) throw new Error('Live opened automatically on room entry');
     }
-    await tab(guest, 'Muse').click();
-    await guest.locator('.agent-panel--personal').getByRole('button', { name: 'Settings', exact: true }).click();
-    await guest.getByRole('button', { name: 'Enable assistant audio', exact: true }).click();
-    await guest.getByRole('button', { name: 'Close assistant settings', exact: true }).click();
-    await tab(page, 'Muse').click();
+    await openConversation(guest);
+    await guest.getByRole('button', { name: 'Talk to Muse', exact: true }).click();
+    await guest.getByRole('button', { name: 'Stop', exact: true }).click();
+    await openConversation(page);
+    if (await page.getByText('Only you can see this chat', { exact: true }).count()) throw new Error('Removed personal chat subtitle remains');
+    if (await page.getByRole('button', { name: 'Expand panel', exact: true }).count()) throw new Error('Redundant panel expansion remains');
+    if (await page.locator('.agent-personal').getByRole('button', { name: 'Stop', exact: true }).count()) throw new Error('Idle Chat shows Stop');
     await page.getByRole('textbox', { name: 'Message Muse', exact: true }).fill('private-secret');
     await page.locator('.agent-personal').getByRole('button', { name: 'Send', exact: true }).click();
-    await page.getByRole('log', { name: 'Personal assistant transcript' }).getByText(/Private response/).waitFor();
-    await page.getByRole('log', { name: 'Personal assistant transcript' }).getByText(/late/).waitFor();
-    if (await page.evaluate(() => window.__agentTest.sends.some(x => x.channel === 'weave-in' && /private-secret|Private response/.test(JSON.stringify(x.value))))) throw new Error('Private Muse leaked to peers');
-    if (await guest.locator('body').innerText().then(t => /private-secret|Private response/.test(t))) throw new Error('Guest saw private Muse');
+    await page.getByRole('log', { name: 'Muse transcript' }).getByText(/Private response/).waitFor();
+    await page.getByRole('log', { name: 'Muse transcript' }).getByText(/late/).waitFor();
+    if (await page.evaluate(() => window.__agentTest.sends.some(x => x.channel === 'weave-in' && /private-secret|Private response/.test(JSON.stringify(x.value))))) throw new Error('Private Chat leaked to peers');
+    if (await guest.locator('body').innerText().then(t => /private-secret|Private response/.test(t))) throw new Error('Guest saw private Chat');
 
     // Seed a real public record, then exercise the reminder action rather than an internal runtime hook.
     await tab(page, 'Room').click();
@@ -128,32 +136,114 @@ async (page, origin = 'http://127.0.0.1:8788') => {
     if (!ownerMicOpen) throw new Error('Speaking on behalf muted the owner microphone');
     const publicRequest = await page.evaluate(() => window.__agentTest.sends.filter(x => x.channel === 'oai-events' && x.value.type === 'response.item.create').findLast(x => JSON.stringify(x.value).includes('Speak once on behalf')));
     if (!publicRequest || JSON.stringify(publicRequest).includes('private-secret')) throw new Error('Public session reused private context');
-    // A real local microphone signal interrupts approved Muse playback; no automatic resume.
+    // A real local microphone signal interrupts approved Chat playback; no automatic resume.
     await page.evaluate(() => { for (const mic of window.__agentTest.microphones) mic.gain.gain.value = .18; });
     await page.waitForFunction(() => window.__agentTest.states.at(-1)?.floor === null);
     await page.evaluate(() => { for (const mic of window.__agentTest.microphones) mic.gain.gain.value = 0; });
     const sessionsAfterInterrupt = await page.evaluate(() => window.__agentTest.sessions.length);
     await page.waitForTimeout(500);
-    if (await page.evaluate(() => window.__agentTest.sessions.length) !== sessionsAfterInterrupt) throw new Error('Muse resumed without fresh approval');
+    if (await page.evaluate(() => window.__agentTest.sessions.length) !== sessionsAfterInterrupt) throw new Error('Chat resumed without fresh approval');
     await page.getByRole('button', { name: 'Collapse reminder', exact: true }).click();
 
-    // Refresh restores only local Muse context and automatically recreates Muse, without opening Live.
-    await page.reload(); await page.getByRole('button', { name: 'Join', exact: true }).click(); await personalReady(page); await tab(page, 'Muse').click();
-    await page.getByRole('log', { name: 'Personal assistant transcript' }).getByText('private-secret', { exact: true }).waitFor();
-    if (await page.evaluate(() => window.__agentTest.sessions.length)) throw new Error('Restoring Muse opened Live');
+    // Refresh restores only local Chat context and automatically recreates Chat, without opening Live.
+    await page.reload(); await page.getByRole('button', { name: 'Join', exact: true }).click(); await personalReady(page); await openConversation(page);
+    await page.getByRole('log', { name: 'Muse transcript' }).getByText('private-secret', { exact: true }).waitFor();
+    if (await page.evaluate(() => window.__agentTest.sessions.length)) throw new Error('Restoring Chat opened Live');
     // Also test the actual welcome -> agent-state order after a signaling interruption.
     const oldAgentId = await page.evaluate(() => window.__agentTest.states.at(-1).agents.find(a => a.config.kind === 'personal' && a.owner === window.__agentTest.you).id);
-    await page.evaluate(() => window.__agentTest.sockets.find(s => s.readyState === WebSocket.OPEN)?.close());
+    await page.evaluate(() => {
+      const socket = window.__agentTest.sockets.find(s => s.readyState === WebSocket.OPEN && new URL(s.url).pathname.endsWith('/connect'));
+      if (!socket) throw new Error('No open room signaling socket');
+      socket.close();
+    });
     await page.waitForFunction(oldId => window.__agentTest.states.at(-1)?.agents.some(a => a.config.kind === 'personal' && a.owner === window.__agentTest.you && a.id !== oldId), oldAgentId);
-    await page.getByRole('log', { name: 'Personal assistant transcript' }).getByText('private-secret', { exact: true }).waitFor();
+    await page.getByRole('log', { name: 'Muse transcript' }).getByText('private-secret', { exact: true }).waitFor();
 
     await tab(page, 'Room').click(); await tab(guest, 'Room').click();
-    await page.getByRole('button', { name: 'Set up Omni', exact: true }).click();
-    await page.getByRole('button', { name: 'Review settings', exact: true }).click();
-    await page.getByRole('button', { name: 'Create assistant', exact: true }).click();
+    await tab(page, 'Room').click();
+    const add = page.getByRole('button', { name: 'Add Omni', exact: true });
+    const addBox = await add.boundingBox();
+    const titleBox = await page.getByRole('heading', { name: 'Omni', exact: true }).boundingBox();
+    if (!addBox || !titleBox || addBox.x < titleBox.x + titleBox.width || Math.abs((addBox.y + addBox.height / 2) - (titleBox.y + titleBox.height / 2)) > 2) throw new Error('Group add button is not aligned with the title');
+    if (await page.getByText('Not added. One shared agent provides public text suggestions in Room.', { exact: true }).count()) throw new Error('Removed group description remains');
+    await page.screenshot({ path: 'output/playwright/group-add-right.png' });
+    await add.click();
+    await page.getByRole('button', { name: 'Omni settings', exact: true }).waitFor();
+    const addedSettingsBox = await page.getByRole('button', { name: 'Omni settings', exact: true }).boundingBox();
+    if (!addedSettingsBox || addedSettingsBox.width !== addBox.width || addedSettingsBox.height !== addBox.height) throw new Error('Omni add and settings button sizes differ');
+    if (await page.locator('.agent-form').count()) throw new Error('Adding a group opened configuration instead of adding it');
+    await page.waitForFunction(() => window.__agentTest.states.at(-1)?.agents.some(a => a.config.kind === 'group' && a.config.language === 'auto'));
+    await page.getByRole('button', { name: 'Omni settings', exact: true }).click();
+    await page.getByRole('button', { name: 'Back to Room', exact: true }).waitFor();
+    if (await page.getByTestId('chat-panel').isVisible()) throw new Error('Room chat is still visible behind group settings');
+    await page.screenshot({ path: 'output/playwright/group-settings-page.png' });
+    await page.getByRole('textbox', { name: 'Response language', exact: true }).fill('Discard this edit');
+    await page.getByRole('button', { name: 'Back to Room', exact: true }).click();
+    await page.getByTestId('chat-panel').waitFor();
+    await page.getByRole('button', { name: 'Omni settings', exact: true }).click();
+    if (await page.getByRole('textbox', { name: 'Response language', exact: true }).inputValue() !== 'auto') throw new Error('Back saved an unsubmitted edit');
+    await page.getByRole('button', { name: 'Back to Room', exact: true }).click();
+    // The assistant opens directly into chat; settings retain identity and history.
+    await openConversation(page);
+    await page.getByRole('textbox', { name: 'Message Muse', exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Muse settings', exact: true }).click();
+    await page.getByRole('button', { name: 'Back to Muse', exact: true }).waitFor();
+    if (await page.getByRole('tabpanel', { name: 'Private reminders', exact: true }).isVisible()) throw new Error('Reminders still visible in personal settings');
+    await page.screenshot({ path: 'output/playwright/personal-settings-page.png' });
+    await page.getByRole('textbox', { name: 'Response language', exact: true }).fill('繁體中文');
+    await page.getByRole('button', { name: 'Save settings', exact: true }).click();
+    await page.getByRole('button', { name: 'Save settings', exact: true }).waitFor({ state: 'detached' });
+    await page.getByRole('log', { name: 'Muse transcript' }).getByText('private-secret', { exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Muse settings', exact: true }).click();
+    if (await page.getByRole('textbox', { name: 'Response language', exact: true }).inputValue() !== '繁體中文') throw new Error('Personal settings did not persist');
+    await page.getByRole('button', { name: 'Back to Muse', exact: true }).click();
+    if (await page.getByRole('button', { name: /^(Pause reminders|Resume reminders|Hide chat & reminders|Show chat & reminders)$/ }).count()) throw new Error('Removed reminder controls remain');
+    if (await page.getByText('Hiding removes private chat and reminders', { exact: false }).count()) throw new Error('Removed hide explanation remains');
+    await page.screenshot({ path: 'output/playwright/assistant-desktop.png' });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.screenshot({ path: 'output/playwright/assistant-mobile.png' });
+    if (await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth)) throw new Error('Muse mobile document overflow');
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await tab(page, 'Room').click();
+    const groupSection = page.getByRole('region', { name: 'Omni', exact: true });
+    await groupSection.getByRole('button', { name: 'Omni settings', exact: true }).click();
+    await page.getByRole('textbox', { name: 'Response language', exact: true }).fill('English');
+    await page.getByRole('button', { name: 'Save settings', exact: true }).click();
+    await page.getByRole('button', { name: 'Save settings', exact: true }).waitFor({ state: 'detached' });
+    // Another participant can edit the same Omni in Room.
+    const guestGroup = guest.getByRole('region', { name: 'Omni', exact: true });
+    await guestGroup.getByRole('button', { name: 'Omni settings', exact: true }).click();
+    if (await guest.getByRole('textbox', { name: 'Response language', exact: true }).inputValue() !== 'English') throw new Error('Group settings did not synchronize');
+    await guest.getByRole('textbox', { name: 'Response language', exact: true }).fill('日本語');
+    await guest.getByRole('button', { name: 'Save settings', exact: true }).click();
+    await guest.getByRole('button', { name: 'Save settings', exact: true }).waitFor({ state: 'detached' });
+    await groupSection.getByRole('button', { name: 'Omni settings', exact: true }).click();
+    if (await page.getByRole('textbox', { name: 'Response language', exact: true }).inputValue() !== '日本語') throw new Error('Guest group update was not applied to the owner');
+    await page.getByRole('button', { name: 'Back to Room', exact: true }).click();
+    const settingsBox = await groupSection.getByRole('button', { name: 'Omni settings', exact: true }).boundingBox();
+    const removeButton = groupSection.getByRole('button', { name: 'Remove Omni', exact: true });
+    const removeBox = await removeButton.boundingBox();
+    if (!settingsBox || !removeBox || removeBox.x <= settingsBox.x || (await removeButton.innerText()).trim()) throw new Error('Remove is not an icon to the right of settings');
+    await page.screenshot({ path: 'output/playwright/group-room-desktop.png' });
+    await guest.setViewportSize({ width: 390, height: 844 });
+    await guest.screenshot({ path: 'output/playwright/group-room-mobile.png' });
+    if (await guest.evaluate(() => document.documentElement.scrollWidth > window.innerWidth)) throw new Error('Room mobile document overflow');
+    await guest.setViewportSize({ width: 1440, height: 1000 });
     await Promise.all([page, guest].map(p => p.evaluate(() => window.__agentTest.audible = 0)));
-    await page.getByRole('button', { name: 'Review now', exact: true }).click();
+    if (await page.getByRole('button', { name: 'Trigger review', exact: true }).count()) throw new Error('Removed trigger button remains');
+    if (await page.getByText('Listening to public meeting context', { exact: true }).count()) throw new Error('Removed idle text remains');
+    // Inject a room signal to check its receiver; no automatic signal producer exists yet.
+    await page.evaluate(() => {
+      const group = window.__agentTest.states.at(-1).agents.find(a => a.config.kind === 'group');
+      const socket = window.__agentTest.sockets.find(s => s.readyState === WebSocket.OPEN && new URL(s.url).pathname.endsWith('/connect'));
+      socket.send(JSON.stringify({ type: 'agent-signal', id: group.id }));
+    });
+    await page.locator('.agent-panel--group.agent-panel--active').waitFor();
+    await guest.locator('.agent-panel--group.agent-panel--active').waitFor();
+    await page.waitForFunction(() => { const card = document.querySelector('.agent-panel--group.agent-panel--active'); return card && getComputedStyle(card).borderTopColor === 'rgb(233, 180, 76)' && getComputedStyle(card).boxShadow !== 'none'; });
+    await page.screenshot({ path: 'output/playwright/group-room-active.png' });
     await guest.getByTestId('chat-list').getByText('Consider an alternative before deciding.', { exact: true }).waitFor();
+    await page.locator('.agent-panel--group:not(.agent-panel--active)').waitFor();
     const omniMessage = guest.getByTestId('chat-list').locator('li').filter({ hasText: 'Consider an alternative before deciding.' });
     if (!(await omniMessage.innerText()).includes('Omni')) throw new Error('Public suggestion is missing Omni attribution');
     for (const p of [page, guest]) {
@@ -165,7 +255,12 @@ async (page, origin = 'http://127.0.0.1:8788') => {
     if (await guest.getByTestId('chat-list').getByText('Consider an alternative before deciding.', { exact: true }).count() !== 1) throw new Error('Omni suggestion duplicated on recovery');
     await guest.setViewportSize({ width: 390, height: 844 });
     if (await guest.evaluate(() => document.documentElement.scrollWidth > window.innerWidth)) throw new Error('Mobile document overflow');
-    return { clients: 2, automaticChat: true, noLiveOnJoin: true, privateIsolation: true, privateRecovery: true, signalingRecovery: true, oneShotPublicSpeech: true, ownerAttribution: true, ownerMicOpen, omniRoomText: true, omniSilent: true, omniReplayDedup: true, mobileOverflow: false, provider: 'simulated GPT-Live WebRTC (no real provider call)' };
+    await tab(page, 'Room').click();
+    await groupSection.getByRole('button', { name: 'Remove Omni', exact: true }).click();
+    await page.getByRole('button', { name: 'Add Omni', exact: true }).waitFor();
+    await tab(guest, 'Room').click();
+    await guest.getByRole('button', { name: 'Add Omni', exact: true }).waitFor();
+    return { oneClickGroupAdd: true, rightAlignedAdd: true, fullPanelSettings: true, backWithoutSaving: true, reminderControlsRemoved: true, groupRemoval: true, clients: 2, directMuseTab: true, groupInRoom: true, allMembersConfigureGroup: true, groupBorderGlow: true, injectedSystemSignal: true, automaticSystemSignal: false, editSettings: true, automaticChat: true, noLiveOnJoin: true, privateIsolation: true, privateRecovery: true, signalingRecovery: true, oneShotPublicSpeech: true, ownerAttribution: true, ownerMicOpen, omniRoomText: true, omniSilent: true, omniReplayDedup: true, mobileOverflow: false, provider: 'simulated GPT-Live WebRTC (no real provider call)', relay: 'mocked provisioning; local peer connectivity' };
   } finally {
     await Promise.all([ownerContext, guestContext].map(context => context.close()));
   }
