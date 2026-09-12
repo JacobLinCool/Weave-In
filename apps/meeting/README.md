@@ -22,6 +22,8 @@ pnpm deploy:dry-run
 
 ## The meeting
 
+- Invite links can reopen a room: if no host is connected, the next person joining becomes host under the same room code. A fully empty room starts a new meeting timer; if guests remain, the existing timer is preserved. Joining an active hosted room still makes you a guest. Reopening does not restore previous chat or captions.
+
 - The header shows time since the room was created (`mm:ss`, then `h:mm:ss`). The signaling server supplies the shared start time and its current time, so late joiners see the room's duration without depending on their device clock matching the server. Socket attachments retain the timestamp through Durable Object hibernation. A new room starts a new clock.
 - Up to eight participants in a full-mesh WebRTC room with public STUN only.
 - Camera, microphone, and screen sharing; tracks are added and removed with perfect negotiation.
