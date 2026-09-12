@@ -73,7 +73,7 @@ export function AgentPanel({ runtime, isHost, mode = 'personal' }: { runtime: Ag
         const node = event.currentTarget;
         followLatest.current = node.scrollHeight - node.scrollTop - node.clientHeight < 48;
       }}>
-        {view.lines.length === 0 && <div className="agent-empty"><h3>A little space to think.</h3><p>Explore an idea, question an assumption, or find the words you want to say.</p></div>}
+        {view.lines.length === 0 && <div className="agent-empty"><h3>A little space to think.</h3><p>Explore an idea or a shared file. Try “Draw our workflow on the whiteboard.”</p></div>}
         {view.lines.map((line) => <article key={line.id} className={`agent-line agent-line--${line.role}`}>
           <header><strong>{line.role === 'user' ? 'You' : line.name}</strong>{line.audience === 'public' && <span>Shared with the room</span>}{line.playback === 'interrupted' && <span>Interrupted</span>}</header>
           {line.role === 'assistant' ? <Markdown text={line.text} /> : <p>{line.text}</p>}
@@ -137,7 +137,8 @@ function AgentForm({ initialConfig, editing = false, onSave, onCancel }: { initi
     <fieldset disabled={busy}><legend>Tools and output</legend>
       <label className="agent-check"><input type="checkbox" checked={config.screen} onChange={(event) => set('screen', event.target.checked)} /> Allow viewing the shared screen</label>
       <label className="agent-check"><input type="checkbox" checked={config.files} onChange={(event) => set('files', event.target.checked)} /> Allow reading shared files and images</label>
-      {config.kind === 'personal' && <p className="agent-note">Muse can read the shared whiteboard during a private request. It can edit the board or post in Room chat when you ask. Shared files and images are read as needed; unavailable files cannot be inspected.</p>}
+      {config.kind === 'personal' && <label className="agent-check"><input type="checkbox" checked={config.roomMessages === true} onChange={(event) => set('roomMessages', event.target.checked)} /> Allow posting to Room (visible to everyone)</label>}
+      {config.kind === 'personal' && <p className="agent-note">Muse can read the shared whiteboard during a private request and edit it when you ask. Room posting is disabled unless you allow it above, then request a public message. Shared files and images are read as needed; unavailable files cannot be inspected.</p>}
       <p>{config.kind === 'personal' ? 'Spoken replies stay private. Speak for me approves one public spoken turn about a selected reminder.' : 'Public text suggestions only. Omni does not speak aloud.'}</p>
       <p className="agent-note">Voice and text are recorded in the transcript for the selected audience. Instructions cannot override permissions.</p>
     </fieldset>
@@ -146,5 +147,5 @@ function AgentForm({ initialConfig, editing = false, onSave, onCancel }: { initi
   </form>;
 }
 function ConfigSummary({ config }: { config: AgentConfig }): ReactNode {
-  return <dl className="agent-summary"><dt>Type</dt><dd>{config.kind}</dd><dt>Name</dt><dd>{config.name}</dd><dt>Language</dt><dd>{config.language}</dd><dt>Meeting sources</dt><dd>{config.source}</dd><dt>Public chat</dt><dd>{config.chat ? 'Included' : 'Excluded'}</dd><dt>System signals</dt><dd>{config.system ? 'Included' : 'Excluded'}</dd><dt>Shared screen</dt><dd>{config.screen ? 'Allowed' : 'Not allowed'}</dd><dt>Shared files and images</dt><dd>{config.files ? 'Allowed' : 'Not allowed'}</dd>{config.kind === 'personal' && <><dt>Shared whiteboard</dt><dd>Read during private requests; edit when asked</dd><dt>Room messages</dt><dd>Post when asked</dd></>}<dt>Audience</dt><dd>{config.audience}</dd></dl>;
+  return <dl className="agent-summary"><dt>Type</dt><dd>{config.kind}</dd><dt>Name</dt><dd>{config.name}</dd><dt>Language</dt><dd>{config.language}</dd><dt>Meeting sources</dt><dd>{config.source}</dd><dt>Public chat</dt><dd>{config.chat ? 'Included' : 'Excluded'}</dd><dt>System signals</dt><dd>{config.system ? 'Included' : 'Excluded'}</dd><dt>Shared screen</dt><dd>{config.screen ? 'Allowed' : 'Not allowed'}</dd><dt>Shared files and images</dt><dd>{config.files ? 'Allowed' : 'Not allowed'}</dd>{config.kind === 'personal' && <><dt>Shared whiteboard</dt><dd>Read during private requests; edit when asked</dd><dt>Room messages</dt><dd>{config.roomMessages ? 'Allowed when you request a public message' : 'Disabled — private replies only'}</dd></>}<dt>Audience</dt><dd>{config.audience}</dd></dl>;
 }
