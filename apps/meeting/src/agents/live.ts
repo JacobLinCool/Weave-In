@@ -20,7 +20,7 @@ export interface LiveCallbacks {
   closed(): void;
 }
 export function liveSettings(agent: RoomAgent, tools: ToolDefinition[], preparing: boolean): Record<string, unknown> {
-  const readAloud = agent.config.kind === 'personal' && agent.config.audience === 'public';
+  const readAloud = !preparing && agent.config.audience === 'public';
   const delivery = readAloud ? 'Read the entire backend result aloud faithfully, without summarizing or adding words.' : 'Be concise.';
   const language = agent.config.language === 'auto' ? 'Follow the language of the conversation.' : `Answer in ${agent.config.language}.`;
   const meetingActions = readAloud ? 'This single approved message is spoken publicly to everyone. Room text posting is disabled.' : [tools.some(tool => tool.name === 'edit_whiteboard')

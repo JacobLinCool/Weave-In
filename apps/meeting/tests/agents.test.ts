@@ -89,7 +89,10 @@ describe('agent creation, approval and recovery', () => {
   });
   it('requires current raised hand, coalesces signals and ignores duplicate approval', () => {
     const { state, host, guest, uuid, agent } = fixture();
-    const approval = () => applyAgentCommand(state, host, { type: 'agent-publish', id: agent.id, epoch: agent.epoch, request: agent.request }, 1000, uuid);
+    const approval = () => {
+      applyAgentCommand(state, guest, { type: 'agent-approve', id: agent.id, epoch: agent.epoch, request: agent.request }, 1000, uuid);
+      applyAgentCommand(state, host, { type: 'agent-publish', id: agent.id, epoch: agent.epoch, request: agent.request }, 1000, uuid);
+    };
     approval(); expect(state.floor).toBeNull();
     applyAgentCommand(state, host, { type: 'agent-review', id: agent.id, epoch: agent.epoch, request: agent.request }, 1000, uuid);
     applyAgentCommand(state, guest, { type: 'agent-review', id: agent.id, epoch: agent.epoch, request: agent.request }, 1000, uuid);
@@ -115,6 +118,7 @@ describe('agent creation, approval and recovery', () => {
     const { state, host, guest, uuid, agent } = fixture();
     applyAgentCommand(state, host, { type: 'agent-review', id: agent.id, epoch: agent.epoch, request: agent.request }, 1000, uuid);
     applyAgentCommand(state, host, { type: 'agent-raised', id: agent.id, epoch: 1, request: 1, signal }, 1000, uuid);
+    applyAgentCommand(state, guest, { type: 'agent-approve', id: agent.id, epoch: 1, request: 1 }, 1000, uuid);
     applyAgentCommand(state, host, { type: 'agent-publish', id: agent.id, epoch: 1, request: 1 }, 1000, uuid);
     const floor = state.floor!;
     reconcileAgents(state, [guest], 1001, uuid);
@@ -141,7 +145,7 @@ describe('agent creation, approval and recovery', () => {
   });
   it('rejects removed manual commands and malformed review evidence', () => {
     expect(parseAgentCommand({ type: 'agent-signal', id: 'group' })).toBeNull();
-    expect(parseAgentCommand({ type: 'agent-approve', id: 'group', epoch: 1, request: 1 })).toBeNull();
+    expect(parseAgentCommand({ type: 'agent-approve', id: 'group', epoch: 1, request: 1 })?.type).toBe('agent-approve');
     expect(parseAgentCommand({ type: 'agent-raised', id: 'group', epoch: 1, request: 1, signal: { kind: 'manual', evidence: [] } })).toBeNull();
   });
 });

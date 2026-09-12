@@ -65,7 +65,11 @@ export function AgentPanel({ runtime, isHost, mode = 'personal' }: { runtime: Ag
       }}><Plus size={18} aria-hidden="true" /></button>}</header>
       {group?.phase === 'idle' && <p role="status">{view.groupStatus}</p>}
       {group && group.phase !== 'idle' && <>
-        <p role="status">{({ preparing: 'Reviewing public discussion', raised: 'Waiting for a quiet moment', speaking: 'Sharing a text suggestion', waiting: 'Waiting for an available device' })[group.phase]}</p>
+        <p role="status">{({ preparing: 'Reviewing public discussion', raised: view.room.approval ? 'Approved · waiting for a quiet moment' : 'Omni has something to say · waiting for your approval', speaking: 'Speaking to everyone', waiting: 'Waiting for an available device' })[group.phase]}</p>
+        {group.phase === 'raised' && !view.room.approval && <>
+          <button onClick={() => runtime.approveGroup()}><Volume2 size={16} /> Allow Omni to speak</button>
+          <p className="agent-note">Or say “Omni, go ahead” / “Omni，請發言” with captions enabled.</p>
+        </>}
         <button onClick={() => runtime.command({ type: 'agent-cancel', id: group.id })}><Square size={14} /> Stop</button>
       </>}
     </section>}
@@ -148,7 +152,7 @@ function AgentForm({ initialConfig, editing = false, onSave, onCancel }: { initi
       <label className="agent-check"><input type="checkbox" checked={config.files} onChange={(event) => set('files', event.target.checked)} /> Allow reading shared files and images</label>
       {config.kind === 'personal' && <label className="agent-check"><input type="checkbox" checked={config.roomMessages === true} onChange={(event) => set('roomMessages', event.target.checked)} /> Allow posting to Room (visible to everyone)</label>}
       {config.kind === 'personal' && <p className="agent-note">Muse can read the shared whiteboard during a private request and edit it when you ask. Room posting is disabled unless you allow it above, then request a public message. Shared files and images are read as needed; unavailable files cannot be inspected.</p>}
-      <p>{config.kind === 'personal' ? 'Replies stay private until you choose Send on a completed Muse message. Send reads only that message aloud to everyone.' : 'Public text suggestions only. Omni does not speak aloud.'}</p>
+      <p>{config.kind === 'personal' ? 'Replies stay private until you choose Send on a completed Muse message. Send reads only that message aloud to everyone.' : 'Omni prepares silently and speaks to everyone only after you approve by button or voice.'}</p>
       <p className="agent-note">Voice and text are recorded in the transcript for the selected audience. Instructions cannot override permissions.</p>
     </fieldset>
     {review && <div className="agent-review"><h4>Review before creating</h4><ConfigSummary config={parseAgentConfig(config)!} /></div>}

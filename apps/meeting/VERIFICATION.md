@@ -161,3 +161,9 @@ These are behavioral samples, not a general detection-accuracy estimate. Human m
 Local evidence: `output/playwright/integrated-group-check.log`, `integrated-agents-browser.log`, and `integrated-real-group.log`. The harness supports `{ groupOnly: true, scenario, realProvider: true }` to repeat each real-provider case.
 
 Final integration includes main `1bbd3bc` (Muse selected-reply reading and generic landing copy). `pnpm check` passed with 77 transcription + 423 meeting tests (500 total), including builds and Worker dry-run. The full two-browser harness passed again, including selected Muse reply playback and automatic silent Omni publication. This integration retains the Group policy and real-provider samples above. Evidence: `output/playwright/final-integrated-check.log` and `final-integrated-browser.log`.
+
+## Approval correction (2026-09-12)
+
+The user clarified that only manual review triggering is removed. This supersedes the automatic text-publication behavior above: Omni now prepares silently, waits for button or explicit local finalized voice approval, then reads only its prepared question publicly. Cancel, expiry, changed discussion and runner replacement require new approval. Public output uses the existing audio/transcript transport.
+
+Before the user requested immediate push/merge without further verification, the meeting suite passed (426 tests). The revised browser harness was updated but has not been run; the earlier real-provider samples establish scenario preparation only, not this corrected approval-to-audio flow. No additional verification was performed after the final freshness/clock fixes.

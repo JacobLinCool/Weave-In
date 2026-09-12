@@ -46,19 +46,20 @@ export interface AgentRoomState {
   /** Persisted so removing Omni is respected for the rest of this room. */
   groupInitialized?: boolean;
   floor: Floor | null;
+  approval: { id: string; epoch: number; request: number } | null;
   grants: Floor[];
   queue: string[];
   signal: ({ id: number; at: number; by: string } & GroupEvidence) | null;
   automation: { nextCheckAt: number; nextPublishAt: number; published: number; events: string[] };
 }
-export const emptyAgentRoom = (): AgentRoomState => ({ agents: [], floor: null, grants: [], queue: [], signal: null, automation: { nextCheckAt: 0, nextPublishAt: 0, published: 0, events: [] } });
+export const emptyAgentRoom = (): AgentRoomState => ({ agents: [], floor: null, approval: null, grants: [], queue: [], signal: null, automation: { nextCheckAt: 0, nextPublishAt: 0, published: 0, events: [] } });
 export type AgentCommand =
   | { type: 'agent-ready'; ready: boolean }
   | { type: 'agent-heartbeat' }
   | { type: 'agent-create'; config: AgentConfig }
   | { type: 'agent-configure'; id: string; config: AgentConfig }
   | { type: 'agent-remove' | 'agent-floor' | 'agent-cancel'; id: string }
-  | { type: 'agent-review' | 'agent-publish' | 'agent-failed'; id: string; epoch: number; request: number }
+  | { type: 'agent-review' | 'agent-approve' | 'agent-publish' | 'agent-failed'; id: string; epoch: number; request: number }
   | { type: 'agent-raised'; id: string; epoch: number; request: number; signal: GroupEvidence }
   | { type: 'agent-finish'; floorId: string }
   | { type: 'agent-published'; floorId: string };
@@ -112,7 +113,7 @@ export function parseAgentCommand(value: unknown): AgentCommand | null {
       return signal && identifier(value.id) && Number.isSafeInteger(value.epoch) && Number(value.epoch) > 0 && Number.isSafeInteger(value.request) && Number(value.request) >= 0
         ? { type: value.type, id: value.id, epoch: Number(value.epoch), request: Number(value.request), signal } : null;
     }
-    case 'agent-review': case 'agent-publish': case 'agent-failed':
+    case 'agent-review': case 'agent-approve': case 'agent-publish': case 'agent-failed':
       return identifier(value.id) && Number.isSafeInteger(value.epoch) && Number(value.epoch) > 0 && Number.isSafeInteger(value.request) && Number(value.request) >= 0
         ? { type: value.type, id: value.id, epoch: Number(value.epoch), request: Number(value.request) } : null;
     case 'agent-finish': case 'agent-published': return identifier(value.floorId) ? { type: value.type, floorId: value.floorId } : null;

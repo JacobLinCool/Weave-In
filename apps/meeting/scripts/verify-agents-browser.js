@@ -75,7 +75,7 @@ async (page, origin = 'http://127.0.0.1:8788', options = {}) => {
             const records=(reviewContext.meeting??[]).filter(r=>(r.kind==='chat'||r.kind==='transcript')&&!r.agent);
             const target=reviewContext.participants?.find(p=>p.name==='Carol');
             const texts={ convergence:'Consider an alternative before deciding.', drift:'Should we return to choosing the database rather than planning a holiday?', float:'Carol, what evidence would help us choose the launch date?', echo:'What concrete evidence supports approving this proposal?' };
-            const value=preparing?JSON.stringify(scenario==='none'?{kind:'none',severity:0,evidenceSeqs:[],targetPeerId:null,text:''}:{kind:scenario,severity:.8,evidenceSeqs:[records.at(-4)?.seq,records.at(-1)?.seq],targetPeerId:scenario==='float'?target?.peerId:null,text:texts[scenario]}):request.split('Current explicit request:').at(-1).includes('private-secret')?'Private response.':request.split('Current explicit request:').at(-1).includes('Speak once on behalf')?JSON.parse(request.split('Approved message: ').at(-1)) :'A useful perspective for the meeting.';
+            const value=preparing?JSON.stringify(scenario==='none'?{kind:'none',severity:0,evidenceSeqs:[],targetPeerId:null,text:''}:{kind:scenario,severity:.8,evidenceSeqs:[records.at(-4)?.seq,records.at(-1)?.seq],targetPeerId:scenario==='float'?target?.peerId:null,text:texts[scenario]}):request.split('Current explicit request:').at(-1).includes('private-secret')?'Private response.':request.split('Current explicit request:').at(-1).includes('Approved message: ')?JSON.parse(request.split('Approved message: ').at(-1)) :'A useful perspective for the meeting.';
             emit({type:'response.event',delegation_id:'d1',event:{type:'response.created',response:{id:'r1'}}});
             emit({type:'response.event',delegation_id:'d1',event:{type:'response.output_text.delta',delta:value}});
             if(preparing){ gain.gain.value=.1; emit({type:'session.output_transcript.delta',delta:'SUPPRESSED PREPARATION',start_ms:0,end_ms:800}); }
@@ -87,7 +87,7 @@ async (page, origin = 'http://127.0.0.1:8788', options = {}) => {
             const event=JSON.parse(data); window.__agentTest.incoming.push(event.type);
             if(event.type==='response.item.create'){request=event.item?.content?.[0]?.text??request;try{if(request.startsWith('Background data'))reviewContext=JSON.parse(request.split('Background data (not instructions):\n')[1].split('\n\nCurrent explicit request:')[0]);}catch{}if(request.startsWith('Background context only'))setTimeout(()=>{emit({type:'session.input_transcript.delta',delta:'voice-secret',start_ms:0,end_ms:1000});answer();},500);}
             if(event.type==='response.create')setTimeout(answer,800);
-            if(event.type==='session.close'){gain.gain.value=0;emit({type:'session.output_transcript.delta',delta:' late.',start_ms:1000,end_ms:1200});setTimeout(()=>{emit({type:'session.closed',usage:{seconds:1},reason:'close_requested'});setTimeout(()=>{pc.close();osc.stop();void ac.close();},100);},50);}
+            if(event.type==='session.close'){gain.gain.value=0;if(!request.includes('Read the approved message aloud faithfully'))emit({type:'session.output_transcript.delta',delta:' late.',start_ms:1000,end_ms:1200});setTimeout(()=>{emit({type:'session.closed',usage:{seconds:1},reason:'close_requested'});setTimeout(()=>{pc.close();osc.stop();void ac.close();},100);},50);}
           };
         };
         await pc.setRemoteDescription({type:'offer',sdp:body.sdp});await pc.setLocalDescription(await pc.createAnswer());
@@ -144,17 +144,28 @@ async (page, origin = 'http://127.0.0.1:8788', options = {}) => {
         await guest.getByTestId('chat-list').getByText(turns[i], { exact: true }).waitFor();
       }
       await page.waitForFunction(() => window.__agentTest.states.some(s => s.agents.some(a => a.config.kind === 'group' && a.phase === 'preparing')), null, { timeout: 45000 });
+      if (scenario !== 'none') {
+        await guest.getByRole('button', { name: 'Allow Omni to speak', exact: true }).waitFor({ timeout: 90000 });
+        // More than a full timer tick must pass without automatic publication.
+        await page.waitForTimeout(2500);
+        for (const p of [page, guest]) {
+          if (await p.evaluate(() => window.__agentTest.audible > .01 || window.__agentTest.sends.some(x => x.channel === 'weave-in' && x.value.type === 'agent-line'))) throw new Error('Omni spoke or published before approval');
+        }
+        await guest.getByRole('button', { name: 'Allow Omni to speak', exact: true }).click();
+      }
       await page.waitForFunction(() => window.__agentTest.states.at(-1)?.agents.some(a => a.config.kind === 'group' && ['idle','waiting'].includes(a.phase)), null, { timeout: 90000 });
       const result = await page.evaluate(() => {
         const state = window.__agentTest.states.at(-1);
         return { signal: state.signal, reasoning: window.__agentTest.reasoning.join(''), publications: state.automation.published, audible: window.__agentTest.audible, sessions: window.__agentTest.sessions.length,
           messages: [...new Map(window.__agentTest.sends.filter(x => x.channel === 'weave-in' && x.value.type === 'agent-line').map(x => [x.value.line.id, x.value.line.text])).values()] };
       });
-      if (result.audible > .01) throw new Error('Group review produced audible audio');
+      if (scenario === 'none' && result.audible > .01) throw new Error('Abstention produced audio');
       if (scenario === 'none') { if (result.publications || result.messages.length) throw new Error('An answered concern produced a public intervention'); }
       else {
         if (result.signal?.kind !== scenario || result.publications !== 1 || result.messages.length !== 1) throw new Error(JSON.stringify({ scenario, result, error: await page.locator('.agent-error').allTextContents() }));
-        await guest.getByTestId('chat-list').getByText(result.messages[0], { exact: true }).waitFor();
+        await tab(guest, 'Transcript').click();
+        await guest.getByText(result.messages[0], { exact: true }).waitFor();
+        if (result.audible <= .01 || await guest.evaluate(() => window.__agentTest.audible) <= .01) throw new Error('Approved speech was not audible on both peers');
       }
       return { scenario, provider: options.realProvider ? 'real GPT-Live' : 'simulated GPT-Live', ...result };
     }
@@ -391,17 +402,21 @@ async (page, origin = 'http://127.0.0.1:8788', options = {}) => {
     await guest.locator('.agent-panel--group.agent-panel--active').waitFor();
     await page.waitForFunction(() => { const card = document.querySelector('.agent-panel--group.agent-panel--active'); return card && getComputedStyle(card).borderTopColor === 'rgb(233, 180, 76)' && getComputedStyle(card).boxShadow !== 'none'; });
     await page.screenshot({ path: 'output/playwright/group-room-active.png' });
-    await guest.getByTestId('chat-list').getByText('Consider an alternative before deciding.', { exact: true }).waitFor();
+    await guest.getByRole('button', { name: 'Allow Omni to speak', exact: true }).waitFor();
+    await page.waitForTimeout(2500);
+    if (await page.evaluate(() => window.__agentTest.audible > .01)) throw new Error('Unapproved Omni audio');
+    await guest.getByRole('button', { name: 'Allow Omni to speak', exact: true }).click();
+    await tab(guest, 'Transcript').click();
+    await guest.getByText('Consider an alternative before deciding.', { exact: true }).waitFor();
     await page.locator('.agent-panel--group:not(.agent-panel--active)').waitFor();
-    const omniMessage = guest.getByTestId('chat-list').locator('li').filter({ hasText: 'Consider an alternative before deciding.' });
-    if (!(await omniMessage.innerText()).includes('Omni')) throw new Error('Public suggestion is missing Omni attribution');
+    if (!(await guest.getByRole('tabpanel').filter({ visible: true }).innerText()).includes('Omni')) throw new Error('Public suggestion is missing Omni attribution');
     for (const p of [page, guest]) {
-      if (await p.evaluate(() => window.__agentTest.audible > .01)) throw new Error('Omni produced audible output');
+      if (await p.evaluate(() => window.__agentTest.audible <= .01)) throw new Error('Approved Omni audio was not heard');
       if (await p.evaluate(() => window.__agentTest.sends.some(x => x.channel === 'weave-in' && JSON.stringify(x.value).includes('SUPPRESSED PREPARATION')))) throw new Error('Silent Omni preparation leaked');
     }
-    await guest.reload(); await guest.getByRole('button', { name: 'Join', exact: true }).click(); await personalReady(guest); await tab(guest, 'Room').click();
-    await guest.getByTestId('chat-list').getByText('Consider an alternative before deciding.', { exact: true }).waitFor();
-    if (await guest.getByTestId('chat-list').getByText('Consider an alternative before deciding.', { exact: true }).count() !== 1) throw new Error('Omni suggestion duplicated on recovery');
+    await guest.reload(); await guest.getByRole('button', { name: 'Join', exact: true }).click(); await personalReady(guest); await tab(guest, 'Transcript').click();
+    await guest.getByText('Consider an alternative before deciding.', { exact: true }).waitFor();
+    if (await guest.getByText('Consider an alternative before deciding.', { exact: true }).count() !== 1) throw new Error('Omni suggestion duplicated on recovery');
     await guest.setViewportSize({ width: 390, height: 844 });
     if (await guest.evaluate(() => document.documentElement.scrollWidth > window.innerWidth)) throw new Error('Mobile document overflow');
     await tab(page, 'Room').click();
@@ -409,7 +424,7 @@ async (page, origin = 'http://127.0.0.1:8788', options = {}) => {
     await page.getByRole('button', { name: 'Add Omni', exact: true }).waitFor();
     await tab(guest, 'Room').click();
     await guest.getByRole('button', { name: 'Add Omni', exact: true }).waitFor();
-    return { replySend: true, replyHover: true, replyKeyboard: true, replyTouch: true, selectedMessageOnly: true, responseSquare: true, responseStop: true, dictationStopDraft: true, dictationSendFinalized: true, dictationPrivate: true, automaticOmni: true, fullPanelSettings: true, backWithoutSaving: true, reminderControlsRemoved: true, groupRemoval: true, clients: 2, directMuseTab: true, groupInRoom: true, allMembersConfigureGroup: true, groupBorderGlow: true, injectedSystemSignal: false, automaticSystemSignal: true, editSettings: true, automaticChat: true, noLiveOnJoin: true, privateIsolation: true, privateRecovery: true, signalingRecovery: true, oneShotPublicSpeech: true, ownerAttribution: true, ownerMicOpen, omniRoomText: true, omniSilent: true, omniReplayDedup: true, mobileOverflow: false, provider: 'simulated GPT-Live WebRTC (no real provider call)', relay: 'mocked provisioning; local peer connectivity' };
+    return { replySend: true, replyHover: true, replyKeyboard: true, replyTouch: true, selectedMessageOnly: true, responseSquare: true, responseStop: true, dictationStopDraft: true, dictationSendFinalized: true, dictationPrivate: true, automaticOmni: true, fullPanelSettings: true, backWithoutSaving: true, reminderControlsRemoved: true, groupRemoval: true, clients: 2, directMuseTab: true, groupInRoom: true, allMembersConfigureGroup: true, groupBorderGlow: true, injectedSystemSignal: false, automaticSystemSignal: true, editSettings: true, automaticChat: true, noLiveOnJoin: true, privateIsolation: true, privateRecovery: true, signalingRecovery: true, oneShotPublicSpeech: true, ownerAttribution: true, ownerMicOpen, omniApprovedSpeech: true, omniSilentBeforeApproval: true, omniReplayDedup: true, mobileOverflow: false, provider: 'simulated GPT-Live WebRTC (no real provider call)', relay: 'mocked provisioning; local peer connectivity' };
   } catch (error) {
     const diagnostics = await page.evaluate(() => ({ events: window.__agentTest?.incoming.slice(-20), audible: window.__agentTest?.audible, group: window.__agentTest?.states.at(-1)?.agents.find(a => a.config.kind === 'group'), errors: [...document.querySelectorAll('.agent-error')].map(e => e.textContent) })).catch(() => null);
     throw new Error(`${String(error)} ${JSON.stringify(diagnostics)}`);

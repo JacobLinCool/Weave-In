@@ -6,6 +6,10 @@ export type GroupKind = keyof typeof GROUP_ACTIONS;
 export const GROUP_CHECK_MS = 30_000;
 export const GROUP_COOLDOWN_MS = 120_000;
 export const GROUP_QUIET_MS = 1_500;
+export const GROUP_DRAFT_MS = 120_000;
+export function isGroupApproval(text: string): boolean {
+  return /^(?:Omni[，,。.\s]*(?:請發言|请发言|go ahead)|團隊助理[，,。.\s]*請發言)[。.!！]?$/iu.test(text.trim());
+}
 export const GROUP_MAX_INTERVENTIONS = 5;
 export const GROUP_MIN_RECORDS = 4;
 export interface GroupEvidence { kind: GroupKind; evidence: string[] }
@@ -13,7 +17,7 @@ export interface GroupDecision { kind: GroupKind; severity: number; evidenceSeqs
 export type DiscussionRecord = Extract<MeetingLogEntry, { kind: 'transcript' | 'chat' }>;
 
 export function isDiscussion(entry: MeetingLogEntry): entry is DiscussionRecord {
-  return (entry.kind === 'transcript' || entry.kind === 'chat') && !entry.agent && !!entry.text.trim() && Number.isFinite(Date.parse(entry.at));
+  return (entry.kind === 'transcript' || entry.kind === 'chat') && !entry.agent && !(entry.kind === 'transcript' && isGroupApproval(entry.text)) && !!entry.text.trim() && Number.isFinite(Date.parse(entry.at));
 }
 export const discussionPeer = (entry: DiscussionRecord): string => entry.kind === 'transcript' ? entry.speaker.peerId : entry.sender.peerId;
 export async function evidenceKey(entry: DiscussionRecord): Promise<string> {

@@ -542,23 +542,54 @@ it('creates Muse on an explicit reminder action and waits for room acknowledgeme
   expect(calls.requests).toHaveBeenLastCalledWith(expect.any(String), expect.stringContaining('Unresolved concern'));
 });
 
-it('publishes Omni text once without audible output or a voice approval', async () => {
+it.each(['button', 'voice'] as const)('keeps Omni silent until %s approval, then speaks only the prepared message once', async mode => {
   vi.useFakeTimers();
-  const { runtime, sendAgent, publicLine, log } = setup(); seedDiscussion(log); await runtime.enable();
+  const { runtime, sendAgent, publicLine, log, broadcast } = setup(); seedDiscussion(log); await runtime.enable();
   const state = structuredClone(runtime.snapshot().room);
   const group: RoomAgent = { ...state.agents[0]!, id: 'group', config: { ...state.agents[0]!.config, kind: 'group', name: 'Omni' }, phase: 'preparing', request: 1 };
   state.agents.push(group); runtime.update(state, Date.now()); await Promise.resolve();
+  runtime.approveGroup();
+  expect(sendAgent.mock.calls.some(([c]) => c.type === 'agent-approve')).toBe(false);
   calls.lives.at(-1)!.stream({} as MediaStream);
   expect(calls.attach).not.toHaveBeenCalled();
-  await calls.lives.at(-1)!.prepared(JSON.stringify({ kind: 'convergence', severity: 0.8, evidenceSeqs: [1, 4], targetPeerId: null, text: 'A public text suggestion.' }));
-  await vi.advanceTimersByTimeAsync(2000);
-  group.phase = 'raised'; runtime.update(structuredClone(state), Date.now());
-  expect(sendAgent).toHaveBeenCalledWith({ type: 'agent-publish', id: 'group', epoch: 1, request: 1 });
-  group.phase = 'speaking'; state.floor = { id: 'text-floor', agentId: 'group', runner: 'owner', epoch: 1, startedAt: Date.now(), expiresAt: Date.now() + 60_000 };
-  runtime.update(structuredClone(state), Date.now()); runtime.update(structuredClone(state), Date.now());
-  expect(publicLine).toHaveBeenCalledTimes(1);
-  expect(publicLine).toHaveBeenCalledWith(expect.objectContaining({ name: 'Omni', text: 'A public text suggestion.', input: 'text', playback: 'not-played' }), 'owner');
+  await calls.lives.at(-1)!.prepared(JSON.stringify({ kind: 'convergence', severity: 0.8, evidenceSeqs: [1, 4], targetPeerId: null, text: 'Can we verify the launch risk first?' }));
+  group.phase = 'raised';
+  state.signal = { id: 1, at: Date.now(), by: 'owner', kind: 'convergence', evidence: ['a', 'b'] };
+  runtime.update(structuredClone(state), Date.now());
+  await vi.advanceTimersByTimeAsync(4000);
+  expect(publicLine).not.toHaveBeenCalled();
   expect(calls.lives).toHaveLength(1);
+  expect(sendAgent.mock.calls.some(([c]) => c.type === 'agent-publish')).toBe(false);
+  runtime.humanSpeech('Someone said “Omni, go ahead”', new Date().toISOString());
+  runtime.humanSpeech('Omni, go ahead', new Date(state.signal.at - 1).toISOString());
+  expect(sendAgent.mock.calls.some(([c]) => c.type === 'agent-approve')).toBe(false);
+  if (mode === 'voice') {
+    log.append({ kind: 'transcript', at: new Date().toISOString(), speaker: { peerId: 'owner', name: 'Owner' }, text: 'Omni，請發言。' });
+    runtime.humanSpeech('Omni，請發言。', new Date().toISOString());
+  } else runtime.approveGroup();
+  expect(sendAgent).toHaveBeenCalledWith({ type: 'agent-approve', id: 'group', epoch: 1, request: 1 });
+  state.approval = { id: 'group', epoch: 1, request: 1 };
+  runtime.noteHumanActivity(); runtime.update(structuredClone(state), Date.now());
+  expect(sendAgent.mock.calls.some(([c]) => c.type === 'agent-publish')).toBe(false);
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(sendAgent).toHaveBeenCalledWith({ type: 'agent-publish', id: 'group', epoch: 1, request: 1 });
+  group.phase = 'speaking'; state.floor = { id: 'group-floor', agentId: 'group', runner: 'owner', epoch: 1, startedAt: Date.now(), expiresAt: Date.now() + 60_000 };
+  runtime.update(structuredClone(state), Date.now()); runtime.update(structuredClone(state), Date.now()); await Promise.resolve();
+  expect(calls.lives).toHaveLength(2);
+  expect(calls.requests).toHaveBeenLastCalledWith('{}', expect.stringContaining('Can we verify the launch risk first?'));
+  expect(calls.tools.at(-1)).toEqual([]);
+  const speech = calls.lives.at(-1)!;
+  speech.stream({} as MediaStream);
+  expect(calls.attach).toHaveBeenCalledTimes(1);
+  expect(broadcast).toHaveBeenCalledWith(expect.objectContaining({ type: 'agent-stream', agentId: 'group' }));
+  speech.transcript('assistant', 'Can we verify the launch risk first?', 0, 1000);
+  expect(publicLine).toHaveBeenCalledWith(expect.objectContaining({ name: 'Omni', text: 'Can we verify the launch risk first?', input: 'speech' }), 'owner');
+  expect(sendAgent.mock.calls.filter(([c]) => c.type === 'agent-published')).toHaveLength(1);
+  const contexts = calls.contexts.mock.calls.length;
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(calls.contexts).toHaveBeenCalledTimes(contexts);
+  speech.closed();
+  expect(sendAgent).toHaveBeenCalledWith({ type: 'agent-finish', floorId: 'group-floor' });
 });
 
 

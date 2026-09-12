@@ -257,6 +257,7 @@ export function App(): ReactNode {
       for (const line of lines) {
         controllerRef.current?.broadcast({ type: 'transcript', id: line.id, text: line.text, at: line.at, final: true });
         logRef.current.append({ kind: 'transcript', at: line.at, speaker: logParticipant(SELF), text: line.text });
+        if (!drainedPublic) agentRef.current?.humanSpeech(line.text, line.at);
       }
       const latest = lines[lines.length - 1];
       if (latest) setCaptions((current) => ({ ...current, [SELF]: { text: clipCaption(latest.text), final: true, at: Date.now() } }));

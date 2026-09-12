@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { GROUP_ACTIONS, GROUP_REVIEW_POLICY, evidenceKey, parseGroupEvidence, parseGroupDecision, isDiscussion, type DiscussionRecord } from '../src/agents/group';
+import { isGroupApproval, GROUP_ACTIONS, GROUP_REVIEW_POLICY, evidenceKey, parseGroupEvidence, parseGroupDecision, isDiscussion, type DiscussionRecord } from '../src/agents/group';
 import { emptyAgentRoom, type AgentConfig } from '../src/agents/contracts';
 import { applyAgentCommand } from '../src/agents/room';
 import type { MeetingSnapshot } from '../src/webmcp';
@@ -48,11 +48,14 @@ it('room authority fences the runner and persists throttling, cooldown, duplicat
     const command = { type: 'agent-publish' as const, id: agent.id, epoch: 1, request: agent.request };
     applyAgentCommand(state, { ...member, peerId: 'Bob' }, command, now, () => 'floor');
     expect(state.floor).toBeNull();
+    applyAgentCommand(state, { ...member, peerId: 'Bob' }, { ...command, type: 'agent-approve' }, now, () => 'floor');
     applyAgentCommand(state, member, command, now, () => 'floor');
     applyAgentCommand(state, member, command, now, () => 'floor');
     expect(state.automation.published).toBe(i);
     applyAgentCommand(state, member, { type: 'agent-published', floorId: 'floor' }, now, () => 'floor');
     expect(state.automation.published).toBe(i + 1);
+    expect(state.floor?.id).toBe('floor');
+    applyAgentCommand(state, member, { type: 'agent-finish', floorId: 'floor' }, now + 1000, () => 'floor');
     review(now + 30_000); expect(agent.phase).toBe('idle');
   }
   review(1_000_000); expect(agent.phase).toBe('idle');
@@ -67,6 +70,7 @@ it('canceling a granted but unpublished question does not consume the room allow
   state.agents.push({ id: 'group', owner: 'Alice', runner: 'Alice', epoch: 1, phase: 'raised', request: 1, pending: false, leaseUntil: 100000,
     config: { kind: 'group', name: 'Omni', instructions: '', language: 'auto', source: 'all', chat: true, system: true, screen: false, files: false, audience: 'public' } });
   state.signal = { id: 1, by: 'Alice', at: 0, kind: 'echo', evidence: ['Alice/1', 'Bob/2'] };
+  applyAgentCommand(state, member, { type: 'agent-approve', id: 'group', epoch: 1, request: 1 }, 1000, () => 'floor');
   applyAgentCommand(state, member, { type: 'agent-publish', id: 'group', epoch: 1, request: 1 }, 1000, () => 'floor');
   expect(state.floor?.id).toBe('floor');
   applyAgentCommand(state, member, { type: 'agent-cancel', id: 'group' }, 1001, () => 'floor');
@@ -82,4 +86,29 @@ it('uses stable, distinct evidence identifiers for different messages in the sam
   expect(keys[0]).not.toBe(keys[1]);
   expect(await evidenceKey({ ...first, seq: 999 })).toBe(keys[0]);
   expect(parseGroupEvidence({ kind: 'echo', evidence: keys })).not.toBeNull();
+});
+
+
+it('requires fresh approval for the exact prepared request and revokes it on cancel', () => {
+  const state = emptyAgentRoom();
+  const member = { peerId: 'Alice', isHost: true, ready: true, joinedAt: 0, heartbeat: 0 };
+  state.agents.push({ id: 'group', owner: 'Alice', runner: 'Alice', epoch: 1, phase: 'raised', request: 1, pending: false, leaseUntil: 1_000_000,
+    config: { kind: 'group', name: 'Omni', instructions: '', language: 'auto', source: 'all', chat: true, system: true, screen: false, files: false, audience: 'public' } });
+  state.signal = { id: 1, by: 'Alice', at: 0, kind: 'echo', evidence: ['a', 'b'] };
+  const command = { type: 'agent-publish' as const, id: 'group', epoch: 1, request: 1 };
+  applyAgentCommand(state, member, command, 1000, () => 'floor');
+  expect(state.floor).toBeNull();
+  applyAgentCommand(state, member, { ...command, type: 'agent-approve', request: 0 }, 1000, () => 'floor');
+  expect(state.approval).toBeNull();
+  applyAgentCommand(state, member, { ...command, type: 'agent-approve' }, 1000, () => 'floor');
+  expect(state.approval?.request).toBe(1);
+  applyAgentCommand(state, member, command, 120001, () => 'floor');
+  expect(state.floor).toBeNull();
+  applyAgentCommand(state, member, { type: 'agent-cancel', id: 'group' }, 120002, () => 'floor');
+  expect(state.approval).toBeNull();
+});
+it('recognizes only explicit addressed voice approvals and excludes those captions from review evidence', () => {
+  for (const text of ['Omni, go ahead.', 'Omni，請發言。', '團隊助理請發言']) expect(isGroupApproval(text)).toBe(true);
+  for (const text of ['yes', 'go ahead', 'Omni should not go ahead', 'He said Omni, go ahead', '“Omni, go ahead”']) expect(isGroupApproval(text)).toBe(false);
+  expect(isDiscussion({ seq: 9, kind: 'transcript', at: new Date().toISOString(), speaker: people[0]!, text: 'Omni, go ahead' })).toBe(false);
 });
