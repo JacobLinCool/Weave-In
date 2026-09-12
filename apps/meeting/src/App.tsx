@@ -39,6 +39,7 @@ import { MeetingLog, type LogParticipant } from './meeting-log';
 import {
   MAX_FILE_BYTES,
   normalizeDisplayName,
+  normalizeChatText,
   ROOM_CODE_PATTERN,
   type HistoryEntry,
   type PeerIdentity,
@@ -717,6 +718,7 @@ export function App(): ReactNode {
 
   /** Posts to chat; `agent` names the assistant when the message comes through a WebMCP tool rather than the keyboard. */
   const sendChat = (text: string, agent: string | null = null): { id: string; at: string } => {
+    text = normalizeChatText(text);
     const message = { id: crypto.randomUUID(), text, at: new Date().toISOString(), agent };
     setMessages((current) => [...current, { kind: 'text', ...message, from: SELF, name: nameRef.current, color: colorFor(SELF), own: true }]);
     controllerRef.current?.broadcast({ type: 'chat', ...message });

@@ -1,4 +1,4 @@
-import { readFile, readdir } from 'node:fs/promises';
+import { readFile, readdir, stat } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -26,3 +26,19 @@ if (!entrySource.includes(`/assets/${worklets[0]}`)) {
 }
 
 console.log(`Production bundle uses same-origin AudioWorklet asset: assets/${worklets[0]}`);
+
+const pdfWorkers = assetNames.filter((name) => /^pdf\.worker\.min-[A-Za-z0-9_-]+\.mjs$/u.test(name));
+if (pdfWorkers.length !== 1) throw new Error('Expected one emitted PDF worker.');
+for (const prefix of ['pdf-preview-', 'docx-preview-']) {
+  const chunk = assetNames.find((name) => name.startsWith(prefix) && name.endsWith('.js'));
+  if (!chunk || !entrySource.includes(chunk)) throw new Error(`Missing lazy preview chunk: ${prefix}`);
+}
+for (const asset of [
+  'cmaps/Adobe-CNS1-UCS2.bcmap',
+  'standard_fonts/LiberationSans-Regular.ttf',
+  'wasm/openjpeg_nowasm_fallback.js',
+  'wasm/jbig2_nowasm_fallback.js',
+]) {
+  if (!(await stat(resolve(clientRoot, 'pdfjs', asset))).size) throw new Error(`Empty PDF asset: ${asset}`);
+}
+console.log('Production bundle includes lazy document readers and same-origin PDF decoding assets.');
