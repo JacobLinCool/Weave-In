@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { emptyAgentRoom, isApproval, parseAgentCommand, parseAgentConfig, parseAgentPeerMessage, permitsFloor, permitsHistory, type AgentConfig, type AgentLine } from '../src/agents/contracts';
+import { emptyAgentRoom, parseAgentCommand, parseAgentConfig, parseAgentPeerMessage, permitsFloor, permitsHistory, type AgentConfig, type AgentLine } from '../src/agents/contracts';
 import { applyAgentCommand, reconcileAgents, type AgentMember } from '../src/agents/room';
 import { liveSettings } from '../src/agents/live';
 import { validLiveRequest, initializeLive } from '../worker/live';
@@ -10,6 +10,7 @@ import { WhiteboardStore } from '../src/whiteboard-model';
 import { editWhiteboard } from '../src/whiteboard-webmcp';
 
 const config: AgentConfig = { kind: 'group', name: 'Facilitator', instructions: 'Help the room think.', language: 'auto', source: 'all', chat: true, system: true, screen: false, files: false, audience: 'public' };
+const signal = { kind: 'convergence' as const, evidence: ['host/1', 'guest/2'] };
 const member = (id: string, joinedAt = 0): AgentMember => ({ peerId: id, isHost: id === 'host', ready: true, joinedAt, heartbeat: 1000 });
 function fixture() {
   const state = emptyAgentRoom(); const host = member('host'); const guest = member('guest', 1); let next = 0;
@@ -75,7 +76,7 @@ describe('agent creation, approval and recovery', () => {
     expect(parseAgentConfig({ ...config, roomMessages: true })?.roomMessages).toBe(true);
     expect(parseAgentConfig({ ...config, roomMessages: 'true' })).toBeNull();
     expect(parseAgentCommand({ type: 'agent-create', config: { ...config, screen: 'yes' } })).toBeNull();
-    expect(parseAgentCommand({ type: 'agent-approve', id: 'id', epoch: -1, request: 0 })).toBeNull();
+    expect(parseAgentCommand({ type: 'agent-publish', id: 'id', epoch: -1, request: 0 })).toBeNull();
   });
   it('allows one group and one personal per owner, rejects foreign personal controls', () => {
     const { state, host, guest, uuid } = fixture();
@@ -88,50 +89,50 @@ describe('agent creation, approval and recovery', () => {
   });
   it('requires current raised hand, coalesces signals and ignores duplicate approval', () => {
     const { state, host, guest, uuid, agent } = fixture();
-    const approval = () => applyAgentCommand(state, guest, { type: 'agent-approve', id: agent.id, epoch: agent.epoch, request: agent.request }, 1000, uuid);
+    const approval = () => {
+      applyAgentCommand(state, guest, { type: 'agent-approve', id: agent.id, epoch: agent.epoch, request: agent.request }, 1000, uuid);
+      applyAgentCommand(state, host, { type: 'agent-publish', id: agent.id, epoch: agent.epoch, request: agent.request }, 1000, uuid);
+    };
     approval(); expect(state.floor).toBeNull();
-    applyAgentCommand(state, host, { type: 'agent-signal', id: agent.id }, 1000, uuid);
-    applyAgentCommand(state, guest, { type: 'agent-signal', id: agent.id }, 1000, uuid);
+    applyAgentCommand(state, host, { type: 'agent-review', id: agent.id, epoch: agent.epoch, request: agent.request }, 1000, uuid);
+    applyAgentCommand(state, guest, { type: 'agent-review', id: agent.id, epoch: agent.epoch, request: agent.request }, 1000, uuid);
     expect(agent.request).toBe(1);
-    applyAgentCommand(state, guest, { type: 'agent-raised', id: agent.id, epoch: 1, request: 1 }, 1000, uuid);
+    applyAgentCommand(state, guest, { type: 'agent-raised', id: agent.id, epoch: 1, request: 1, signal }, 1000, uuid);
     expect(agent.phase).toBe('preparing');
-    applyAgentCommand(state, host, { type: 'agent-raised', id: agent.id, epoch: 1, request: 1 }, 1000, uuid);
+    applyAgentCommand(state, host, { type: 'agent-raised', id: agent.id, epoch: 1, request: 1, signal }, 1000, uuid);
     approval(); const floor = state.floor; approval(); expect(state.floor).toEqual(floor);
     expect(agent.phase).toBe('speaking');
   });
-  it('preempts personal public speech and serves remaining queue after group', () => {
+  it('does not interrupt an occupied public floor for an automatic review', () => {
     const { state, host, guest, uuid, agent } = fixture();
     applyAgentCommand(state, guest, { type: 'agent-create', config: { ...config, kind: 'personal' } }, 1000, uuid);
     const personal = state.agents[1]!;
     applyAgentCommand(state, guest, { type: 'agent-floor', id: personal.id }, 1000, uuid);
-    const old = state.floor!;
-    applyAgentCommand(state, host, { type: 'agent-signal', id: agent.id }, 1000, uuid);
-    applyAgentCommand(state, host, { type: 'agent-raised', id: agent.id, epoch: 1, request: 1 }, 1000, uuid);
-    applyAgentCommand(state, guest, { type: 'agent-approve', id: agent.id, epoch: 1, request: 1 }, 1000, uuid);
-    expect(permitsFloor(state, guest.peerId, old.id, old.epoch, 1001)).toBe(false);
-    applyAgentCommand(state, guest, { type: 'agent-floor', id: personal.id }, 1000, uuid);
-    applyAgentCommand(state, host, { type: 'agent-finish', floorId: state.floor!.id }, 1000, uuid);
-    reconcileAgents(state, [host, guest], 1000, uuid);
-    expect(state.floor?.agentId).toBe(personal.id);
+    const floor = state.floor!;
+    applyAgentCommand(state, host, { type: 'agent-review', id: agent.id, epoch: 1, request: 0 }, 1000, uuid);
+    expect(agent.phase).toBe('idle');
+    expect(state.floor).toEqual(floor);
+    expect(permitsFloor(state, guest.peerId, floor.id, 1, 1001)).toBe(true);
   });
   it('reassigns on disconnection, fences stale work and re-raises before speaking', () => {
     const { state, host, guest, uuid, agent } = fixture();
-    applyAgentCommand(state, host, { type: 'agent-signal', id: agent.id }, 1000, uuid);
-    applyAgentCommand(state, host, { type: 'agent-raised', id: agent.id, epoch: 1, request: 1 }, 1000, uuid);
+    applyAgentCommand(state, host, { type: 'agent-review', id: agent.id, epoch: agent.epoch, request: agent.request }, 1000, uuid);
+    applyAgentCommand(state, host, { type: 'agent-raised', id: agent.id, epoch: 1, request: 1, signal }, 1000, uuid);
     applyAgentCommand(state, guest, { type: 'agent-approve', id: agent.id, epoch: 1, request: 1 }, 1000, uuid);
+    applyAgentCommand(state, host, { type: 'agent-publish', id: agent.id, epoch: 1, request: 1 }, 1000, uuid);
     const floor = state.floor!;
     reconcileAgents(state, [guest], 1001, uuid);
     expect(agent).toMatchObject({ runner: 'guest', epoch: 2, phase: 'preparing', request: 2 });
     expect(state.floor).toBeNull();
     expect(permitsFloor(state, 'host', floor.id, 1, 1001)).toBe(false);
-    applyAgentCommand(state, host, { type: 'agent-raised', id: agent.id, epoch: 1, request: 1 }, 1001, uuid);
+    applyAgentCommand(state, host, { type: 'agent-raised', id: agent.id, epoch: 1, request: 1, signal }, 1001, uuid);
     expect(agent.phase).toBe('preparing');
     reconcileAgents(state, [guest, host], 1002, uuid);
     expect(agent.runner).toBe('guest');
   });
   it('waits without a ready client, recovers pending work, and skips failed runners', () => {
     const { state, host, guest, uuid, agent } = fixture();
-    applyAgentCommand(state, host, { type: 'agent-signal', id: agent.id }, 1000, uuid);
+    applyAgentCommand(state, host, { type: 'agent-review', id: agent.id, epoch: agent.epoch, request: agent.request }, 1000, uuid);
     reconcileAgents(state, [], 1001, uuid);
     expect(agent.phase).toBe('waiting');
     reconcileAgents(state, [guest], 1002, uuid);
@@ -142,14 +143,10 @@ describe('agent creation, approval and recovery', () => {
     reconcileAgents(state, [guest, host], 31_001, uuid);
     expect(agent.runner).toBeNull();
   });
-  it('recognizes only explicit complete voice approval phrases', () => {
-    expect(isApproval('團隊助理，請發言。')).toBe(true);
-    expect(isApproval('Weave, go ahead!')).toBe(true);
-    expect(isApproval('Weave. Go ahead.')).toBe(true);
-    expect(isApproval('團隊助理。請發言。')).toBe(true);
-    expect(isApproval('"Weave. Go ahead."')).toBe(false);
-    expect(isApproval('He said “Weave, go ahead”.')).toBe(false);
-    expect(isApproval('Please do not say 團隊助理，請發言')).toBe(false);
+  it('rejects removed manual commands and malformed review evidence', () => {
+    expect(parseAgentCommand({ type: 'agent-signal', id: 'group' })).toBeNull();
+    expect(parseAgentCommand({ type: 'agent-approve', id: 'group', epoch: 1, request: 1 })?.type).toBe('agent-approve');
+    expect(parseAgentCommand({ type: 'agent-raised', id: 'group', epoch: 1, request: 1, signal: { kind: 'manual', evidence: [] } })).toBeNull();
   });
 });
 

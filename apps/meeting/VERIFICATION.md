@@ -122,7 +122,7 @@ Local artifacts are under repository-root `output/playwright/` (ignored, not bun
 
 1. Repeat failed peer paths on a supported non-VPN/cross-device network and decide whether TURN is required for the supported connectivity envelope.
 2. Verify native Safari and Windows browsers with physical microphones/speakers, permission prompts, autoplay restrictions and actual screen selection.
-3. Repeat voice approval with real speakers and both documented languages; speech recognition must match a complete command. Chat, quotations, history replay and Agent speech must never authorize a floor.
+3. Verify automatic Group quiet detection with physical microphones and both documented languages. Replayed history and Agent output must not trigger review; Group manual and voice approval commands are removed.
 4. Soak-test longer noisy conversations, caption connection rotation, session expiry and device sleep. Unit tests for these boundaries do not establish production reliability.
 # Muse and Room Omni (2026-09-12)
 
@@ -130,10 +130,40 @@ Local artifacts are under repository-root `output/playwright/` (ignored, not bun
 - Omni adds immediately using the plus aligned with its heading. Its trash icon is to the right of settings. All participants may configure it; creator/host removal and personal-owner restrictions remain enforced.
 - Removed the empty Omni description, idle listening text, private-chat privacy subtitle, manual review button, and reminder pause/hide controls and persisted state.
 - The Omni border glows for preparing, raised and speaking, then clears when idle, cancelled or waiting. Reduced-motion preference disables the transition.
-- The agent-signal receiver exists, but no automatic public-context signal producer is connected. Browser checks inject a test signal; they do not establish automatic triggering.
+- Historical state at this checkpoint: the signal receiver existed without an automatic producer. Superseded by the automatic Group review implementation documented in GROUPTHINK.md.
 - Local typecheck, 229 meeting tests and production build passed. Two-browser checks passed Muse chat/settings, one-click Omni creation/removal, cross-participant settings, top Back navigation, button alignment, removed controls, border glow/reset, private recovery and mobile overflow. GPT-Live is simulated; these checks do not establish real-provider behavior or deployment.
 - Evidence under repository-root output/playwright/: assistant-browser.log, assistant-tests.log, assistant-build.log, assistant-desktop.png, assistant-mobile.png, group-add-right.png, group-settings-page.png, personal-settings-page.png, group-room-active.png, group-room-mobile.png.
 
 - Merge validation: integrated main through 4e6ed7b, preserving TURN, identity recovery, creation cancellation and bounded reminder scrolling. Plus and settings use the same 18px icon and button sizing. Full pnpm check passed (77 transcription tests + 338 meeting tests), including build and deployment dry run; the two-browser harness passed exact button-size equality. Evidence: output/playwright/merge-check.log and merge-browser.log. Browser provisioning is mocked for local peer connectivity; this is not a TURN relay test.
 
 - Final integration includes main 20ebf3a (Muse voice/whiteboard tools). `pnpm check` passed with 77 transcription + 366 meeting tests (443 total). Both browser harnesses passed: agent controls/sizing and voice-driven meeting retrieval, peer file/image transfer, shared-whiteboard edits/capture and attributed Room posting. GPT-Live and TURN provisioning were simulated; room/tool execution was real. Evidence: merge-check.log, merge-browser.log and merge-tools-browser.log under output/playwright/.
+
+## Automatic Group review (2026-09-12)
+
+Integrated main through `55d70d7`; source verification at `3c79f5c`. Omni is created by the room and automatically reviews fresh finalized public discussion. Manual signal/approval commands are removed.
+
+`pnpm check` passed: 77 transcription tests + 418 meeting tests (495 total), type checks, production builds, bundle checks and Worker deployment dry-run. No deployment was performed.
+
+The complete two-browser harness passed against the built Worker served by Miniflare: automatic Group review from ordinary chat input, private Muse isolation, dictation/response controls, silent Omni publication, settings/removal, room recovery and public replay deduplication. The harness simulates GPT-Live for this broad integration test.
+
+The focused scenarios below used real GPT-Live and its reasoning backend, normal Room UI chat and actual peer delivery. Each case used a new local room; the invitation case had three participants. No review control command or model response was injected. Every intervention was received by the other browser, and measured assistant audio remained zero.
+
+| Scenario | Observed public output |
+| --- | --- |
+| convergence | Before approving, how will we address the unresolved duplicate-charge failure and the risk that customers could be charged twice? |
+| drift | Our stated goal was to choose PostgreSQL or MySQL for the billing database. Shall we return to that decision now? |
+| float | Bob, what is your view on the proposed Friday launch date? |
+| echo | Before adopting Vendor X, what concrete evidence on its cost or reliability supports this choice? |
+| none | No publication; kind=none. |
+
+These are behavioral samples, not a general detection-accuracy estimate. Human microphones, noisy rooms, cross-device TURN and production deployment were not part of this check.
+
+Local evidence: `output/playwright/integrated-group-check.log`, `integrated-agents-browser.log`, and `integrated-real-group.log`. The harness supports `{ groupOnly: true, scenario, realProvider: true }` to repeat each real-provider case.
+
+Final integration includes main `1bbd3bc` (Muse selected-reply reading and generic landing copy). `pnpm check` passed with 77 transcription + 423 meeting tests (500 total), including builds and Worker dry-run. The full two-browser harness passed again, including selected Muse reply playback and automatic silent Omni publication. This integration retains the Group policy and real-provider samples above. Evidence: `output/playwright/final-integrated-check.log` and `final-integrated-browser.log`.
+
+## Approval correction (2026-09-12)
+
+The user clarified that only manual review triggering is removed. This supersedes the automatic text-publication behavior above: Omni now prepares silently, waits for button or explicit local finalized voice approval, then reads only its prepared question publicly. Cancel, expiry, changed discussion and runner replacement require new approval. Public output uses the existing audio/transcript transport.
+
+Before the user requested immediate push/merge without further verification, the meeting suite passed (426 tests). The revised browser harness was updated but has not been run; the earlier real-provider samples establish scenario preparation only, not this corrected approval-to-audio flow. No additional verification was performed after the final freshness/clock fixes.

@@ -1,3 +1,4 @@
+import { parseGroupEvidence, type GroupEvidence } from './group';
 export const LIVE_MODEL = 'gpt-live-1';
 export const REASONING_MODEL = 'gpt-5.6-terra';
 export const HEARTBEAT_MS = 10_000;
@@ -45,19 +46,23 @@ export interface AgentRoomState {
   /** Persisted so removing Omni is respected for the rest of this room. */
   groupInitialized?: boolean;
   floor: Floor | null;
+  approval: { id: string; epoch: number; request: number } | null;
   grants: Floor[];
   queue: string[];
-  signal: { id: number; at: number; by: string; kind: 'manual' } | null;
+  signal: ({ id: number; at: number; by: string } & GroupEvidence) | null;
+  automation: { nextCheckAt: number; nextPublishAt: number; published: number; events: string[] };
 }
-export const emptyAgentRoom = (): AgentRoomState => ({ agents: [], floor: null, grants: [], queue: [], signal: null });
+export const emptyAgentRoom = (): AgentRoomState => ({ agents: [], floor: null, approval: null, grants: [], queue: [], signal: null, automation: { nextCheckAt: 0, nextPublishAt: 0, published: 0, events: [] } });
 export type AgentCommand =
   | { type: 'agent-ready'; ready: boolean }
   | { type: 'agent-heartbeat' }
   | { type: 'agent-create'; config: AgentConfig }
   | { type: 'agent-configure'; id: string; config: AgentConfig }
-  | { type: 'agent-remove' | 'agent-signal' | 'agent-floor' | 'agent-cancel'; id: string }
-  | { type: 'agent-raised' | 'agent-approve' | 'agent-failed'; id: string; epoch: number; request: number }
-  | { type: 'agent-finish'; floorId: string };
+  | { type: 'agent-remove' | 'agent-floor' | 'agent-cancel'; id: string }
+  | { type: 'agent-review' | 'agent-approve' | 'agent-publish' | 'agent-failed'; id: string; epoch: number; request: number }
+  | { type: 'agent-raised'; id: string; epoch: number; request: number; signal: GroupEvidence }
+  | { type: 'agent-finish'; floorId: string }
+  | { type: 'agent-published'; floorId: string };
 export interface AgentLine {
   id: string;
   agentId: string;
@@ -101,12 +106,17 @@ export function parseAgentCommand(value: unknown): AgentCommand | null {
     case 'agent-heartbeat': return { type: value.type };
     case 'agent-create': { const config = parseAgentConfig(value.config); return config ? { type: value.type, config } : null; }
     case 'agent-configure': { const config = parseAgentConfig(value.config); return config && identifier(value.id) ? { type: value.type, id: value.id, config } : null; }
-    case 'agent-remove': case 'agent-signal': case 'agent-floor': case 'agent-cancel':
+    case 'agent-remove': case 'agent-floor': case 'agent-cancel':
       return identifier(value.id) ? { type: value.type, id: value.id } : null;
-    case 'agent-raised': case 'agent-approve': case 'agent-failed':
+    case 'agent-raised': {
+      const signal = parseGroupEvidence(value.signal);
+      return signal && identifier(value.id) && Number.isSafeInteger(value.epoch) && Number(value.epoch) > 0 && Number.isSafeInteger(value.request) && Number(value.request) >= 0
+        ? { type: value.type, id: value.id, epoch: Number(value.epoch), request: Number(value.request), signal } : null;
+    }
+    case 'agent-review': case 'agent-approve': case 'agent-publish': case 'agent-failed':
       return identifier(value.id) && Number.isSafeInteger(value.epoch) && Number(value.epoch) > 0 && Number.isSafeInteger(value.request) && Number(value.request) >= 0
         ? { type: value.type, id: value.id, epoch: Number(value.epoch), request: Number(value.request) } : null;
-    case 'agent-finish': return identifier(value.floorId) ? { type: value.type, floorId: value.floorId } : null;
+    case 'agent-finish': case 'agent-published': return identifier(value.floorId) ? { type: value.type, floorId: value.floorId } : null;
     default: return null;
   }
 }
@@ -136,9 +146,6 @@ export function parseAgentPeerMessage(value: unknown): AgentPeerMessage | null {
     id: line.id, agentId: line.agentId, name: line.name, text: line.text, at: line.at, audience: 'public',
     role: line.role as AgentLine['role'], input: line.input as AgentLine['input'], playback: line.playback as AgentLine['playback'],
   } };
-}
-export function isApproval(text: string): boolean {
-  return /^(?:團隊助理[，,。.\s]*請發言|weave[，,。.\s]+go ahead)[。.!！]?$/iu.test(text.trim());
 }
 export function permitsFloor(state: AgentRoomState, peer: string, floorId: string, epoch: number, now = Date.now()): boolean {
   const floor = state.floor;
