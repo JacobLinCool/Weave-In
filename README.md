@@ -6,7 +6,7 @@ Keep the thread. Weave everyone in.
 
 Groupthink is the failure mode where a group suppresses dissent to preserve harmony, stops thinking critically, and converges on a decision no member would have defended alone. It is invisible from inside the room, because the meeting feels productive precisely when nobody is arguing.
 
-Weave In runs browser meetings with per-participant captions, private **Chat** assistants and a shared **Omni** facilitator. Chat supports private voice and text discussion, reads permitted meeting records and shared files, and can edit the shared whiteboard or post in Room chat when its owner asks. Omni publishes brief public text suggestions. Automatic private reminders flag possible unresolved objections; broader groupthink detection remains future work.
+Weave In runs browser meetings with per-participant captions, private **Muse** assistants and a shared **Omni** facilitator. Muse supports private voice and text discussion, reads permitted meeting records and shared files, and can edit the shared whiteboard or post in Room chat when its owner asks. Omni publishes brief public text suggestions. Automatic private reminders flag possible unresolved objections; broader groupthink detection remains future work.
 
 ```
 apps/meeting          Landing page + meeting room (React + Vite), Cloudflare Worker + Durable Object
@@ -30,9 +30,13 @@ pnpm check            # typecheck + tests + build + deploy dry run
 
 ## Privacy
 
-Meeting media, chat and public transcripts travel peer-to-peer. Caption audio goes directly to the selected AI provider. Agent context, selected files/screens and conversations go directly to OpenAI after initialization. Our server handles connection information, Agent settings and room coordination; it does not store meeting transcripts or private conversations.
+Camera, microphone, screen share, chat, files, whiteboard edits, and captions use encrypted WebRTC connections between participants. Browsers prefer direct connections and can use Cloudflare TURN to relay encrypted packets on restricted networks. The relay can process connection metadata, including IP addresses and timing, but cannot read the encrypted meeting content. The signaling Worker issues short-lived TURN credentials and routes connection setup messages; meeting media and data do not pass through that Worker.
 
-See `apps/meeting/README.md` for room limits, captions, and the `GEMINI_API_KEY` / `OPENAI_API_KEY` Worker secrets.
+Caption audio goes directly to the selected AI provider. Agent context, selected files/screens and conversations go directly to OpenAI after initialization. The Worker handles Agent settings and room coordination; it does not store meeting transcripts or private conversations.
+
+Automatic private analysis separately sends recent transcript text and previous automatic reminders through the Worker to Gemini. The Worker does not persist this analysis data. Participants can pause automatic analysis in the meeting.
+
+See `apps/meeting/README.md` for room limits, TURN setup (`TURN_KEY_ID` / `TURN_KEY_SECRET`), and caption provider secrets (`GEMINI_API_KEY` / `OPENAI_API_KEY`).
 
 ### Shared whiteboard
 
@@ -76,10 +80,10 @@ Two WebMCP tools are available while in a meeting:
 Use the capture tool after an edit to verify its rendered appearance. Closing
 the board preserves shared content; viewport position and selection remain local.
 
-The personal **Chat** assistant uses the same whiteboard tools from an ordinary
-meeting browser. Open **Chat → Talk to Chat** and ask, for example, “Turn our
+The personal **Muse** assistant uses the same whiteboard tools from an ordinary
+meeting browser. Open **Muse → Talk** and ask, for example, “Turn our
 discussion into a flowchart on the whiteboard,” or “Read the uploaded design
-and draw its workflow.” You can also ask Chat to post a summary in Room chat.
+and draw its workflow.” You can also ask Muse to post a summary in Room chat.
 Its spoken replies remain private. It reads earlier meeting records and supported
 files as needed; it cannot recover records missing from this browser or fetch an
 uncached file from a participant who has left. Whiteboard output consists of

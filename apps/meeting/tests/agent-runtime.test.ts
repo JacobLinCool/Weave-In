@@ -71,6 +71,44 @@ it('refreshes file availability and interim captions without a finalized log cha
   await vi.advanceTimersByTimeAsync(2_000);
   expect(calls.contexts).not.toHaveBeenCalled();
 });
+
+it.each(['personal', 'group'] as const)('waits for acknowledgement before completing %s assistant creation', async (kind) => {
+  vi.useFakeTimers();
+  const { runtime, sendAgent } = setup();
+  const agent = structuredClone(runtime.snapshot().room.agents[0]!);
+  agent.id = 'created'; agent.config.kind = kind;
+  runtime.update(emptyAgentRoom(), Date.now());
+  let completed = false;
+  const creating = runtime.create(agent.config).then(() => { completed = true; });
+  await vi.advanceTimersByTimeAsync(0);
+  expect(sendAgent).toHaveBeenCalledWith({ type: 'agent-create', config: agent.config });
+  expect(completed).toBe(false);
+  runtime.update({ ...emptyAgentRoom(), agents: [agent] }, Date.now());
+  await creating;
+  expect(completed).toBe(true);
+});
+it('shows a ready status when Muse exists and setup guidance only after it is removed', () => {
+  const { runtime } = setup();
+  expect(runtime.snapshot().status).toBe('Ready for your question.');
+  expect(runtime.snapshot().working).toBe(false);
+  runtime.update(emptyAgentRoom(), Date.now());
+  expect(runtime.snapshot().status).toBe('Create an assistant to start a conversation.');
+});
+it.each(['timeout', 'disconnect', 'close'] as const)('rejects unconfirmed creation on %s', async (failure) => {
+  vi.useFakeTimers();
+  const { runtime } = setup();
+  const config = structuredClone(runtime.snapshot().room.agents[0]!.config);
+  runtime.update(emptyAgentRoom(), Date.now());
+  const pending = runtime.create(config);
+  const rejected = expect(pending).rejects.toThrow(failure === 'timeout' ? 'did not confirm' : failure === 'disconnect' ? 'disconnected' : 'closed');
+  await vi.advanceTimersByTimeAsync(0);
+  if (failure === 'timeout') await vi.advanceTimersByTimeAsync(10_000);
+  else if (failure === 'disconnect') runtime.connectionLost();
+  else runtime.close();
+  await rejected;
+  runtime.close();
+  expect(vi.getTimerCount()).toBe(0);
+});
 it('ignores legacy persistent public mode and keeps personal transcripts private', async () => {
   const { runtime, publicLine, broadcast, sendAgent } = setup();
   await runtime.ask('private question');
@@ -130,7 +168,7 @@ it('rejects unproven public history before it can enter shared context', () => {
   expect(publicLine).not.toHaveBeenCalled();
 });
 
-it('continues private Chat while Omni publishes a text suggestion', async () => {
+it('continues private Muse while Omni publishes a text suggestion', async () => {
   const { runtime } = setup();
   const state = structuredClone(runtime.snapshot().room);
   const group: RoomAgent = { ...state.agents[0]!, id: 'group', owner: 'other', runner: 'other', config: { ...state.agents[0]!.config, kind: 'group' }, phase: 'speaking' };
@@ -218,7 +256,7 @@ it('isolates approved public speech from private history and tools, and returns 
   expect(calls.tools.at(-1)).toEqual([]);
   expect(JSON.stringify(calls.start.mock.calls.at(-1))).not.toContain('Secret private position');
   calls.lives.at(-1)!.transcript('assistant', 'Can we verify mute still works?', 0, 500);
-  expect(publicLine).toHaveBeenLastCalledWith(expect.objectContaining({ name: 'Owner’s Chat', audience: 'public' }), 'owner');
+  expect(publicLine).toHaveBeenLastCalledWith(expect.objectContaining({ name: 'Owner’s Muse', audience: 'public' }), 'owner');
   runtime.stopPersonal();
   const state = structuredClone(runtime.snapshot().room); state.floor = null; runtime.update(state, Date.now());
   await runtime.ask('Continue privately');
@@ -262,12 +300,12 @@ it('caps public personal speech at 20 seconds from the first audible sample', as
   expect(sendAgent).toHaveBeenCalledWith({ type: 'agent-finish', floorId: 'personal-floor' });
 });
 
-it('creates Chat on an explicit reminder action and waits for room acknowledgement', async () => {
+it('creates Muse on an explicit reminder action and waits for room acknowledgement', async () => {
   const { runtime, sendAgent } = setup();
   const saved = runtime.snapshot().room;
   runtime.update(emptyAgentRoom(), Date.now());
   const request = runtime.discussReminder('Unresolved concern');
-  await vi.waitFor(() => expect(sendAgent).toHaveBeenCalledWith(expect.objectContaining({ type: 'agent-create', config: expect.objectContaining({ name: 'Chat', audience: 'private' }) })));
+  await vi.waitFor(() => expect(sendAgent).toHaveBeenCalledWith(expect.objectContaining({ type: 'agent-create', config: expect.objectContaining({ name: 'Muse', audience: 'private' }) })));
   runtime.update(saved, Date.now()); await request;
   expect(calls.requests).toHaveBeenLastCalledWith(expect.any(String), expect.stringContaining('Unresolved concern'));
 });
@@ -290,7 +328,7 @@ it('publishes Omni text once without audible output or a voice approval', async 
 });
 
 
-it('reconnects Chat without resuming public speech or losing private conversation', async () => {
+it('reconnects Muse without resuming public speech or losing private conversation', async () => {
   const { runtime, sendAgent } = setup();
   await runtime.ask('Retain my private context');
   const saved = runtime.snapshot().room;
@@ -315,7 +353,7 @@ it('does not accept late public words after owner interruption', async () => {
   expect(publicLine).not.toHaveBeenCalled();
 });
 
-it('creates Chat on room entry without audio playback or Live connection', async () => {
+it('creates Muse on room entry without audio playback or Live connection', async () => {
   const { runtime, sendAgent } = setup(); const saved = runtime.snapshot().room;
   runtime.update(emptyAgentRoom(), Date.now()); const pending = runtime.initializePersonal();
   expect(sendAgent).toHaveBeenCalledWith(expect.objectContaining({ type: 'agent-create' }));
@@ -324,11 +362,11 @@ it('creates Chat on room entry without audio playback or Live connection', async
 });
 
 
-it('restores private Chat history before a fresh personal agent exists without replay or audio', async () => {
+it('restores private Muse history before a fresh personal agent exists without replay or audio', async () => {
   const { runtime, publicLine, broadcast } = setup();
   const savedState = runtime.snapshot().room;
   runtime.update(emptyAgentRoom(), Date.now());
-  const saved: AgentLine = { id: 'saved', agentId: 'previous-agent', name: 'Chat', role: 'assistant', input: 'speech', audience: 'private', text: 'Your earlier private concern', at: new Date().toISOString(), playback: 'playing' };
+  const saved: AgentLine = { id: 'saved', agentId: 'previous-agent', name: 'Muse', role: 'assistant', input: 'speech', audience: 'private', text: 'Your earlier private concern', at: new Date().toISOString(), playback: 'playing' };
   runtime.restoreConversation([saved, { ...saved, id: 'public', audience: 'public' }]);
   const fresh = structuredClone(savedState); fresh.agents[0]!.id = 'new-chat';
   runtime.update(fresh, Date.now());

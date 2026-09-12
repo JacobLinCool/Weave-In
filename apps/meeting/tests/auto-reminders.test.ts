@@ -65,7 +65,7 @@ describe('automatic private monitoring', () => {
     }
   });
 
-  it('does not treat private Chat or public agent speech as a human concern', async () => {
+  it('does not treat private Muse or public agent speech as a human concern', async () => {
     const log = new MeetingLog();
     const request = vi.fn<typeof fetch>(async () => Response.json({ notice: null }));
     const monitor = new AutoReminders(new PrivateNotices(), request);
@@ -73,7 +73,7 @@ describe('automatic private monitoring', () => {
     const agent = {
       id: 'line-1',
       agentId: 'chat',
-      name: 'Chat',
+      name: 'Muse',
       role: 'assistant' as const,
       input: 'speech' as const,
       audience: 'private' as const,

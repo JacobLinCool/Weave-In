@@ -302,7 +302,7 @@ export function SidePanel({
   onShareFiles,
   onDownloadFile,
 }: {
-  agentPanel?: ReactNode;
+  agentPanel?: ((reminders: ReactNode) => ReactNode) | undefined;
   groupPanel?: ReactNode;
   noticeActions: NoticeActions;
   autoReminders: AutoReminders;
@@ -320,6 +320,7 @@ export function SidePanel({
 }): ReactNode {
   const noticeState = useSyncExternalStore(privateNotices.subscribe, privateNotices.getSnapshot);
   const unread = noticeState.notices.some(n => !n.read);
+  const reminders = <PrivateNoticeHistory store={privateNotices} monitor={autoReminders} {...noticeActions} />;
   return (
     <aside className="side-panel" aria-label="Meeting panel">
       <div className="side-panel__tabs" role="tablist">
@@ -329,9 +330,9 @@ export function SidePanel({
         <button role="tab" type="button" aria-selected={tab === 'transcript'} className={tab === 'transcript' ? 'is-active' : ''} onClick={() => onTabChange('transcript')}>
           <Captions size={15} /> Transcript{transcript.length > 0 && <em>{transcript.length}</em>}
         </button>
-        <button data-private-tab role="tab" type="button" aria-selected={tab === 'private'} className={tab === 'private' ? 'is-active' : ''} onClick={() => onTabChange('private')}>Chat{unread && <span className="private-unread" aria-label="Unread reminders" />}</button>
+        <button data-private-tab role="tab" type="button" aria-selected={tab === 'private'} className={tab === 'private' ? 'is-active' : ''} onClick={() => onTabChange('private')}>Muse{unread && <span className="private-unread" aria-label="Unread reminders" />}</button>
       </div>
-      {tab === 'private'  ? <div className="personal-chat-panel"><PrivateNoticeHistory store={privateNotices} monitor={autoReminders} {...noticeActions} />{!noticeState.hidden && agentPanel}</div> : tab === 'chat'
+      {tab === 'private'  ? <div className="personal-chat-panel">{noticeState.hidden ? reminders : agentPanel?.(reminders) ?? reminders}</div> : tab === 'chat'
         ? <div className="room-chat-panel">{groupPanel}<ChatPanel messages={messages} files={files} joinedAt={joinedAt} onSend={onSendChat} onShareFiles={onShareFiles} onDownloadFile={onDownloadFile} /></div>
         : <TranscriptPanel transcript={transcript} interims={interims} joinedAt={joinedAt} />}
     </aside>
@@ -506,7 +507,7 @@ function ChatPanel({
       data-testid="chat-panel"
     >
       <ol ref={list} className="panel-list" data-testid="chat-list">
-        {messages.length === 0 && <li className="panel-empty">Messages and files go directly to everyone in the room.</li>}
+        {messages.length === 0 && <li className="panel-empty">Messages and files are shared with everyone in the room.</li>}
         {messages.map((message, index) => (
           <li
             key={`${message.from}:${message.id}`}

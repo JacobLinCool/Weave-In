@@ -38,7 +38,7 @@ import {
 import { FileShare, type SharedFile } from './file-share';
 import { batchHistory, insertByTime, selectHistory } from './history';
 import { LandingSurface } from './landing';
-import { createPeerId, createRoomCode, MeetingController } from './meeting-controller';
+import { connectWithIdentityRecovery, createPeerId, createRoomCode, MeetingController } from './meeting-controller';
 import { MeetingLog, type LogParticipant } from './meeting-log';
 import {
   MAX_FILE_BYTES,
@@ -551,8 +551,8 @@ export function App(): ReactNode {
     nameRef.current = name;
     storeDisplayName(name);
     try {
-      const saved = loadMeetingSession(code);
-      if (roomCodeRef.current !== code) {
+      let saved = loadMeetingSession(code);
+      const restoreSession = (): void => {
         logRef.current.restore(saved?.log ?? []);
         personalChatRef.current = saved?.personalChat ?? [];
         messagesRef.current = saved?.messages ?? [];
@@ -562,7 +562,8 @@ export function App(): ReactNode {
         seenRef.current = new Set([...messagesRef.current, ...transcriptRef.current].filter(r=>!r.own).map(r=>`${r.from}:${r.id}`));
         if (saved) privateNotices.restore(saved.notices); else privateNotices.clear();
         autoReminders.setEnabled(saved?.monitoringEnabled ?? true);
-      }
+      };
+      if (roomCodeRef.current !== code) restoreSession();
       const stream = await prepareMedia();
       const controller = new MeetingController([stream], {
         onAgentState: (state, serverNow) => { agentStateRef.current = { state, now: serverNow }; agentRef.current?.update(state, serverNow); },
@@ -642,6 +643,7 @@ export function App(): ReactNode {
         onReconnecting: () => {
           agentRef.current?.connectionLost(); autoReminders.stop(); setReconnecting(true); },
         onError: (_code, message) => setError(message),
+        onIceRecovered: (_code, message) => setError((current) => current === message ? null : current),
       });
       controllerRef.current = controller;
       fileShareRef.current?.close();
@@ -653,7 +655,16 @@ export function App(): ReactNode {
         },
         setFiles,
       );
-      await controller.connect({ roomCode: code, action, displayName: name, peerId: saved?.peerId ?? createPeerId() });
+      await connectWithIdentityRecovery(
+        controller,
+        { roomCode: code, action, displayName: name, peerId: saved?.peerId ?? createPeerId() },
+        () => {
+          // The copied history belongs to the participant still in the room.
+          // Start fresh so this tab cannot replay their words as its own.
+          saved = null;
+          restoreSession();
+        },
+      );
       roomCodeRef.current = code;
       setRoomCode(code);
       setRoomInput(code);
@@ -968,7 +979,7 @@ export function App(): ReactNode {
     agentRef.current = runtime; setAgentRuntime(runtime);
     const saveConversation = runtime.subscribe(() => { personalChatRef.current = runtime.snapshot().lines; checkpointRef.current(); });
     void runtime.initializePersonal().catch((cause: unknown) => {
-      if (agentRef.current === runtime) setError(cause instanceof Error ? cause.message : 'Chat could not initialize.');
+      if (agentRef.current === runtime) setError(cause instanceof Error ? cause.message : 'Muse could not initialize.');
     });
     if (agentStateRef.current) runtime.update(agentStateRef.current.state, agentStateRef.current.now);
     for (const [peer, participant] of Object.entries(participantsRef.current)) for (const stream of Object.values(participant.streams)) runtime.remoteStream(peer, stream);
@@ -997,7 +1008,7 @@ export function App(): ReactNode {
             activeSince ??= performance.now();
             if (performance.now() - activeSince >= 100) agentRuntime.ownerStartedSpeaking();
           });
-        } catch { setError('Speech interruption is unavailable. Use Stop in Chat to interrupt your assistant.'); }
+        } catch { setError('Speech interruption is unavailable. Use Stop in Muse to interrupt your assistant.'); }
       } else if (!agentRuntime.snapshot().publicPersonalSpeaking && stop) {
         const cleanup = stop; stop = undefined; cleanup(); activeSince = null;
       }
@@ -1015,12 +1026,12 @@ export function App(): ReactNode {
     return (
       <>
       <MeetingSurface
-        groupPanel={agentRuntime ? <details><summary>Omni · Public suggestions</summary><AgentPanel runtime={agentRuntime} mode="group" isHost={selfRef.current?.isHost ?? false} /></details> : null}
+        groupPanel={agentRuntime ? <AgentPanel runtime={agentRuntime} mode="group" isHost={selfRef.current?.isHost ?? false} /> : null}
         noticeActions={{
-          onSpeak: async (text) => { if (!agentRuntime) throw new Error('Chat is reconnecting. Please try again.'); await agentRuntime.speakForMe(text); },
-          onDiscuss: async (text) => { if (!agentRuntime) throw new Error('Chat is reconnecting. Please try again.'); await agentRuntime.discussReminder(text); setPanelTab('private'); },
+          onSpeak: async (text) => { if (!agentRuntime) throw new Error('Muse is reconnecting. Please try again.'); await agentRuntime.speakForMe(text); },
+          onDiscuss: async (text) => { if (!agentRuntime) throw new Error('Muse is reconnecting. Please try again.'); await agentRuntime.discussReminder(text); setPanelTab('private'); },
         }}
-        agentPanel={agentRuntime ? <AgentPanel runtime={agentRuntime} mode="personal" isHost={selfRef.current?.isHost ?? false} /> : null}
+        agentPanel={agentRuntime ? (reminders) => <AgentPanel runtime={agentRuntime} mode="personal" reminders={reminders} isHost={selfRef.current?.isHost ?? false} /> : undefined}
         whiteboard={whiteboard}
         whiteboardOpen={whiteboardOpen}
         onToggleWhiteboard={() => setWhiteboardOpen(open => !open)}
@@ -1089,7 +1100,7 @@ export function App(): ReactNode {
 }
 
 function MeetingSurface(props: {
-  agentPanel: ReactNode;
+  agentPanel: ((reminders: ReactNode) => ReactNode) | undefined;
   groupPanel: ReactNode;
   noticeActions: NoticeActions;
   whiteboard: ExcalidrawStore;

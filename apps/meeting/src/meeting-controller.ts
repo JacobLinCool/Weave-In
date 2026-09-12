@@ -8,9 +8,35 @@ import {
   type ServerMessage,
   type SignalKind,
 } from './protocol';
+import { IceConfigurationError, MeetingIceConfiguration, type IceConfiguration } from './ice-configuration';
 
-const ICE_SERVERS: RTCIceServer[] = [{ urls: 'stun:stun.l.google.com:19302' }];
 const DATA_CHANNEL_LABEL = 'weave-in';
+const MAX_ICE_RESTARTS = 3;
+const ICE_RESTART_WAIT_MS = 10000;
+const ICE_DISCONNECTED_GRACE_MS = 5000;
+
+export class RoomAdmissionError extends Error {
+  constructor(readonly code: string, message: string) {
+    super(message);
+    this.name = 'RoomAdmissionError';
+  }
+}
+
+/** A duplicated tab can inherit sessionStorage and its active peer ID. Only an
+ * initial join may switch identity; automatic reconnects must keep their ID. */
+export async function connectWithIdentityRecovery(
+  controller: Pick<MeetingController, 'connect'>,
+  args: Parameters<MeetingController['connect']>[0],
+  resetSession: () => void,
+): Promise<void> {
+  try {
+    await controller.connect(args);
+  } catch (error) {
+    if (args.action !== 'join' || !(error instanceof RoomAdmissionError) || error.code !== 'DUPLICATE_PEER') throw error;
+    resetSession();
+    await controller.connect({ ...args, peerId: createPeerId() });
+  }
+}
 
 export interface MeetingControllerEvents {
   onAgentState?(state: AgentRoomState, serverNow: number): void;
@@ -25,6 +51,7 @@ export interface MeetingControllerEvents {
   /** A peer opened an additional data channel (for example a file transfer); the label says what it carries. */
   onPeerChannel(peerId: string, channel: RTCDataChannel): void;
   onError(code: string, message: string): void;
+  onIceRecovered?(code: string, message: string): void;
 }
 
 interface PeerConnectionState {
@@ -36,6 +63,12 @@ interface PeerConnectionState {
   channel: RTCDataChannel | null;
   senders: Map<string, RTCRtpSender>;
   streams: Map<string, MediaStream>;
+  restartTimer: ReturnType<typeof setTimeout> | undefined;
+  restarting: boolean;
+  restartAttempts: number;
+  recoveryFailed: boolean;
+  restartRequested: boolean;
+  generation: number;
 }
 
 /**
@@ -48,9 +81,13 @@ export class MeetingController {
   readonly #events: MeetingControllerEvents;
   readonly #connections = new Map<string, PeerConnectionState>();
   readonly #localStreams = new Map<string, MediaStream>();
+  readonly #ice: MeetingIceConfiguration;
   #socket: WebSocket | null = null;
   #self: PeerIdentity | null = null;
   #closing = false;
+  #connecting = false;
+  #generation = 0;
+  #lastIceError: IceConfigurationError | null = null;
   sessionToken = '';
   sendAgent(command: AgentCommand): void {
     if (this.#socket?.readyState === WebSocket.OPEN) this.#socket.send(JSON.stringify(command));
@@ -77,17 +114,31 @@ export class MeetingController {
   constructor(localStreams: MediaStream[], events: MeetingControllerEvents) {
     for (const stream of localStreams) this.#localStreams.set(stream.id, stream);
     this.#events = events;
+    this.#ice = new MeetingIceConfiguration(
+      (configuration) => this.#updateIceConfiguration(configuration),
+      (error) => this.#reportIceError(error),
+    );
   }
 
-  connect(args: {
+  async connect(args: {
     roomCode: string;
     action: 'create' | 'join';
     displayName: string;
     peerId: string;
   }): Promise<void> {
-    if (this.#closing) return Promise.reject(new Error('Meeting closed.'));
+    if (this.#closing) throw new Error('Meeting closed.');
+    if (this.#socket || this.#connecting) throw new Error('MeetingController is already connected.');
     this.#args = args;
-    if (this.#socket) throw new Error('MeetingController is already connected.');
+    this.#connecting = true;
+    try {
+      await this.#ice.get();
+    } catch (error) {
+      this.#reportIceError(error);
+      throw error;
+    } finally {
+      this.#connecting = false;
+    }
+    if (this.#closing) throw new Error('Meeting closed.');
     const endpoint = new URL(`/api/rooms/${args.roomCode}/connect`, window.location.href);
     endpoint.protocol = endpoint.protocol === 'https:' ? 'wss:' : 'ws:';
     endpoint.searchParams.set('action', args.action);
@@ -98,14 +149,29 @@ export class MeetingController {
       const socket = new WebSocket(endpoint);
       this.#socket = socket;
       let welcomed = false;
+      let failed = false;
+      let messages = Promise.resolve();
+      const fail = (error: Error): void => {
+        if (welcomed || failed) return;
+        failed = true;
+        clearTimeout(timeout);
+        if (this.#socket === socket) {
+          this.#generation += 1;
+          this.#socket = null;
+        }
+        reject(error);
+        socket.close();
+      };
       const timeout = setTimeout(() => {
         if (welcomed || this.#closing) return;
-        reject(new Error('Signaling connection timed out.'));
-        socket.close();
+        fail(new Error('Signaling connection timed out. Check your connection and try joining again.'));
       }, 10000);
       socket.addEventListener('message', (event) => {
-        if (this.#closing || this.#socket !== socket) return;
-        void this.#receive(event.data).then((didWelcome) => {
+        if (failed || this.#closing || this.#socket !== socket) return;
+        messages = messages.then(async () => {
+          if (failed || this.#closing || this.#socket !== socket) return;
+          const didWelcome = await this.#receive(event.data, welcomed);
+          if (failed || this.#closing || this.#socket !== socket) return;
           if (!welcomed && didWelcome) {
             welcomed = true;
             clearTimeout(timeout);
@@ -113,16 +179,21 @@ export class MeetingController {
             this.#retryDelay = 1000;
             resolve();
           }
+        }).catch((error: unknown) => {
+          if (failed || this.#closing || this.#socket !== socket) return;
+          if (error instanceof IceConfigurationError) this.#reportIceError(error);
+          fail(error instanceof Error ? error : new Error('Unable to join the room. Try again.'));
         });
       });
       socket.addEventListener('error', () => {
-        if (!welcomed) reject(new Error('The signaling connection could not be established.'));
-        if (!this.#self && !this.#retrying) this.#events.onError('SIGNALING_ERROR', 'The signaling connection encountered an error.');
+        if (this.#closing || this.#socket !== socket) return;
+        fail(new Error('Unable to connect to the room. Check your connection or try another network, then join again.'));
       });
       socket.addEventListener('close', () => {
         clearTimeout(timeout);
-        if (!welcomed) reject(new Error('The room is unavailable, full, or no longer active.'));
+        if (!welcomed) fail(new Error('The connection closed before you could join. Try joining again.'));
         if (this.#socket !== socket || this.#closing) return;
+        this.#generation += 1;
         this.#socket = null;
         if (welcomed) this.#scheduleReconnect();
       });
@@ -132,10 +203,11 @@ export class MeetingController {
   close(): void {
     if (this.#closing) return;
     this.#closing = true;
+    this.#generation += 1;
     clearTimeout(this.#retryTimer);
+    this.#ice.close();
     for (const state of this.#connections.values()) {
-      state.channel?.close();
-      state.connection.close();
+      this.#closePeer(state);
     }
     this.#connections.clear();
     this.#socket?.close(1000, 'Left meeting');
@@ -197,7 +269,7 @@ export class MeetingController {
     }
   }
 
-  async #receive(raw: unknown): Promise<boolean> {
+  async #receive(raw: unknown, welcomed: boolean): Promise<boolean> {
     if (typeof raw !== 'string') return false;
     let message: ServerMessage;
     try {
@@ -213,17 +285,18 @@ export class MeetingController {
         return false;
       case 'welcome':
         this.sessionToken = message.sessionToken;
-        for (const state of this.#connections.values()) { state.channel?.close(); state.connection.close(); }
+        this.#generation += 1;
+        for (const state of this.#connections.values()) this.#closePeer(state);
         this.#connections.clear();
         this.#self = message.self;
         // Translate the server's elapsed duration onto this device's clock.
         const localStartedAt = Date.now() - Math.max(0, message.serverTime - message.startedAt);
         this.#events.onConnected(message.self, message.peers, localStartedAt);
-        for (const peer of message.peers) this.#ensurePeer(peer.peerId);
+        for (const peer of message.peers) await this.#ensurePeer(peer.peerId);
         return true;
       case 'peer-joined':
         this.#events.onPeerJoined(message.peer);
-        this.#ensurePeer(message.peer.peerId);
+        await this.#ensurePeer(message.peer.peerId);
         return false;
       case 'peer-left':
         this.#dropPeer(message.peerId);
@@ -232,16 +305,20 @@ export class MeetingController {
         await this.#handleSignal(message.from, message.kind, message.payload);
         return false;
       case 'error':
+        if (!welcomed) throw new RoomAdmissionError(message.code, message.message);
         if (this.#retrying) return false;
         this.#events.onError(message.code, message.message);
         return false;
     }
   }
 
-  #ensurePeer(peerId: string): PeerConnectionState {
+  async #ensurePeer(peerId: string): Promise<PeerConnectionState> {
+    const generation = this.#generation;
+    const configuration = await this.#ice.get();
+    if (this.#closing || this.#generation !== generation) throw new Error('Meeting connection changed.');
     const existing = this.#connections.get(peerId);
     if (existing) return existing;
-    const connection = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+    const connection = new RTCPeerConnection({ iceServers: configuration.iceServers });
     const state: PeerConnectionState = {
       connection,
       polite: !this.#isImpolite(peerId),
@@ -251,6 +328,12 @@ export class MeetingController {
       channel: null,
       senders: new Map(),
       streams: new Map(),
+      restartTimer: undefined,
+      restarting: false,
+      restartAttempts: 0,
+      recoveryFailed: false,
+      restartRequested: false,
+      generation: this.#generation,
     };
     this.#connections.set(peerId, state);
 
@@ -261,7 +344,7 @@ export class MeetingController {
     });
     connection.addEventListener('negotiationneeded', () => void this.#negotiate(peerId, state));
     connection.addEventListener('icecandidate', (event) => {
-      if (event.candidate) this.#sendSignal(peerId, 'ice', event.candidate.toJSON());
+      if (event.candidate && this.#isCurrentPeer(peerId, state)) this.#sendSignal(peerId, 'ice', event.candidate.toJSON());
     });
     connection.addEventListener('track', (event) => {
       const [stream] = event.streams;
@@ -276,11 +359,8 @@ export class MeetingController {
       }
       this.#events.onRemoteStream(peerId, stream);
     });
-    connection.addEventListener('connectionstatechange', () => {
-      if (connection.connectionState === 'failed') {
-        this.#events.onError('PEER_CONNECTION_FAILED', 'A participant media connection failed.');
-      }
-    });
+    connection.addEventListener('iceconnectionstatechange', () => this.#iceStateChanged(peerId, state));
+    connection.addEventListener('connectionstatechange', () => this.#iceStateChanged(peerId, state));
     for (const stream of this.#localStreams.values()) this.#attachStream(state, stream);
     return state;
   }
@@ -323,11 +403,15 @@ export class MeetingController {
     if (state.polite && !state.connection.remoteDescription) return;
     try {
       state.makingOffer = true;
+      await this.#ice.get();
+      if (!this.#isCurrentPeer(peerId, state)) return;
       await state.connection.setLocalDescription();
       // If a remote offer was applied while this was queued, the implicit description is an answer, not an offer.
-      this.#sendLocalDescription(peerId, state.connection);
-    } catch {
-      this.#events.onError('NEGOTIATION_FAILED', 'Could not negotiate a participant media connection.');
+      this.#sendLocalDescription(peerId, state);
+    } catch (error) {
+      if (!this.#isCurrentPeer(peerId, state)) return;
+      if (error instanceof IceConfigurationError) this.#reportIceError(error);
+      else this.#events.onError('NEGOTIATION_FAILED', 'Could not negotiate a participant media connection.');
     } finally {
       state.makingOffer = false;
     }
@@ -338,7 +422,7 @@ export class MeetingController {
     kind: SignalKind,
     payload: RTCSessionDescriptionInit | RTCIceCandidateInit,
   ): Promise<void> {
-    const state = this.#ensurePeer(peerId);
+    const state = await this.#ensurePeer(peerId);
     const { connection } = state;
     try {
       if (kind === 'offer' || kind === 'answer') {
@@ -352,8 +436,10 @@ export class MeetingController {
         await this.#flushIce(state);
         // Answer only if nothing else (a concurrent `negotiationneeded`) already did.
         if (kind === 'offer' && connection.signalingState === 'have-remote-offer') {
+          await this.#ice.get();
+          if (!this.#isCurrentPeer(peerId, state)) return;
           await connection.setLocalDescription();
-          this.#sendLocalDescription(peerId, connection);
+          this.#sendLocalDescription(peerId, state);
         }
         return;
       }
@@ -367,13 +453,16 @@ export class MeetingController {
       } catch (error) {
         if (!state.ignoreOffer) throw error;
       }
-    } catch {
-      this.#events.onError('INVALID_NEGOTIATION', 'A peer sent an unusable WebRTC negotiation message.');
+    } catch (error) {
+      if (!this.#isCurrentPeer(peerId, state)) return;
+      if (error instanceof IceConfigurationError) this.#reportIceError(error);
+      else this.#events.onError('INVALID_NEGOTIATION', 'A peer sent an unusable WebRTC negotiation message.');
     }
   }
 
-  #sendLocalDescription(peerId: string, connection: RTCPeerConnection): void {
-    const description = connection.localDescription;
+  #sendLocalDescription(peerId: string, state: PeerConnectionState): void {
+    if (!this.#isCurrentPeer(peerId, state)) return;
+    const description = state.connection.localDescription;
     if (!description?.sdp) return;
     if (description.type !== 'offer' && description.type !== 'answer') return;
     this.#sendSignal(peerId, description.type, { type: description.type, sdp: description.sdp });
@@ -396,10 +485,93 @@ export class MeetingController {
 
   #dropPeer(peerId: string): void {
     const state = this.#connections.get(peerId);
-    state?.channel?.close();
-    state?.connection.close();
+    if (state) this.#closePeer(state);
     this.#connections.delete(peerId);
     this.#events.onPeerLeft(peerId);
+  }
+
+  #closePeer(state: PeerConnectionState): void {
+    clearTimeout(state.restartTimer);
+    state.channel?.close();
+    state.connection.close();
+  }
+
+  #isCurrentPeer(peerId: string, state: PeerConnectionState): boolean {
+    return !this.#closing && state.generation === this.#generation && this.#connections.get(peerId) === state && state.connection.connectionState !== 'closed';
+  }
+
+  #reportIceError(error: unknown): void {
+    if (this.#closing || !(error instanceof IceConfigurationError) || this.#lastIceError?.code === error.code) return;
+    this.#lastIceError = error;
+    this.#events.onError(error.code, error.message);
+  }
+
+  #updateIceConfiguration(configuration: IceConfiguration): void {
+    const previousError = this.#lastIceError;
+    this.#lastIceError = null;
+    for (const [peerId, state] of this.#connections) {
+      if (state.connection.connectionState === 'closed') continue;
+      state.connection.setConfiguration({ ...state.connection.getConfiguration(), iceServers: configuration.iceServers });
+      // A new ICE gathering phase replaces allocations authenticated with the old credentials.
+      state.restartRequested = true;
+      if (state.recoveryFailed) state.restartAttempts = 0;
+      state.recoveryFailed = false;
+      this.#scheduleIceRestart(peerId, state, 0);
+    }
+    if (previousError) this.#events.onIceRecovered?.(previousError.code, previousError.message);
+  }
+
+  #iceStateChanged(peerId: string, state: PeerConnectionState): void {
+    if (!this.#isCurrentPeer(peerId, state)) return;
+    const { connection } = state;
+    if (connection.iceConnectionState === 'connected' || connection.iceConnectionState === 'completed') {
+      if (state.restartRequested) {
+        this.#scheduleIceRestart(peerId, state, 0);
+        return;
+      }
+      clearTimeout(state.restartTimer);
+      state.restartTimer = undefined;
+      state.restartAttempts = 0;
+      state.recoveryFailed = false;
+      return;
+    }
+    const failed = connection.iceConnectionState === 'failed' || connection.connectionState === 'failed';
+    if (failed || connection.iceConnectionState === 'disconnected') {
+      this.#scheduleIceRestart(peerId, state, failed ? 0 : ICE_DISCONNECTED_GRACE_MS);
+    }
+  }
+
+  #scheduleIceRestart(peerId: string, state: PeerConnectionState, delay: number): void {
+    if (!this.#isCurrentPeer(peerId, state) || state.restartTimer !== undefined || state.restarting || state.recoveryFailed) return;
+    state.restartTimer = setTimeout(() => {
+      state.restartTimer = undefined;
+      void this.#restartIce(peerId, state);
+    }, delay);
+  }
+
+  async #restartIce(peerId: string, state: PeerConnectionState): Promise<void> {
+    if (!this.#isCurrentPeer(peerId, state)) return;
+    if (state.restartAttempts >= MAX_ICE_RESTARTS) {
+      state.recoveryFailed = true;
+      this.#events.onError('PEER_CONNECTION_FAILED', 'A participant connection could not recover. Rejoin the room to retry.');
+      return;
+    }
+    state.restarting = true;
+    state.restartAttempts += 1;
+    try {
+      await this.#ice.get();
+      if (!this.#isCurrentPeer(peerId, state)) return;
+      if (!state.restartRequested && (state.connection.iceConnectionState === 'connected' || state.connection.iceConnectionState === 'completed')) return;
+      state.restartRequested = false;
+      state.connection.restartIce();
+    } catch (error) {
+      this.#reportIceError(error);
+    } finally {
+      state.restarting = false;
+      if (state.connection.iceConnectionState !== 'connected' && state.connection.iceConnectionState !== 'completed') {
+        this.#scheduleIceRestart(peerId, state, ICE_RESTART_WAIT_MS);
+      }
+    }
   }
 
   /** The peer with the lexically smaller id is impolite: it creates the data channel and wins offer collisions. */

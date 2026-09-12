@@ -168,8 +168,8 @@ async (page, origin = 'http://127.0.0.1:8788') => {
     await page.getByTestId('file-card').getByText('workflow-notes.txt', { exact: true }).waitFor();
     await page.getByTestId('file-card').getByText('workflow-reference.png', { exact: true }).waitFor();
     if (await page.getByRole('region', { name: 'Shared whiteboard', exact: true }).count()) throw new Error('Whiteboard should start closed');
-    await tab(page, 'Chat').click();
-    await page.getByRole('button', { name: 'Talk to Chat', exact: true }).click();
+    await tab(page, 'Muse').click();
+    await page.getByRole('button', { name: 'Talk', exact: true }).click();
     await page.waitForFunction(() => window.__chatToolsTest.complete || window.__chatToolsTest.errors.length, null, { timeout: 60_000 });
     const errors = await page.evaluate(() => window.__chatToolsTest.errors);
     if (errors.length) throw new Error(errors.join('\n'));
@@ -222,7 +222,7 @@ async (page, origin = 'http://127.0.0.1:8788') => {
     await tab(guest, 'Transcript').click();
     if (/private-voice-only|private-reply-only/.test(await guest.locator('body').innerText())) throw new Error('Guest saw private voice conversation');
     await page.getByRole('button', { name: 'Finish speaking', exact: true }).click();
-    await page.getByRole('button', { name: 'Talk to Chat', exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Talk', exact: true }).waitFor();
     return { clients: 2, calls: provider.calls, guestFileTransfer: true, sharedImageAsProviderVision: true, guestBoardSync: true, boardAutoOpen: true, renderedBoardAsProviderVision: true, diagramInViewport: true, boardZoom: zoom, renderedDiagram, attributedRoomPost: true, privateVoiceIsolation: true, allParticipantContextDefault: true, screenOptInPreserved: true, provider: 'simulated GPT-Live WebRTC with real room and tool execution (no real provider call)' };
   } finally {
     await Promise.all([ownerContext, guestContext].map(context => context.close()));
