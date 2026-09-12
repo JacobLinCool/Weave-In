@@ -62,9 +62,11 @@ function PreviewDialog({ file, kind, mime, onDownload, onClose }: { file: Shared
     </header>
     {file.blob ? <FilePreview blob={file.blob} name={file.name} kind={kind} mime={mime} />
       : <div className="preview-dialog__status">
-        {file.status === 'error' || file.status === 'unavailable' ? <>
-          <p role="alert">{file.error ?? 'This file is no longer available.'}</p>
-          {file.status === 'error' && <button type="button" className="file-card__action" onClick={() => onDownload(file.id)}>Retry preview</button>}
+        {file.status === 'available' || file.status === 'error' || file.status === 'unavailable' ? <>
+          <p role={file.status === 'available' ? 'status' : 'alert'}>{file.status === 'available'
+            ? 'This file is available. Load it to preview.'
+            : file.error ?? 'This file is no longer available.'}</p>
+          {file.status !== 'unavailable' && <button type="button" className="file-card__action" onClick={() => onDownload(file.id)}>{file.status === 'available' ? 'Load preview' : 'Retry preview'}</button>}
         </> : <>
           <p role="status">Receiving file for preview…</p>
           <TransferProgress file={file} />

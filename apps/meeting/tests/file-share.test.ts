@@ -136,6 +136,28 @@ describe('peer-to-peer file sharing', () => {
     expect(a.share.handleMessage('b', { type: 'file', id: shared.id, name: 'hello.txt', size: 5, mime: 'text/plain', at: shared.at })).toBeNull();
   });
 
+  it('restores downloads when the original owner reconnects without duplicating the announcement', async () => {
+    const { a, b } = pair();
+    const shared = a.share.share(new File(['hello'], 'hello.txt', { type: 'text/plain' }));
+    await settle();
+    b.share.peerLeft('a');
+    const announcement = a.outbound[0]!;
+    expect(b.share.handleMessage('other-peer', announcement)).toBeNull();
+    expect(b.share.get(shared.id)?.status).toBe('unavailable');
+
+    expect(b.share.handleMessage('a', announcement)).toBeNull();
+    expect(b.snapshots.at(-1)?.[shared.id]).toMatchObject({ status: 'available', received: 0, error: null });
+    expect(b.share.files()).toHaveLength(1);
+    const blob = await b.share.download(shared.id);
+    expect(await blob.text()).toBe('hello');
+    b.share.peerLeft('a');
+    a.share.announceTo('b');
+    await settle();
+    expect(b.share.get(shared.id)).toMatchObject({ status: 'ready', blob });
+    a.share.close();
+    b.share.close();
+  });
+
   it('formats sizes for humans', () => {
     expect(formatBytes(512)).toBe('512 B');
     expect(formatBytes(20 * 1024)).toBe('20 KB');
