@@ -345,3 +345,11 @@ it('reserves enough capacity to verify a drawing after a large reference image',
   expect(error).not.toHaveBeenCalled();
   live.close(); channel.event({ type: 'session.closed' });
 });
+
+
+it('preserves complete approved public messages instead of applying private reply brevity limits', () => {
+  const agent = { config: { kind: 'personal', audience: 'public', language: 'auto', instructions: 'Read the selected message.' } } as RoomAgent;
+  const settings = liveSettings(agent, [], false);
+  expect(String(settings.instructions)).toContain('without summarizing');
+  expect(JSON.stringify(settings)).not.toContain('150 spoken words');
+});

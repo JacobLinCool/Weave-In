@@ -428,3 +428,15 @@ describe('personal assistant whiteboard and meeting context tools', () => {
     expect(JSON.stringify(result)).not.toContain('private pixels');
   });
 });
+
+
+it('grants enough time to read a full Muse message but still revokes a disconnected speaker', () => {
+  const state = emptyAgentRoom(); const host = member('host');
+  applyAgentCommand(state, host, { type: 'agent-create', config: { ...config, kind: 'personal', audience: 'private' } }, 1000, () => 'muse');
+  applyAgentCommand(state, host, { type: 'agent-floor', id: 'muse' }, 1000, () => 'floor');
+  host.heartbeat = 62_000;
+  reconcileAgents(state, [host], 62_000, () => 'next');
+  expect(state.floor?.id).toBe('floor');
+  reconcileAgents(state, [host], 93_000, () => 'next');
+  expect(state.floor).toBeNull();
+});
