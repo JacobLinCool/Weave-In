@@ -53,6 +53,43 @@ class FakeMixer implements SessionAudioMixer {
 }
 
 describe('TranscriptionSession', () => {
+  it.each(['gemini', 'openai'] as const)('normalizes %s output before notifying subscribers', async (provider) => {
+    let callbacks: LiveTranscriptionCallbacks | undefined;
+    const session = new TranscriptionSession({
+      workletUrl: 'worklet.js',
+      credential: { type: 'api-key', value: 'key' },
+      options: { provider, languageCodes: ['cmn-Hant-TW', 'en-US'] },
+      mixer: new FakeMixer(),
+      dependencies: {
+        randomUUID: () => 'traditional',
+        createTranscriber: (args) => {
+          expect(args.provider).toBe(provider);
+          callbacks = args.callbacks;
+          return {
+            audioFormat: { sampleRate: 16_000, framesPerChunk: 1_600 },
+            async start() { args.callbacks.onConnectionReady(1); },
+            sendAudio() {},
+            async stop() {},
+          };
+        },
+      },
+    });
+    const listener = vi.fn();
+    session.subscribe(listener);
+    session.addAudioSource(fakeTrack());
+    expect((await session.start()).ok).toBe(true);
+    callbacks!.onInterim('这个软件');
+    expect(listener).toHaveBeenLastCalledWith(expect.objectContaining({ interim: '這個軟件' }));
+    const pending = session.waitForTranscript({ waitMs: 1_000 });
+    callbacks!.onFinal('这个软件', 1);
+    expect(listener).toHaveBeenLastCalledWith(expect.objectContaining({
+      interim: '', segments: [expect.objectContaining({ text: '這個軟件' })],
+    }));
+    await expect(pending).resolves.toMatchObject({ data: { segments: [{ text: '這個軟件' }] } });
+    expect(session.getTranscript().data?.segments[0]?.text).toBe('這個軟件');
+    await session.destroy();
+  });
+
   it('shares idempotent state between start, transcript reads, and stop', async () => {
     const mixer = new FakeMixer();
     let callbacks: LiveTranscriptionCallbacks | undefined;

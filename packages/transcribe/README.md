@@ -16,4 +16,8 @@ await transcription.stop();
 await transcription.destroy();
 ```
 
+When `languageCodes` selects Traditional Chinese (for example, `cmn-Hant-TW`) without Simplified Chinese (for example, `cmn-Hans-CN`), both providers' interim and finalized transcripts receive character-only Simplified-to-Traditional conversion before subscribers or queries see them. Chinese `Hant`/`Hans` script subtags take precedence over regional defaults (`TW`/`HK`/`MO` for Traditional, `CN`/`SG` for Simplified). Automatic detection, language selections without a Traditional Chinese preference, and selections containing both scripts leave the provider's script unchanged.
+
+Conversion uses only the [OpenCC character dictionary](https://github.com/nk2028/opencc-js), bundled locally through `opencc-js`. Regional vocabulary is preserved: `软件` becomes `軟件`, not `軟體`. Ambiguous characters use the dictionary's first candidate without context; for example, `头发` becomes `頭發`. Phrase disambiguation and regional word replacement are intentionally excluded.
+
 Sources are borrowed by default (`stop()` never ends WebRTC tracks); pass `owned: true` to have the session stop a track on stop. `start()`, `getTranscript()`, `waitForTranscript()`, and `stop()` return a `CommandResult` with stable codes instead of hidden fallbacks. The AudioWorklet ships as a same-origin asset so adopters can keep `script-src 'self'`.
