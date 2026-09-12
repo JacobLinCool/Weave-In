@@ -6,7 +6,7 @@ Keep the thread. Weave everyone in.
 
 Groupthink is the failure mode where a group suppresses dissent to preserve harmony, stops thinking critically, and converges on a decision no member would have defended alone. It is invisible from inside the room, because the meeting feels productive precisely when nobody is arguing.
 
-Weave In runs browser meetings with per-participant captions, private Personal assistants and one shared Group facilitator. A Group prepares after a manual signal, raises its hand, and speaks only when a participant invites it. Automated groupthink detectors are specified as future work; they are not running in the current product.
+Weave In runs browser meetings with per-participant captions, private **Muse** assistants and a shared **Omni** facilitator. Muse supports private voice and text discussion, reads permitted meeting records and shared files, and can edit the shared whiteboard or post in Room chat when its owner asks. Omni publishes brief public text suggestions. Automatic private reminders flag possible unresolved objections; broader groupthink detection remains future work.
 
 ```
 apps/meeting          Landing page + meeting room (React + Vite), Cloudflare Worker + Durable Object
@@ -79,6 +79,15 @@ Two WebMCP tools are available while in a meeting:
 
 Use the capture tool after an edit to verify its rendered appearance. Closing
 the board preserves shared content; viewport position and selection remain local.
+
+The personal **Muse** assistant uses the same whiteboard tools from an ordinary
+meeting browser. Open **Muse → Talk** and ask, for example, “Turn our
+discussion into a flowchart on the whiteboard,” or “Read the uploaded design
+and draw its workflow.” You can also ask Muse to post a summary in Room chat.
+Its spoken replies remain private. It reads earlier meeting records and supported
+files as needed; it cannot recover records missing from this browser or fetch an
+uncached file from a participant who has left. Whiteboard output consists of
+editable shapes, labels and connectors; generated image assets are not supported.
 
 For example, pass this to `edit_whiteboard`, then call `capture_whiteboard`:
 

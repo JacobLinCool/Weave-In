@@ -74,9 +74,9 @@ export interface MeetingToolsContext {
   /** Resolves null when nobody is sharing a screen. */
   captureScreen(options: CaptureOptions): Promise<ScreenCapture | null>;
   /** Captures the open whiteboard viewport; rejects when the board is closed. */
-  captureWhiteboard(options: CaptureOptions): Promise<CapturedFrame>;
+  captureWhiteboard(options: CaptureOptions, authorized?: () => boolean): Promise<CapturedFrame>;
   /** Mutates the shared room store; implementations should use the validated editWhiteboard helper. */
-  editWhiteboard(input: unknown): WhiteboardEditResult | Promise<WhiteboardEditResult>;
+  editWhiteboard(input: unknown, authorized?: () => boolean): WhiteboardEditResult | Promise<WhiteboardEditResult>;
   sendAgentMessage(text: string, agent: string | null): { id: string; at: string };
 }
 

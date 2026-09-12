@@ -44,7 +44,7 @@ The Worker receives assistant settings, connection descriptions and room coordin
 
 ## Configuration and private Muse
 
-Joining a room automatically configures one personal Muse for that participant. This does not start a continuously running Live session or make a spoken announcement. Public sources default to all participants, public chat is included, and screen/file permissions are separately controlled and off by default. Direct owner requests are always included. The owner can edit sources and tools through the settings button; saving preserves identity and conversation history while stopping old sessions. Markdown instructions cannot grant permissions.
+Joining a room automatically configures one personal Muse for that participant. This does not start a continuously running Live session or make a spoken announcement. Public sources default to all participants, public chat is included, and shared files are enabled by default, while shared-screen capture requires opt-in. Direct owner requests are always included. The owner can edit sources and tools through the settings button; saving preserves identity and conversation history while stopping old sessions. Markdown instructions cannot grant permissions.
 
 Background records update an active private session without requesting a reply. A direct text question, reminder discussion action, or **Talk** starts a bounded private interaction with permitted public context and personal conversation. Private records stay in the runtime and are excluded from WebMCP's meeting log and peer replay. Agent transcript fragments update stable IDs and receive fresh cursors; permission-filtered logs may contain sequence gaps.
 

@@ -129,6 +129,7 @@ export function App(): ReactNode {
   const screenStreamRef = useRef<MediaStream | null>(null);
   const controllerRef = useRef<MeetingController | null>(null);
   const [whiteboard] = useState(() => new ExcalidrawStore((element) => controllerRef.current?.broadcast({ type: 'excalidraw', element })));
+  const [whiteboardOpen, setWhiteboardOpen] = useState(false);
   const whiteboardApiRef = useRef<ExcalidrawImperativeAPI | null>(null);
   const onWhiteboardApi = useCallback((api: ExcalidrawImperativeAPI | null) => { whiteboardApiRef.current = api; }, []);
   const participantsRef = useRef<Record<string, RemoteParticipant>>({});
@@ -855,6 +856,21 @@ export function App(): ReactNode {
     };
   };
 
+  const openAgentWhiteboard = async (authorized: () => boolean): Promise<HTMLElement> => {
+    const available = () => phaseRef.current === 'room' && authorized();
+    if (!available()) throw new Error('This agent turn has ended.');
+    setWhiteboardOpen(true);
+    const deadline = Date.now() + 5_000;
+    while (available() && Date.now() < deadline) {
+      const root = document.querySelector<HTMLElement>('.whiteboard');
+      if (root?.querySelector('canvas') && whiteboardApiRef.current) return root;
+      await new Promise<void>(resolve => setTimeout(resolve, 50));
+    }
+    throw new Error(available() ? 'The whiteboard is still loading. Please retry.' : 'This agent turn has ended.');
+  };
+
+  useEffect(() => { if (phase === 'lobby') setWhiteboardOpen(false); }, [phase]);
+
   useEffect(() => {
     if (phase !== 'room') return;
     autoReminders.start({ log: () => logRef.current, you: () => logParticipant(SELF).peerId });
@@ -904,19 +920,24 @@ export function App(): ReactNode {
           if (!file) throw new Error('File no longer available.');
           return { file, blob };
         }, captureScreen,
-      captureWhiteboard: (options) => {
-        const root = document.querySelector<HTMLElement>('.whiteboard');
-        if (!root) throw new Error('Open the whiteboard before capturing it.');
-        return captureWhiteboard(root, options);
-      },
-      editWhiteboard: async (input) => {
-        const result = await editExcalidrawWhiteboard(whiteboard, input);
-        if (result.action !== 'read') {
-          await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
-          whiteboardApiRef.current?.scrollToContent(undefined, { fitToViewport: true, viewportZoomFactor: 0.8, animate: false });
-        }
-        return result;
-      },
+        captureWhiteboard: async (options, authorized = () => true) => {
+          const root = await openAgentWhiteboard(authorized);
+          if (!authorized()) throw new Error('This agent turn has ended.');
+          return captureWhiteboard(root, options);
+        },
+        editWhiteboard: async (input, authorized = () => true) => {
+          const reading = !!input && typeof input === 'object' && 'action' in input && input.action === 'read';
+          if (!reading) await openAgentWhiteboard(authorized);
+          const result = await editExcalidrawWhiteboard(whiteboard, input, undefined,
+            () => phaseRef.current === 'room' && authorized());
+          if (result.action !== 'read' && authorized()) {
+            // The store's subscriber applies the new scene on the next frame.
+            // Fitting an empty/stale scene can zoom to 3000% before it arrives.
+            await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+            if (authorized()) whiteboardApiRef.current?.scrollToContent(whiteboard.snapshot(), { fitToViewport: true, viewportZoomFactor: 0.8, animate: false });
+          }
+          return result;
+        },
         sendAgentMessage: (text, agent) => sendChat(text, agent ?? 'Muse'),
       },
       beginVoice: async (audience, owner) => {
@@ -1010,6 +1031,8 @@ export function App(): ReactNode {
         }}
         agentPanel={agentRuntime ? <AgentPanel runtime={agentRuntime} mode="personal" isHost={selfRef.current?.isHost ?? false} /> : null}
         whiteboard={whiteboard}
+        whiteboardOpen={whiteboardOpen}
+        onToggleWhiteboard={() => setWhiteboardOpen(open => !open)}
         onWhiteboardApi={onWhiteboardApi}
         roomCode={roomCode}
         displayName={nameRef.current}
@@ -1079,6 +1102,8 @@ function MeetingSurface(props: {
   groupPanel: ReactNode;
   noticeActions: NoticeActions;
   whiteboard: ExcalidrawStore;
+  whiteboardOpen: boolean;
+  onToggleWhiteboard(): void;
   onWhiteboardApi(api: ExcalidrawImperativeAPI | null): void;
   privateNotices: PrivateNotices;
   autoReminders: AutoReminders;
@@ -1111,7 +1136,6 @@ function MeetingSurface(props: {
   onCopy(): void;
   onLeave(): void;
 }): ReactNode {
-  const [whiteboardOpen, setWhiteboardOpen] = useState(false);
   const participants = Object.values(props.participants);
   const presentation = findPresentation(props.screenStream, props.displayName, participants);
   const tiles = [
@@ -1156,7 +1180,7 @@ function MeetingSurface(props: {
       />
       <div className="meeting-body">
         <section className="meeting-stage">
-          {whiteboardOpen ? (
+          {props.whiteboardOpen ? (
             <><div id="meeting-whiteboard"><Whiteboard store={props.whiteboard} onApi={props.onWhiteboardApi} /></div><div className="whiteboard-video-strip">{tiles}</div></>
           ) : presentation ? (
             <div className="stage-presentation">
@@ -1173,8 +1197,8 @@ function MeetingSurface(props: {
           )}
           <div className="meeting-footer">
             <MeetingControls
-              whiteboardOpen={whiteboardOpen}
-              onToggleWhiteboard={() => setWhiteboardOpen(open => !open)}
+              whiteboardOpen={props.whiteboardOpen}
+              onToggleWhiteboard={props.onToggleWhiteboard}
               micEnabled={props.micEnabled}
               cameraEnabled={props.cameraEnabled}
               sharingScreen={Boolean(props.screenStream)}

@@ -4,5 +4,5 @@ import groupInstructions from './group.md?raw';
 
 export function defaultAgentConfig(kind: AgentKind): AgentConfig {
   return { kind, name: kind === 'personal' ? 'Muse' : 'Omni', instructions: kind === 'personal' ? personalInstructions : groupInstructions,
-    language: 'auto', source: 'all', chat: true, system: kind === 'group', screen: false, files: false, audience: kind === 'personal' ? 'private' : 'public' };
+    language: 'auto', source: 'all', chat: true, system: kind === 'group', screen: false, files: kind === 'personal', audience: kind === 'personal' ? 'private' : 'public' };
 }
