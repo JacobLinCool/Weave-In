@@ -1,5 +1,19 @@
 # Agent verification — 2026-09-12
 
+## Muse tool and Room permission revision
+
+Revises the voice extension deployed from main `20ebf3a` after PR #15. Muse no longer receives `search_meeting` or `download_file`. `read_meeting` defaults to and allows 500 complete records per page; the initial read starts at cursor zero, and subsequent pages use the last successfully consumed cursor. `read_shared_file` downloads each complete source file internally before extracting readable content. Native browser WebMCP remains separate.
+
+Personal Room posting now requires `roomMessages: true`, with an unchecked setting and an explicit description that Room is visible to everyone. Missing legacy values deny posting. The client removes the tool by default and rechecks permission at execution; the Worker also rejects unauthorized tool declarations. An enabled permission still requires a direct owner request. Integrated main `8bd60d7`, retaining inline Muse settings, epoch-based cancellation when settings change, system-signal delivery, the sidebar width correction, no fixed Muse conversation timeout and automatic Omni initialization. Omni's existing publication permissions are unchanged.
+
+Final integrated `pnpm check` passed with exit code 0: 77 transcription + 385 meeting tests (462 total), type checking, production builds, asset validation and Worker deployment dry-run. Regressions include 1,002 full records returned in 500/500/2 pages, legacy config defaults, Worker posting rejection, cancellation of an asynchronous board commit and captured posting tool after revocation, and visible refusal to save/remove during disconnection or recovery. Local check log: `/private/tmp/weave-muse-release-check.log`.
+
+The 500-record tool limit is separate from the application's conservative cumulative 30,000-byte / 120-item Live event budget. Oversized results produce an explicit error, not silent truncation. This revision does not establish complete large-transcript delivery to the model or add a server transcript archive.
+
+Two independent Chrome participants passed the revised six-call harness against the integrated production build: meeting read, complete text-file download/reading, image download/vision input, board read, Mermaid edit and rendered board capture. The guest received the diagram; no Muse message appeared in public Room and private voice text remained isolated. Default tool declarations excluded search, raw download and Room posting, and the meeting schema allowed 500 records. The harness simulated GPT-Live and ICE provisioning while using real local room signaling, peer file transfer, whiteboard rendering and synchronization. It does not certify model tool choice or TURN relay connectivity.
+
+The preceding production release was checked with one real GPT-Live typed request in an isolated test room: initialization returned 201, meeting reading succeeded, the three-node Mermaid workflow was created, and a rendered whiteboard image was delivered to the model. The old requested Room-post step did not complete within 120 seconds and room coordination showed reconnect/lost alerts, so that run was not a full end-to-end pass. The test left its room and closed its browser. It did not verify speech recognition or physical listening.
+
 ## Current main recheck — `002e524`
 
 Local Chromium recheck of the merged Chat / text-only Omni implementation passed on 2026-09-12. The historical browser matrix below is not a new cross-browser certification.

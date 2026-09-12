@@ -4,9 +4,9 @@ Omni is a public-discussion facilitator, not a psychological diagnosis. Its four
 
 ## Trigger and privacy
 
-Add Omni in Room to enable review. There is no manual review button, manual signal command or spoken approval phrase. Only the elected ready browser may request review. A two-second timer waits for at least four finalized public human caption/chat records, new non-replayed discussion after Omni was added, and at least 1.5 seconds without human voice activity, interim captions or new finalized discussion. Agent output, presence, files and historical replay alone do not trigger a review. Captions must be enabled to analyze speech; Room text works without captions.
+Omni is created automatically when the room starts. Removing it disables review for that room until someone explicitly adds it again. There is no manual review button, manual signal command or spoken approval phrase. Only the elected ready browser may request review. A two-second timer waits for at least four finalized public human caption/chat records, new non-replayed discussion after Omni was added, and at least 1.5 seconds without human voice activity, interim captions or new finalized discussion. Agent output, presence, files and historical replay alone do not trigger a review. Captions must be enabled to analyze speech; Room text works without captions.
 
-The browser supplies bounded public context and the opening discussion as goal evidence; existing read/search tools retrieve earlier public records when necessary. It never supplies private Muse conversations or private reminders. Files/screens remain opt-in read sources and cannot initiate review. Evidence must refer to finalized public discussion records, not files, screen guesses or assistant text.
+The browser supplies bounded public context and the opening discussion as goal evidence; existing read_meeting tool retrieve earlier public records when necessary. It never supplies private Muse conversations or private reminders. Files/screens remain opt-in read sources and cannot initiate review. Evidence must refer to finalized public discussion records, not files, screen guesses or assistant text.
 
 ## Decisions and actions
 

@@ -3,7 +3,7 @@ import { defaultAgentConfig } from './config';
 import { AgentAudio } from './audio';
 import { AgentLive } from './live';
 import { contextText, scopedTools } from './tools';
-import { emptyAgentRoom, HEARTBEAT_MS, permitsFloor, permitsHistory, type AgentCommand, type AgentConfig, type AgentLine, type AgentPeerMessage, type AgentRoomState, type Audience, type RoomAgent } from './contracts';
+import { emptyAgentRoom, HEARTBEAT_MS, parseAgentConfig, permitsFloor, permitsHistory, type AgentCommand, type AgentConfig, type AgentLine, type AgentPeerMessage, type AgentRoomState, type Audience, type RoomAgent } from './contracts';
 import type { MeetingController } from '../meeting-controller';
 import type { MeetingToolsContext } from '../webmcp';
 
@@ -141,7 +141,10 @@ export class AgentRuntime {
     await this.#saveConfig({ type: 'agent-configure', id, config });
   }
   #saveConfig(command: Extract<AgentCommand, { type: 'agent-create' | 'agent-configure' }>): Promise<void> {
-    if (this.#closed || this.#connectionLost) return Promise.reject(new Error('Reconnect to the meeting before saving agent settings.'));
+    if (this.#closed || this.#connectionLost || this.#awaitingRecoveryState) return Promise.reject(new Error('Reconnect to the meeting before saving agent settings.'));
+    const config = parseAgentConfig(command.config);
+    if (!config) return Promise.reject(new Error('Invalid agent settings.'));
+    command = { ...command, config };
     if (command.type === 'agent-create' && this.#state.agents.some((agent) => agent.config.kind === command.config.kind && (agent.config.kind === 'group' || agent.owner === this.ctx.peerId))) return Promise.reject(new Error('This agent already exists. Open settings to edit it.'));
     return new Promise((resolve, reject) => {
       const finish = (error?: Error): void => {
@@ -153,7 +156,7 @@ export class AgentRuntime {
         if (this.#connectionLost) { finish(new Error('The meeting disconnected. Please retry.')); return; }
         const agent = this.#state.agents.find((entry) => command.type === 'agent-configure' ? entry.id === command.id : entry.config.kind === command.config.kind && (entry.config.kind === 'group' || entry.owner === this.ctx.peerId));
         if (agent && command.type === 'agent-create' && agent.owner !== this.ctx.peerId) finish(new Error('Another participant has already added Omni. Open settings to edit it.'));
-        else if (agent && JSON.stringify(agent.config) === JSON.stringify(command.config)) finish();
+        else if (agent && JSON.stringify(parseAgentConfig(agent.config)) === JSON.stringify(command.config)) finish();
       });
       const timeout = setTimeout(() => finish(new Error('The room did not confirm settings. Please retry.')), 10_000);
       this.#pendingSaves.add(cancel);
@@ -162,9 +165,15 @@ export class AgentRuntime {
   }
 
   remove(id: string): void {
+    if (this.#closed) return;
+    if (this.#connectionLost || this.#awaitingRecoveryState) {
+      this.#error = 'Reconnect to the meeting before removing an assistant.'; this.#emit(); return;
+    }
+    this.#error = null;
     for (const [kind, op] of this.#operations) if (op.agent.id === id) this.#stop(kind, 'interrupted');
     if (id === this.#personalId) { this.#queue = []; this.#lines = []; }
     this.command({ type: 'agent-remove', id });
+    this.#emit();
   }
   /** Kept for callers upgrading from the old panel; persistent public mode is disabled. */
   setAudience(_audience: Audience): void { this.#audience = 'private'; }
@@ -393,6 +402,7 @@ export class AgentRuntime {
     const op: Operation = { key: crypto.randomUUID(), agent: structuredClone(agent), audience, floorId: this.#state.floor?.agentId === agent.id ? this.#state.floor.id : '', preparing,
       live: null, microphone: null, stopAudio: null, streamId: null, startedAt: Date.now(), lastSound: 0, heard: false, playback: null, voice, timer: null, speechTimer: null, rows: new Map() };
     this.#operations.set(agent.config.kind, op);
+    this.#error = null;
     const behalf = agent.config.kind === 'personal' && audience === 'public';
     const history = agent.config.kind === 'personal' && !behalf ? this.#lines : [];
     if (inputLine) {
@@ -473,13 +483,16 @@ export class AgentRuntime {
       if (!behalf && agent.config.system && this.#state.signal) context += `\nSystem signal: ${JSON.stringify(this.#state.signal)}`;
       if (voice) live.context(context); else live.request(context, text);
       this.#status = voice ? (audience === 'private' ? 'Speak privately to Muse. Your meeting microphone is paused.' : 'Speak publicly to Muse. Everyone can hear you.') : preparing ? 'Preparing a suggestion…' : 'Waiting for Muse’s response…';
-      op.timer = setTimeout(() => {
+      // Muse conversations have no fixed duration limit. Only group suggestion
+      // preparation is bounded by the room's preparation lease.
+      if (preparing) op.timer = setTimeout(() => {
         if (!valid()) return;
-        this.#error = preparing ? 'Omni preparation timed out.' : 'This interaction reached its time limit. Continue with a new request.';
+        this.#error = 'Omni preparation timed out.';
         this.#stop(agent.config.kind, 'interrupted');
-        if (preparing) this.command({ type: 'agent-cancel', id: agent.id });
+        this.command({ type: 'agent-cancel', id: agent.id });
+        this.#drain();
         this.#emit();
-      }, voice ? 180_000 : preparing ? 55_000 : 120_000);
+      }, 55_000);
       this.#emit();
     } catch (error) {
       if (valid()) { this.#error = error instanceof Error ? error.message : 'Unable to start the agent.'; this.#stop(agent.config.kind, 'interrupted'); if (preparing) this.command({ type: 'agent-cancel', id: agent.id }); this.#emit(); }

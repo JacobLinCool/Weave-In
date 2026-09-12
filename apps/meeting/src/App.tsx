@@ -1,3 +1,4 @@
+import { requestTranscriptionToken, type IssuedToken } from './transcription-token';
 import { observeVoiceActivity } from './voice-activity';
 import { AgentRuntime } from './agents/runtime';
 import { AgentPanel } from './agents/panel';
@@ -16,7 +17,6 @@ import {
   type Credential,
   type Transcription,
   type TranscriptState,
-  type TranscriptionProvider,
 } from '@weave-in/transcribe';
 import { LoaderCircle } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
@@ -76,10 +76,6 @@ interface Presentation {
   local: boolean;
 }
 
-interface IssuedToken {
-  provider: TranscriptionProvider;
-  token: string;
-}
 
 const SELF = 'self';
 const DISPLAY_NAME_STORAGE_KEY = 'weave-in:display-name';
@@ -980,6 +976,9 @@ export function App(): ReactNode {
       if (agentRef.current === runtime) setError(cause instanceof Error ? cause.message : 'Muse could not initialize.');
     });
     if (agentStateRef.current) runtime.update(agentStateRef.current.state, agentStateRef.current.now);
+    // Omni is created by the room. Register this device to run its text
+    // suggestions without requiring the participant to open agent settings.
+    void runtime.enable().catch(() => { /* Runtime exposes a retry if browser audio activation is blocked. */ });
     for (const [peer, participant] of Object.entries(participantsRef.current)) for (const stream of Object.values(participant.streams)) runtime.remoteStream(peer, stream);
     return () => { saveConversation(); runtime.close(); if (agentRef.current === runtime) agentRef.current = null; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1005,7 +1004,7 @@ export function App(): ReactNode {
             activeSince ??= performance.now();
             if (performance.now() - activeSince >= 100) agentRuntime.ownerStartedSpeaking();
           });
-        } catch { setError('Speech interruption is unavailable. Use Stop in Muse to interrupt the response.'); }
+        } catch { setError('Speech interruption is unavailable.'); }
       } else if (!agentRuntime.snapshot().publicPersonalSpeaking && stop) {
         const cleanup = stop; stop = undefined; cleanup(); activeSince = null;
       }
@@ -1286,27 +1285,6 @@ function omitKey<T>(record: Record<string, T>, key: string): Record<string, T> {
   return next;
 }
 
-async function requestTranscriptionToken(): Promise<IssuedToken> {
-  const response = await fetch('/api/transcription-token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: '{}',
-    cache: 'no-store',
-    credentials: 'same-origin',
-  });
-  if (response.status === 503) {
-    throw new Error('Captions are unavailable: this deployment has no caption provider configured.');
-  }
-  if (!response.ok) throw new Error('The meeting could not obtain a temporary transcription token.');
-  const payload: unknown = await response.json();
-  const record = payload && typeof payload === 'object' ? (payload as Record<string, unknown>) : null;
-  const provider = record?.['provider'];
-  const token = typeof record?.['token'] === 'string' ? record['token'].trim() : '';
-  if ((provider !== 'gemini' && provider !== 'openai') || !token) {
-    throw new Error('The meeting received an invalid token response.');
-  }
-  return { provider, token };
-}
 
 /** Reads `?room=CODE` from an invite link; anything malformed is ignored. */
 function readRoomCodeFromUrl(): string {

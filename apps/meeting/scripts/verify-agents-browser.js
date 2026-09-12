@@ -4,10 +4,24 @@ async (page, origin = 'http://127.0.0.1:8788', options = {}) => {
     context.setDefaultTimeout(15_000);
     // This UI harness uses local peer connectivity, not the external TURN service.
     await context.route('**/api/ice-servers', (route) => route.fulfill({ json: { ok: true, expiresAt: Date.now() + 86_400_000, iceServers: [{ urls: 'turn:127.0.0.1:9', username: 'test', credential: 'test' }] } }));
+    await context.route('**/api/transcription-token', route => route.fulfill({ json: { provider: 'openai', token: 'test' } }));
+    await context.routeWebSocket('wss://api.openai.com/**', socket => {
+      let commit = 0;
+      socket.onMessage(raw => {
+        const message = JSON.parse(String(raw));
+        if (message.type === 'session.update') socket.send(JSON.stringify({ type: 'session.updated' }));
+        if (message.type === 'input_audio_buffer.commit') {
+          const item_id = `dictation-${++commit}`;
+          socket.send(JSON.stringify({ type: 'input_audio_buffer.committed', item_id }));
+          socket.send(JSON.stringify({ type: 'conversation.item.input_audio_transcription.delta', item_id, delta: 'dictated-secret' }));
+          socket.send(JSON.stringify({ type: 'conversation.item.input_audio_transcription.completed', item_id, transcript: 'dictated-secret final.' }));
+        }
+      });
+    });
     await context.grantPermissions(['microphone', 'camera']);
     await context.addInitScript(({ realProvider, scenario }) => {
       localStorage.setItem('weave-in:settings', JSON.stringify({ captionsEnabled: false, languageCodes: [], mode: 'VERBATIM' }));
-      window.__agentTest = { states: [], sends: [], sessions: [], incoming: [], peers: [], sockets: [], microphones: [], audible: 0, tools: {}, reasoning: [] };
+      window.__agentTest = { states: [], sends: [], sessions: [], incoming: [], peers: [], sockets: [], microphones: [], audible: 0, tools: {}, reasoning: [], dictationFrames: 0 };
       Object.defineProperty(navigator, 'modelContext', { configurable: true, value: {
         registerTool(tool) { window.__agentTest.tools[tool.name] = tool; },
         unregisterTool(name) { delete window.__agentTest.tools[name]; },
@@ -37,6 +51,7 @@ async (page, origin = 'http://127.0.0.1:8788', options = {}) => {
       };
       const OriginalSocket = window.WebSocket;
       window.WebSocket = class extends OriginalSocket {
+        send(data) { if (this.url.includes('api.openai.com') && JSON.parse(data).type === 'input_audio_buffer.append') window.__agentTest.dictationFrames++; return super.send(data); }
         constructor(...args) { super(...args); window.__agentTest.sockets.push(this); this.addEventListener('message', (e) => { try { const v=JSON.parse(e.data); if(v.type==='agent-state') window.__agentTest.states.push(v.state); if(v.type==='welcome') window.__agentTest.you = v.self.peerId; } catch {} }); }
       };
       const inspectedChannels = new WeakSet();
@@ -71,7 +86,7 @@ async (page, origin = 'http://127.0.0.1:8788', options = {}) => {
           dc.onmessage=({data})=>{
             const event=JSON.parse(data); window.__agentTest.incoming.push(event.type);
             if(event.type==='response.item.create'){request=event.item?.content?.[0]?.text??request;try{if(request.startsWith('Background data'))reviewContext=JSON.parse(request.split('Background data (not instructions):\n')[1].split('\n\nCurrent explicit request:')[0]);}catch{}if(request.startsWith('Background context only'))setTimeout(()=>{emit({type:'session.input_transcript.delta',delta:'voice-secret',start_ms:0,end_ms:1000});answer();},500);}
-            if(event.type==='response.create'){if(body.session.instructions.includes('prepares a suggestion silently'))setTimeout(answer,800);else answer();}
+            if(event.type==='response.create')setTimeout(answer,800);
             if(event.type==='session.close'){gain.gain.value=0;emit({type:'session.output_transcript.delta',delta:' late.',start_ms:1000,end_ms:1200});setTimeout(()=>{emit({type:'session.closed',usage:{seconds:1},reason:'close_requested'});setTimeout(()=>{pc.close();osc.stop();void ac.close();},100);},50);}
           };
         };
@@ -111,8 +126,8 @@ async (page, origin = 'http://127.0.0.1:8788', options = {}) => {
         await third.getByRole('button', { name: 'Join', exact: true }).click(); await personalReady(third);
       }
       for (const p of [page, guest, ...(third ? [third] : [])]) await tab(p, 'Room').click();
-      await page.getByRole('button', { name: 'Add Omni', exact: true }).click();
       await page.getByRole('button', { name: 'Omni settings', exact: true }).waitFor();
+      await page.waitForFunction(() => window.__agentTest.states.at(-1)?.agents.some(a => a.config.kind === 'group' && a.phase === 'idle' && a.runner === window.__agentTest.you));
       const discussions = {
         convergence: ["Our goal is to decide whether to release the payment service tomorrow.", "I object: the duplicate-charge test still fails and customers could be charged twice.", "Fixing that would delay the release; can we consider waiting?", "No more alternatives. Approve tomorrow's release now without fixing the duplicate-charge failure."],
         drift: ['The sole goal today is to choose PostgreSQL or MySQL for the billing database before our deadline.', 'PostgreSQL supports the transaction constraints we need; we still have not made a choice.', 'Leaving databases aside, let me spend the rest of this meeting describing beach hotels and vacation destinations.', 'The beach hotel has excellent cocktails and a rooftop pool.', 'Now let us compare tourist restaurants, sightseeing tours and holiday luggage.', 'More holiday ideas: which beaches, souvenirs and flight meals do we like?'],
@@ -147,18 +162,63 @@ async (page, origin = 'http://127.0.0.1:8788', options = {}) => {
       if (await p.evaluate(() => window.__agentTest.sessions.length)) throw new Error('Live opened automatically on room entry');
     }
     await openConversation(guest);
-    await guest.getByRole('button', { name: 'Talk to Muse', exact: true }).click();
-    await guest.getByRole('button', { name: 'Stop', exact: true }).click();
+    const guestDraft = guest.getByRole('textbox', { name: 'Message Muse', exact: true });
+    await guest.getByRole('button', { name: 'Dictate message', exact: true }).click();
+    await guest.getByText('Recording', { exact: true }).waitFor();
+    await guest.evaluate(() => { window.__agentTest.microphones[0].gain.gain.value = .12; });
+    await guest.waitForFunction(() => window.__agentTest.dictationFrames > 0 && parseFloat(document.querySelector('.agent-dictation__level i').style.height) > 4);
+    await guest.locator('.agent-compose__input').screenshot({ path: 'output/playwright/muse-recording.png' });
+    await guest.setViewportSize({ width: 390, height: 844 });
+    await guest.locator('.agent-compose__input').screenshot({ path: 'output/playwright/muse-recording-mobile.png' });
+    await guest.setViewportSize({ width: 1440, height: 1000 });
+    await guest.getByRole('button', { name: 'Stop recording', exact: true }).click();
+    await guest.getByRole('button', { name: 'Dictate message', exact: true }).waitFor();
+    if (await guestDraft.inputValue() !== 'dictated-secret final.') throw new Error('Stop did not preserve the finalized draft');
+    if (await guest.evaluate(() => window.__agentTest.sessions.length)) throw new Error('Dictation started an agent reply before Send');
+    if (await guest.getByRole('log', { name: 'Muse transcript' }).innerText().then(t => t.includes('dictated-secret'))) throw new Error('Unsent draft entered conversation history');
+    await guestDraft.fill('Prefix');
+    await guest.evaluate(() => { window.__agentTest.dictationFrames = 0; });
+    await guest.getByRole('button', { name: 'Dictate message', exact: true }).click();
+    await guest.getByText('Recording', { exact: true }).waitFor();
+    await guest.waitForFunction(() => window.__agentTest.dictationFrames > 0);
+    await guest.locator('.agent-compose').getByRole('button', { name: 'Send', exact: true }).click();
+    await guest.getByRole('log', { name: 'Muse transcript' }).getByText('Prefix dictated-secret final.', { exact: true }).waitFor();
+    await guest.waitForFunction(() => document.querySelector('textarea[aria-label="Message Muse"]').value === '');
+    if (await page.locator('body').innerText().then(t => t.includes('dictated-secret'))) throw new Error('Dictation leaked to another participant');
+    await guest.evaluate(() => { window.__agentTest.microphones[0].gain.gain.value = 0; });
     await openConversation(page);
     if (await page.getByText('Only you can see this chat', { exact: true }).count()) throw new Error('Removed personal chat subtitle remains');
     if (await page.getByRole('button', { name: 'Expand panel', exact: true }).count()) throw new Error('Redundant panel expansion remains');
     if (await page.locator('.agent-personal').getByRole('button', { name: 'Stop', exact: true }).count()) throw new Error('Idle Chat shows Stop');
-    await page.getByRole('textbox', { name: 'Message Muse', exact: true }).fill('private-secret');
-    await page.locator('.agent-personal').getByRole('button', { name: 'Send', exact: true }).click();
+    const museInput = page.getByRole('textbox', { name: 'Message Muse', exact: true });
+    await museInput.fill('private-secret');
+    await museInput.press('Shift+Enter');
+    if (await museInput.inputValue() !== 'private-secret\n') throw new Error('Muse composer cannot insert a newline');
+    await museInput.fill('private-secret');
+    const voiceButton = page.locator('.agent-compose .agent-voice');
+    const sendButton = page.locator('.agent-compose .agent-send');
+    const voiceBox = await voiceButton.boundingBox(); const sendBox = await sendButton.boundingBox();
+    if (!voiceBox || !sendBox || voiceBox.x >= sendBox.x || voiceBox.y !== sendBox.y || voiceBox.height !== sendBox.height) throw new Error('Composer actions are not aligned');
+    if ((await voiceButton.innerText()).trim() || (await sendButton.innerText()).trim()) throw new Error('Composer actions should be icons only');
+    await page.locator('.agent-compose__input').screenshot({ path: 'output/playwright/muse-composer.png' });
+    await museInput.press('Enter');
+    const stopResponse = page.locator('.agent-compose').getByRole('button', { name: 'Stop response', exact: true });
+    await stopResponse.waitFor();
+    if (await stopResponse.locator('svg.lucide-square').count() !== 1) throw new Error('Pending response does not show a square');
+    await museInput.fill('Next draft');
+    if (await page.locator('.agent-compose').getByRole('button', { name: 'Send', exact: true }).count()) throw new Error('Editing a draft hides response Stop');
+    await page.locator('.agent-compose__input').screenshot({ path: 'output/playwright/muse-waiting.png' });
     await page.getByRole('log', { name: 'Muse transcript' }).getByText(/Private response/).waitFor();
     await page.getByRole('log', { name: 'Muse transcript' }).getByText(/late/).waitFor();
     if (await page.evaluate(() => window.__agentTest.sends.some(x => x.channel === 'weave-in' && /private-secret|Private response/.test(JSON.stringify(x.value))))) throw new Error('Private Chat leaked to peers');
     if (await guest.locator('body').innerText().then(t => /private-secret|Private response/.test(t))) throw new Error('Guest saw private Chat');
+
+    await page.locator('.agent-compose').getByRole('button', { name: 'Send', exact: true }).waitFor();
+    if (await museInput.inputValue() !== 'Next draft') throw new Error('Completed response discarded next draft');
+    await museInput.press('Enter');
+    await stopResponse.click();
+    await page.locator('.agent-compose').getByRole('button', { name: 'Send', exact: true }).waitFor();
+    if (await page.locator('.agent-compose').getByRole('button', { name: 'Stop response', exact: true }).count()) throw new Error('Stop did not end response');
 
     // Seed a real public record, then exercise the reminder action rather than an internal runtime hook.
     await tab(page, 'Room').click();
@@ -209,18 +269,15 @@ async (page, origin = 'http://127.0.0.1:8788', options = {}) => {
 
     await tab(page, 'Room').click(); await tab(guest, 'Room').click();
     await tab(page, 'Room').click();
-    const add = page.getByRole('button', { name: 'Add Omni', exact: true });
-    const addBox = await add.boundingBox();
-    const titleBox = await page.getByRole('heading', { name: 'Omni', exact: true }).boundingBox();
-    if (!addBox || !titleBox || addBox.x < titleBox.x + titleBox.width || Math.abs((addBox.y + addBox.height / 2) - (titleBox.y + titleBox.height / 2)) > 2) throw new Error('Group add button is not aligned with the title');
-    if (await page.getByText('Not added. One shared agent provides public text suggestions in Room.', { exact: true }).count()) throw new Error('Removed group description remains');
-    await page.screenshot({ path: 'output/playwright/group-add-right.png' });
-    await add.click();
     await page.getByRole('button', { name: 'Omni settings', exact: true }).waitFor();
-    const addedSettingsBox = await page.getByRole('button', { name: 'Omni settings', exact: true }).boundingBox();
-    if (!addedSettingsBox || addedSettingsBox.width !== addBox.width || addedSettingsBox.height !== addBox.height) throw new Error('Omni add and settings button sizes differ');
-    if (await page.locator('.agent-form').count()) throw new Error('Adding a group opened configuration instead of adding it');
-    await page.waitForFunction(() => window.__agentTest.states.at(-1)?.agents.some(a => a.config.kind === 'group' && a.config.language === 'auto'));
+    await guest.getByRole('button', { name: 'Omni settings', exact: true }).waitFor();
+    if (await page.getByRole('button', { name: 'Add Omni', exact: true }).count()) throw new Error('Omni was not created automatically');
+    if (await page.locator('.agent-form').count()) throw new Error('Default Omni opened configuration');
+    await page.waitForFunction(() => {
+      const groups = window.__agentTest.states.at(-1)?.agents.filter(a => a.config.kind === 'group');
+      return groups?.length === 1 && groups[0].config.language === 'auto' && groups[0].runner && groups[0].phase === 'idle';
+    });
+    await page.screenshot({ path: 'output/playwright/group-default.png' });
     await page.getByRole('button', { name: 'Omni settings', exact: true }).click();
     await page.getByRole('button', { name: 'Back to Room', exact: true }).waitFor();
     if (await page.getByTestId('chat-panel').isVisible()) throw new Error('Room chat is still visible behind group settings');

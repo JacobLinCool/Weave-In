@@ -23,18 +23,16 @@ const DRAFT_THREADS: readonly DraftThread[] = [
 ];
 
 const DRAFT_SCRIPT: readonly DraftPick[] = [
-  { thread: 2, text: 'Recording stays off. Who is transcribing?' },
-  { thread: 0, text: 'Everyone. Each of us transcribes our own microphone.' },
-  { thread: 1, text: 'So the text comes straight to us?' },
-  { thread: 3, text: 'Straight to us, each line in its own colour.' },
-  { thread: 4, text: 'Then let me share the screen and we can start.' },
-  { thread: 2, text: 'Question three: does it work in two languages at once?' },
-  { thread: 0, text: 'Pick up to four. I speak Japanese and English in mine.' },
-  { thread: 1, text: '日本語でも大丈夫ですか？' },
-  { thread: 3, text: 'Everything you just said landed on my side, in your colour.' },
-  { thread: 4, text: 'And the room lives as long as the tab.' },
-  { thread: 2, text: 'Good. Then let us argue about the actual plan.' },
-  { thread: 0, text: 'Weft, not warp. Keep going.' },
+  { thread: 2, text: 'Can we ship the new flow on Friday?' },
+  { thread: 0, text: 'The happy path looks ready.' },
+  { thread: 4, text: 'I have a concern about failed payments.' },
+  { thread: 1, text: 'Let’s look at that before we decide.' },
+  { thread: 4, text: 'I worked through the edge case with Muse.' },
+  { thread: 3, text: 'Codex added the retry path to our board.' },
+  { thread: 2, text: 'I’ll move the review step before launch.' },
+  { thread: 0, text: 'Now we can check both paths together.' },
+  { thread: 1, text: 'Omni caught the open question in our agenda.' },
+  { thread: 4, text: 'Let’s resolve it before we commit.' },
 ];
 
 const PICK_INTERVAL_MS = 1_900;
@@ -67,9 +65,9 @@ export function LandingSurface(props: LandingProps): ReactNode {
       <header className="landing__header">
         <Brand />
         <nav className="landing__nav" aria-label="Page">
-          <a href="#data">Where data goes</a>
-          <a href="#voices">Your own voice</a>
-          <a href="#spec">Specification</a>
+          <a href="#agents">Meet the agents</a>
+          <a href="#whiteboard">Shared thinking</a>
+          <a href="#data">Privacy</a>
           <button className="icon-button icon-button--wide" type="button" onClick={props.onOpenSettings} aria-label="Settings">
             <Settings size={16} /><span>Settings</span>
           </button>
@@ -79,19 +77,87 @@ export function LandingSurface(props: LandingProps): ReactNode {
       <section className={`hero ${props.invitedRoom ? 'hero--invited' : ''}`} aria-labelledby="hero-title">
         <div className="hero__copy">
           <h1 id="hero-title">Keep the thread. <br />Weave everyone in.</h1>
-          <p className="hero__lede">
-            Meetings in the browser where every voice is transcribed on its own device and woven into one shared thread.
-            Video, screen, chat, and captions connect the people in the room over encrypted WebRTC.
-          </p>
+          <p className="hero__lede">An agent-native meeting app for thinking independently and contributing together. Give every idea a way into the conversation—with private voice support, Codex, and a shared whiteboard.</p>
+          <a className="landing-text-link" href="#agents">See how the agents work together <ArrowRight size={16} /></a>
         </div>
         <WeaveDraft />
         <RoomPanel {...props} />
       </section>
 
+      <section className="sheet" aria-labelledby="thinking-title">
+        <div className="sheet__head">
+          <h2 id="thinking-title">Good ideas don’t always get a turn.</h2>
+          <p>Keep critical thinking in the conversation, while it can still shape the decision.</p>
+        </div>
+        <div className="landing-prose">
+          <p>A proposal lands. Everyone agrees before the doubts are heard. That’s the groupthink risk we care about.</p>
+          <p>Or the conversation moves so quickly that someone waits to speak—and loses their thought along the way.</p>
+          <p>Weave In gives those ideas a place to be captured, worked through, and brought back to the room. Right inside the meeting, before the decision is made.</p>
+        </div>
+      </section>
+
+      <section id="agents" className="sheet" aria-labelledby="agents-title">
+        <div className="sheet__head">
+          <h2 id="agents-title">Three agents.<br />Room for your way of thinking.</h2>
+          <p>Shared focus, private conversation, and work that moves forward alongside the meeting.</p>
+        </div>
+        <div className="agent-roles">
+          <article className="agent-role">
+            <div className="agent-role__title"><h3>Omni</h3><span>For the whole room</span></div>
+            <p>Bring an unanswered concern back into view. Notice when the discussion moves away from the agenda. Omni offers a shared prompt; your team decides where to go next.</p>
+          </article>
+          <article className="agent-role">
+            <div className="agent-role__title"><h3>Muse</h3><span>For thinking out loud, privately</span></div>
+            <p>Talk through a half-formed idea or ask about a shared screen without interrupting the room. Powered by GPT-Live-1, Muse gives you a real-time voice side chat. You choose what to share.</p>
+          </article>
+          <article className="agent-role">
+            <div className="agent-role__title"><h3>Codex</h3><span>For work that takes a little longer</span></div>
+            <p>Bring the personal agent you already use. Ask it to check code, research a question, compare approaches, or build a diagram while the conversation continues. Share the result when it’s ready.</p>
+          </article>
+        </div>
+      </section>
+
+      <section id="codex" className="sheet" aria-labelledby="codex-title">
+        <div className="sheet__head">
+          <h2 id="codex-title">Your meeting.<br />Inside your agent’s browser.</h2>
+          <p>Weave In works in a regular browser. In the Codex built-in browser, your agent can work directly with the room.</p>
+        </div>
+        <div className="landing-prose">
+          <p>WebMCP gives Codex structured tools to read the live transcript, public chat, shared screen, and whiteboard within the access you allow.</p>
+          <p>Ask it to investigate a question, then post its findings to chat or update the board. The context comes from the meeting. The work comes back to everyone.</p>
+          <div className="context-flow" aria-label="Meeting context flows through WebMCP to Codex, which returns findings and edits to the room">
+            <span>Meeting context</span><ArrowRight size={18} aria-hidden="true" /><strong>WebMCP</strong><ArrowRight size={18} aria-hidden="true" /><span>Codex</span>
+          </div>
+          <p className="context-flow__return">Findings to chat. Editable diagrams to the board.</p>
+        </div>
+      </section>
+
+      <section id="whiteboard" className="sheet sheet--board" aria-labelledby="board-title">
+        <div className="sheet__head">
+          <h2 id="board-title">One board.<br />Everyone can build on it.</h2>
+          <p>Keep a process, an architecture, or an open question in view. Point to it, challenge it, change it—together.</p>
+          <p>We keep the whiteboard inside our meeting environment so people and agents can work on the same thing. Through structured tools, Codex reads the actual nodes, labels, and connections, then edits specific elements.</p>
+          <p>Supported Mermaid diagrams become editable whiteboard elements. You adjust them visually. Your agent reads the updated structure and picks up where you left off.</p>
+        </div>
+        <WhiteboardDemo />
+      </section>
+
+      <section className="sheet" aria-labelledby="together-title">
+        <div className="sheet__head">
+          <h2 id="together-title">From a quiet concern<br />to a better discussion.</h2>
+          <p>A feature review, with space for everyone’s contribution.</p>
+        </div>
+        <ol className="collaboration-path">
+          <li><strong>Work it through with Muse.</strong><p>You spot a payment edge case. A private conversation helps you turn the concern into a clear question.</p></li>
+          <li><strong>Give Codex the investigation.</strong><p>It checks the implementation and, at your request, shares its findings and a flowchart with the room.</p></li>
+          <li><strong>Refine the answer together.</strong><p>The team edits the board. Omni brings the open agenda question back before everyone commits.</p></li>
+        </ol>
+      </section>
+
       <section id="data" className="sheet sheet--key" aria-labelledby="data-title">
         <div className="sheet__head">
           <h2 id="data-title">Where your data goes</h2>
-          <p>A draft names every thread. These are the three this page uses.</p>
+          <p>Clear boundaries for a shared room and your private thinking.</p>
         </div>
         <dl className="key">
           <div className="key__row">
@@ -109,63 +175,43 @@ export function LandingSurface(props: LandingProps): ReactNode {
         </dl>
       </section>
 
-      <section id="voices" className="sheet sheet--voices" aria-labelledby="voices-title">
-        <div className="sheet__head">
-          <h2 id="voices-title">Every voice is its own thread</h2>
-          <p>Weave In transcribes each person separately, so every line already knows who said it.</p>
-        </div>
-        <div className="voices">
-          <ul className="voices__list">
-            <li>
-              <h3>Your microphone only</h3>
-              <p>Captions come from your own track, on your own device. Echo cancellation keeps that track yours, even with the whole room coming through your speakers.</p>
-            </li>
-            <li>
-              <h3>In the languages you speak</h3>
-              <p>Pick up to four, or let the model detect them. Switch mid-sentence and it follows you, because it hears one speaker.</p>
-            </li>
-            <li>
-              <h3>Verbatim or smart</h3>
-              <p>Keep every word as spoken, or let punctuation in and filler out. Either way the line arrives in your colour, attributed to you, on everyone&rsquo;s screen at once.</p>
-            </li>
-            <li>
-              <h3>AI that keeps you thinking</h3>
-              <p>Discuss a question privately with Muse, or add Omni to watch public discussion and share a brief, relevant question when the group needs one.</p>
-            </li>
-          </ul>
-          <WeaveSwatch />
-        </div>
-      </section>
-
-      <section id="spec" className="sheet sheet--spec" aria-labelledby="spec-title">
-        <div className="sheet__head">
-          <h2 id="spec-title">Draft notes</h2>
-          <p>The specification, written the way a weaver writes one.</p>
-        </div>
-        <table className="spec">
-          <tbody>
-            <tr><th scope="row">Warp</th><td>Up to eight people, each in their own browser, joining with just a name.</td></tr>
-            <tr><th scope="row">Sett</th><td>Full mesh: each browser connects to every other, directly or through an encrypted TURN relay.</td></tr>
-            <tr><th scope="row">Weft</th><td>Camera, microphone, screen share, chat, live captions on every tile, and a merged transcript panel.</td></tr>
-            <tr><th scope="row">Dye</th><td>Captions from your own microphone, in up to four languages, verbatim or smart.</td></tr>
-            <tr><th scope="row">Finishing</th><td>The meeting lives as long as the tab. Your name and settings stay in your browser for next time.</td></tr>
-            <tr><th scope="row">Selvedge</th><td>One link opens the room with the code already filled in.</td></tr>
-          </tbody>
-        </table>
-      </section>
-
       <section className="close" aria-label="Start">
         <WeaveMark size={44} />
-        <h2>Ready when you are.</h2>
-        <p>A name, a room, and everyone you invite.</p>
+        <h2>Bring your next idea.</h2>
+        <p>Video, screen sharing, live captions, and a shared board. Up to eight people. One link. No account needed.</p>
         <a className="primary-button primary-button--large close__cta" href="#start">Create a room <ArrowRight size={18} /></a>
       </section>
-
       <footer className="landing__footer">
         <Brand compact />
         <button className="landing__footer-link" type="button" onClick={props.onOpenSettings}>Caption languages and style</button>
       </footer>
     </main>
+  );
+}
+
+function WhiteboardDemo(): ReactNode {
+  const [refined, setRefined] = useState(false);
+  return (
+    <figure className="board-demo">
+      <div className="board-demo__controls" aria-label="Whiteboard example states">
+        <button type="button" aria-pressed={!refined} onClick={() => setRefined(false)}>Codex draws</button>
+        <button type="button" aria-pressed={refined} onClick={() => setRefined(true)}>You refine</button>
+      </div>
+      <svg className="board-demo__canvas" viewBox="0 0 560 320" role="img" aria-label={refined ? 'Payment flow with a human-added review step before retrying' : 'Payment flow generated by Codex with a retry path'}>
+        <defs><marker id="board-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor" /></marker></defs>
+        <g className="board-demo__edges" fill="none" stroke="currentColor" strokeWidth="2" markerEnd="url(#board-arrow)">
+          <path d="M 142 88 H 223" /><path d="M 337 88 H 418" />
+          <path d="M 280 120 V 218" /><path d="M 226 246 H 86 V 118" />
+        </g>
+        <g className="board-demo__nodes">
+          <rect x="30" y="58" width="112" height="60" rx="8" /><rect x="224" y="58" width="112" height="60" rx="8" /><rect x="418" y="58" width="112" height="60" rx="8" />
+          <rect className={refined ? 'is-refined' : ''} x="206" y="218" width="148" height="60" rx="8" />
+        </g>
+        <g className="board-demo__labels" textAnchor="middle"><text x="86" y="94">Payment</text><text x="280" y="94">Check result</text><text x="474" y="94">Confirm</text><text x="280" y="254">{refined ? 'Review, then retry' : 'Retry'}</text></g>
+        <g className="board-demo__annotations"><text x="366" y="75">Success</text><text x="296" y="173">Failed</text><text x="40" y="302">{refined ? 'Edited by you · ready for Codex to read' : 'Mermaid → editable nodes and connections'}</text></g>
+      </svg>
+      <figcaption><strong>Illustrative workflow</strong><span>{refined ? 'Your edit stays structured. Codex can continue from this version.' : 'Codex creates the structure. Select “You refine” to see a human edit.'}</span></figcaption>
+    </figure>
   );
 }
 
@@ -275,6 +321,7 @@ function WeaveDraft(): ReactNode {
 
   return (
     <figure className="draft" aria-label="Demonstration: five participants' captions, each in its own colour, woven into one transcript">
+      <figcaption className="draft__caption">Illustrative conversation · every voice has a thread</figcaption>
       <div className="draft__body">
         <div className="draft__warps" aria-hidden="true">
           {DRAFT_THREADS.map((thread) => (
@@ -311,28 +358,6 @@ function WeaveDraft(): ReactNode {
         </ol>
       </div>
     </figure>
-  );
-}
-
-/** A static swatch: three continuous warps, eight weft passes, plain weave. */
-function WeaveSwatch(): ReactNode {
-  const warps = [THREAD_COLORS[2]!.hex, THREAD_COLORS[5]!.hex, THREAD_COLORS[6]!.hex];
-  const wefts = ['#F3EEE3', THREAD_COLORS[1]!.hex, '#F3EEE3', THREAD_COLORS[3]!.hex, '#F3EEE3', THREAD_COLORS[0]!.hex, '#F3EEE3', THREAD_COLORS[4]!.hex];
-  return (
-    <div className="swatch" role="img" aria-label="A woven swatch of three coloured threads">
-      <div className="swatch__cloth">
-        <span className="swatch__warps" aria-hidden="true">
-          {warps.map((warp, column) => <i key={column} style={{ '--warp': warp } as CSSProperties} />)}
-        </span>
-        {wefts.map((weft, row) => (
-          <span key={row} className="swatch__row" style={{ '--thread': weft } as CSSProperties}>
-            {warps.map((warp, column) => (
-              <i key={column} className={(row + column) % 2 === 0 ? 'is-warp' : ''} style={{ '--warp': warp } as CSSProperties} />
-            ))}
-          </span>
-        ))}
-      </div>
-    </div>
   );
 }
 

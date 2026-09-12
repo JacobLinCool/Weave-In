@@ -1,5 +1,6 @@
 import { GROUP_CHECK_MS, GROUP_COOLDOWN_MS, GROUP_MAX_INTERVENTIONS } from './group';
 import { LEASE_MS, type AgentCommand, type AgentRoomState, type RoomAgent } from './contracts';
+import { defaultAgentConfig } from './config';
 
 export interface AgentMember { peerId: string; isHost: boolean; ready: boolean; joinedAt: number; heartbeat: number }
 
@@ -8,6 +9,16 @@ export function reconcileAgents(state: AgentRoomState, members: AgentMember[], n
   const present = new Set(members.map((member) => member.peerId));
   state.agents = state.agents.filter((agent) => agent.config.kind === 'group' || present.has(agent.owner));
   const available = members.filter((member) => member.ready && member.heartbeat + LEASE_MS > now).sort((a, b) => a.joinedAt - b.joinedAt || a.peerId.localeCompare(b.peerId));
+  // Initialize once at the room authority, so simultaneous joins cannot create
+  // duplicate agents and later joins do not undo an explicit removal.
+  if (!state.groupInitialized && members.length) {
+    state.groupInitialized = true;
+    if (!state.agents.some((agent) => agent.config.kind === 'group')) {
+      const owner = members.find((member) => member.isHost) ?? members[0]!;
+      state.agents.push({ id: uuid(), owner: owner.peerId, runner: null, epoch: 1,
+        config: defaultAgentConfig('group'), phase: 'waiting', request: 0, pending: false, leaseUntil: 0 });
+    }
+  }
   for (const agent of state.agents) {
     if (agent.config.kind === 'personal') continue;
     const runner = available.find((member) => member.peerId === agent.runner);
@@ -45,6 +56,7 @@ export function applyAgentCommand(state: AgentRoomState, member: AgentMember, co
     if (state.agents.some((agent) => agent.config.kind === config.kind && (config.kind === 'group' || agent.owner === member.peerId))) throw new Error('This agent already exists.');
     if (!member.ready && config.kind === 'group') throw new Error('Enable the assistant on this device before creating Omni.');
     state.agents.push({ id: uuid(), owner: member.peerId, runner: member.peerId, epoch: 1, config, phase: 'idle', request: 0, pending: false, leaseUntil: now + LEASE_MS });
+    if (config.kind === 'group') state.groupInitialized = true;
     return;
   }
   if (command.type === 'agent-finish' || command.type === 'agent-published') {
@@ -78,6 +90,7 @@ export function applyAgentCommand(state: AgentRoomState, member: AgentMember, co
       return;
     case 'agent-remove':
       if (agent.owner !== member.peerId && !member.isHost) throw new Error('Only the creator or host can remove this agent.');
+      if (group) state.groupInitialized = true;
       state.agents = state.agents.filter((entry) => entry !== agent);
       state.queue = state.queue.filter((id) => id !== agent.id);
       if (state.floor?.agentId === agent.id) state.floor = null;
