@@ -3,6 +3,7 @@ import { AgentRuntime } from '../src/agents/runtime';
 import { emptyAgentRoom, type AgentLine, type RoomAgent } from '../src/agents/contracts';
 import type { LiveCallbacks } from '../src/agents/live';
 import { MeetingLog } from '../src/meeting-log';
+import type { MeetingSnapshot, ToolDefinition } from '../src/webmcp';
 
 const calls = vi.hoisted(() => ({ requests: vi.fn(), contexts: vi.fn(), close: vi.fn(), start: vi.fn(), tools: [] as unknown[][], lives: [] as LiveCallbacks[], enable: vi.fn(async (): Promise<void> => undefined), mute: vi.fn(async (): Promise<void> => undefined), attach: vi.fn((_stream: MediaStream, _allowed: () => boolean, _level: unknown, _error: (message: string) => void) => ({ stop: vi.fn(), output: { id: 'output' } as MediaStream })) }));
 vi.mock('../src/agents/live', () => ({ AgentLive: class {
@@ -19,14 +20,58 @@ let runtime: AgentRuntime | null = null;
 afterEach(() => { runtime?.close(); runtime = null; calls.lives = []; calls.enable.mockReset(); calls.mute.mockReset(); calls.attach.mockClear(); calls.requests.mockClear(); calls.contexts.mockClear(); calls.start.mockClear(); calls.close.mockClear(); calls.tools = []; vi.useRealTimers(); });
 function setup(beginVoice: (audience: string, owner: string) => Promise<MediaStreamTrack> = vi.fn(), endVoice = vi.fn()) {
   const broadcast = vi.fn(); const publicLine = vi.fn(); const sendAgent = vi.fn();
+  const log = new MeetingLog();
+  const snapshot: MeetingSnapshot = { roomCode: 'ABC123', you: { peerId: 'owner', name: 'Owner' }, participants: [], captions: 'idle', presentation: null, live: [], files: [] };
+  const sendAgentMessage = vi.fn(() => ({ id: 'posted', at: new Date().toISOString() }));
+  const editWhiteboard = vi.fn(async () => ({ ok: true, shared: true, action: 'mermaid', count: 3, elements: [], changedIds: ['a', 'b', 'arrow'], canUndo: true, canRedo: false }));
   const agent: RoomAgent = { id: 'personal', owner: 'owner', runner: 'owner', epoch: 1, phase: 'idle', request: 0, pending: false, leaseUntil: Date.now() + 30000,
     config: { kind: 'personal', name: 'Assistant', instructions: 'Help', language: 'auto', source: 'none', chat: false, system: false, screen: false, files: false, audience: 'private' } };
   const ctx = { peerId: 'owner', room: 'ABC123', controller: { broadcast, sendAgent, addStream: vi.fn(), removeStream: vi.fn(), sessionToken: 'token' },
-    tools: { log: () => new MeetingLog(), snapshot: () => ({ you: { name: 'Owner' } }) }, beginVoice, endVoice, publicLine } as unknown as ConstructorParameters<typeof AgentRuntime>[0];
+    tools: { log: () => log, snapshot: () => snapshot, sendAgentMessage, editWhiteboard }, beginVoice, endVoice, publicLine } as unknown as ConstructorParameters<typeof AgentRuntime>[0];
   runtime = new AgentRuntime(ctx);
   runtime.update({ ...emptyAgentRoom(), agents: [agent] }, Date.now());
-  return { runtime, publicLine, broadcast, sendAgent };
+  return { runtime, publicLine, broadcast, sendAgent, log, snapshot, sendAgentMessage, editWhiteboard };
 }
+
+it('lets a private voice request draw and post as the owner without publishing private speech', async () => {
+  const { runtime, publicLine, broadcast, sendAgent, sendAgentMessage, editWhiteboard } = setup(async () => ({ stop: vi.fn() }) as unknown as MediaStreamTrack);
+  await runtime.ask('', true);
+  await vi.waitFor(() => expect(calls.tools).toHaveLength(1));
+  const tools = calls.tools[0] as ToolDefinition[];
+  const draw = tools.find(tool => tool.name === 'edit_whiteboard')!;
+  const post = tools.find(tool => tool.name === 'send_chat_message')!;
+  expect((await draw.execute({ action: 'mermaid', source: 'flowchart LR\nA[Draft] --> B[Review]' })).isError).not.toBe(true);
+  expect(editWhiteboard).toHaveBeenCalledOnce();
+  expect((await post.execute({ text: 'The workflow is on the whiteboard.' })).isError).not.toBe(true);
+  expect(sendAgentMessage).toHaveBeenCalledWith('The workflow is on the whiteboard.', 'Assistant');
+  calls.lives[0]!.transcript('user', 'Private explanation', 0, 1000);
+  calls.lives[0]!.transcript('assistant', 'I drew the workflow.', 1000, 2000);
+  expect(runtime.snapshot().lines.every(line => line.audience === 'private')).toBe(true);
+  expect(publicLine).not.toHaveBeenCalled(); expect(broadcast).not.toHaveBeenCalled();
+  expect(sendAgent).not.toHaveBeenCalledWith({ type: 'agent-floor', id: 'personal' });
+  runtime.stopPersonal();
+  expect((await draw.execute({ action: 'undo' })).isError).toBe(true);
+  expect((await post.execute({ text: 'Late post' })).isError).toBe(true);
+  expect(editWhiteboard).toHaveBeenCalledOnce(); expect(sendAgentMessage).toHaveBeenCalledOnce();
+});
+
+it('refreshes file availability and interim captions without a finalized log change', async () => {
+  vi.useFakeTimers();
+  const { runtime, snapshot } = setup();
+  const state = structuredClone(runtime.snapshot().room);
+  state.agents[0]!.config = { ...state.agents[0]!.config, source: 'all', chat: true, files: true };
+  runtime.update(state, Date.now());
+  await runtime.ask('Help with this meeting');
+  snapshot.files.push({ id: 'diagram', name: 'workflow.png', size: 1024, mime: 'image/png', at: new Date().toISOString(), sharedBy: { peerId: 'other', name: 'Other' }, status: 'available' });
+  snapshot.live.push({ peerId: 'other', name: 'Other', text: 'Add a review stage' });
+  await vi.advanceTimersByTimeAsync(2_000);
+  expect(String(calls.contexts.mock.calls.at(-1)?.[0])).toContain('workflow.png');
+  expect(String(calls.contexts.mock.calls.at(-1)?.[0])).toContain('Add a review stage');
+  runtime.stopPersonal(); calls.contexts.mockClear();
+  await vi.advanceTimersByTimeAsync(2_000);
+  expect(calls.contexts).not.toHaveBeenCalled();
+});
+
 it.each(['personal', 'group'] as const)('waits for acknowledgement before completing %s assistant creation', async (kind) => {
   vi.useFakeTimers();
   const { runtime, sendAgent } = setup();
