@@ -70,7 +70,7 @@ async (page, origin = 'http://127.0.0.1:8788') => {
           const answer=()=> {
             if(responding)return;responding=true;
             const preparing=body.session.instructions.includes('prepares a suggestion silently');
-            const value=preparing?'Consider an alternative before deciding.':request.split('Current explicit request:').at(-1).includes('private-secret')?'Private response.':request.split('Current explicit request:').at(-1).includes('Speak once on behalf')?'Can we verify that the mute button remains usable?' :'A useful perspective for the meeting.';
+            const value=preparing?'Consider an alternative before deciding.':request.split('Current explicit request:').at(-1).includes('private-secret')?'Private response.':request.split('Current explicit request:').at(-1).includes('Speak once on behalf')?JSON.parse(request.split('Approved message: ').at(-1)) :'A useful perspective for the meeting.';
             emit({type:'response.event',delegation_id:'d1',event:{type:'response.created',response:{id:'r1'}}});
             emit({type:'response.event',delegation_id:'d1',event:{type:'response.output_text.delta',delta:value}});
             if(preparing){ gain.gain.value=.1; emit({type:'session.output_transcript.delta',delta:'SUPPRESSED PREPARATION',start_ms:0,end_ms:800}); }
@@ -172,6 +172,49 @@ async (page, origin = 'http://127.0.0.1:8788') => {
     await page.locator('.agent-compose').getByRole('button', { name: 'Send', exact: true }).waitFor();
     if (await page.locator('.agent-compose').getByRole('button', { name: 'Stop response', exact: true }).count()) throw new Error('Stop did not end response');
 
+    const reply = page.locator('.agent-line--assistant').filter({ hasText: 'Private response.' }).first();
+    const sendReply = reply.getByRole('button', { name: 'Send to everyone', exact: true });
+    await sendReply.waitFor();
+    await page.mouse.move(0, 0);
+    if (await sendReply.evaluate(el => getComputedStyle(el).opacity) !== '0') throw new Error('Reply Send is not hidden before hover');
+    const idleBackground = await reply.evaluate(el => getComputedStyle(el).backgroundColor);
+    await reply.hover();
+    if ((await sendReply.innerText()).trim()) throw new Error('Reply Send must be icon only');
+    if (await reply.evaluate(el => getComputedStyle(el).backgroundColor) === idleBackground) throw new Error('Reply hover has no background feedback');
+    const replyBounds = await reply.boundingBox(); const iconBounds = await sendReply.boundingBox();
+    if (Math.abs(replyBounds.y + replyBounds.height / 2 - iconBounds.y - iconBounds.height / 2) > 1) throw new Error('Reply Send is not vertically centered');
+    await page.screenshot({ path: 'output/playwright/muse-send-hover.png' });
+    if (await sendReply.evaluate(el => getComputedStyle(el).opacity) !== '1') throw new Error('Reply Send is missing on hover');
+    await sendReply.hover();
+    await reply.getByRole('tooltip', { name: 'Read aloud to everyone' }).waitFor();
+    await page.keyboard.press('Escape');
+    if (await reply.getByRole('tooltip').count()) throw new Error('Hovered Send tooltip did not dismiss on Escape without button focus');
+    await page.getByRole('textbox', { name: 'Message Muse', exact: true }).focus();
+    await page.mouse.move(0, 0); await sendReply.focus();
+    await reply.getByRole('tooltip', { name: 'Read aloud to everyone' }).waitFor();
+    if (await sendReply.evaluate(el => getComputedStyle(el).opacity) !== '1') throw new Error('Reply Send is missing on keyboard focus');
+    await page.screenshot({ path: 'output/playwright/muse-send-desktop.png' });
+    const touch = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true });
+    // Check the native touch media query against the actual panel styles without opening another meeting.
+    const touchPage = await touch.newPage();
+    await touchPage.goto(origin);
+    const panelStyles = await page.evaluate(() => [...document.styleSheets].flatMap(sheet => { try { return [...sheet.cssRules].map(rule => rule.cssText); } catch { return []; } }).join('\n'));
+    await touchPage.setContent('<main class="agent-panel"><article class="agent-line agent-line--assistant"><header>Muse</header><p>Please include a review step.</p><button class="agent-line__send" aria-label="Send to everyone"></button></article></main>');
+    await touchPage.addStyleTag({ content: panelStyles });
+    const touchSend = touchPage.locator('.agent-line__send');
+    if (await touchSend.evaluate(el => getComputedStyle(el).opacity) !== '0') throw new Error('Touch Send is visible before interacting');
+    await touchPage.locator('.agent-line').tap();
+    if (await touchSend.evaluate(el => getComputedStyle(el).opacity) !== '1' || (await touchSend.boundingBox()).height < 44) throw new Error('Touch Send is not visible and tappable');
+    await touch.close();
+    await sendReply.press('Enter');
+    await page.locator('.agent-compose').getByRole('button', { name: 'Stop response', exact: true }).waitFor();
+    await tab(guest, 'Transcript').click();
+    await guest.getByText('Private response. late.', { exact: true }).waitFor();
+    await guest.waitForFunction(() => window.__agentTest.audible > .01);
+    const approvedRequest = await page.evaluate(() => window.__agentTest.sends.filter(x => x.channel === 'oai-events' && x.value.type === 'response.item.create').findLast(x => JSON.stringify(x.value).includes('Speak once on behalf')));
+    if (!approvedRequest || JSON.stringify(approvedRequest).includes('private-secret')) throw new Error('Reply Send exposed private context');
+    await page.waitForFunction(() => window.__agentTest.states.at(-1)?.floor === null);
+
     // Seed a real public record, then exercise the reminder action rather than an internal runtime hook.
     await tab(page, 'Room').click();
     await page.getByPlaceholder('Send a message').fill('Test decision: verify mute works before release.');
@@ -189,8 +232,8 @@ async (page, origin = 'http://127.0.0.1:8788') => {
     });
     await page.getByRole('region', { name: 'Private reminder from Muse' }).getByRole('button', { name: 'Speak for me', exact: true }).click();
     await tab(guest, 'Transcript').click();
-    await guest.getByText('Can we verify that the mute button remains usable?', { exact: true }).waitFor();
-    await guest.getByText('Alice’s Muse', { exact: true }).waitFor();
+    await guest.getByText('Confirm the mute button remains usable before release.', { exact: true }).waitFor();
+    await guest.getByRole('listitem').filter({ hasText: 'Confirm the mute button remains usable before release.' }).getByText('Alice’s Muse', { exact: true }).waitFor();
     await guest.waitForFunction(() => window.__agentTest.audible > .01);
     const ownerMicOpen = await page.evaluate(() => Array.from(document.querySelectorAll('[data-local="true"] video')).some(v => v.srcObject?.getAudioTracks().some(t => t.enabled)));
     if (!ownerMicOpen) throw new Error('Speaking on behalf muted the owner microphone');
@@ -317,7 +360,7 @@ async (page, origin = 'http://127.0.0.1:8788') => {
     await page.getByRole('button', { name: 'Add Omni', exact: true }).waitFor();
     await tab(guest, 'Room').click();
     await guest.getByRole('button', { name: 'Add Omni', exact: true }).waitFor();
-    return { responseSquare: true, responseStop: true, dictationStopDraft: true, dictationSendFinalized: true, dictationPrivate: true, automaticOmni: true, fullPanelSettings: true, backWithoutSaving: true, reminderControlsRemoved: true, groupRemoval: true, clients: 2, directMuseTab: true, groupInRoom: true, allMembersConfigureGroup: true, groupBorderGlow: true, injectedSystemSignal: true, automaticSystemSignal: false, editSettings: true, automaticChat: true, noLiveOnJoin: true, privateIsolation: true, privateRecovery: true, signalingRecovery: true, oneShotPublicSpeech: true, ownerAttribution: true, ownerMicOpen, omniRoomText: true, omniSilent: true, omniReplayDedup: true, mobileOverflow: false, provider: 'simulated GPT-Live WebRTC (no real provider call)', relay: 'mocked provisioning; local peer connectivity' };
+    return { replySend: true, replyHover: true, replyKeyboard: true, replyTouch: true, selectedMessageOnly: true, responseSquare: true, responseStop: true, dictationStopDraft: true, dictationSendFinalized: true, dictationPrivate: true, automaticOmni: true, fullPanelSettings: true, backWithoutSaving: true, reminderControlsRemoved: true, groupRemoval: true, clients: 2, directMuseTab: true, groupInRoom: true, allMembersConfigureGroup: true, groupBorderGlow: true, injectedSystemSignal: true, automaticSystemSignal: false, editSettings: true, automaticChat: true, noLiveOnJoin: true, privateIsolation: true, privateRecovery: true, signalingRecovery: true, oneShotPublicSpeech: true, ownerAttribution: true, ownerMicOpen, omniRoomText: true, omniSilent: true, omniReplayDedup: true, mobileOverflow: false, provider: 'simulated GPT-Live WebRTC (no real provider call)', relay: 'mocked provisioning; local peer connectivity' };
   } finally {
     await Promise.all([ownerContext, guestContext].map(context => context.close()));
   }
