@@ -93,7 +93,7 @@ async (page, origin = 'http://127.0.0.1:8788') => {
       if (await p.evaluate(() => window.__agentTest.sessions.length)) throw new Error('Live opened automatically on room entry');
     }
     await tab(guest, 'Muse').click();
-    await guest.getByRole('button', { name: 'Settings', exact: true }).click();
+    await guest.locator('.agent-panel--personal').getByRole('button', { name: 'Settings', exact: true }).click();
     await guest.getByRole('button', { name: 'Enable assistant audio', exact: true }).click();
     await guest.getByRole('button', { name: 'Close assistant settings', exact: true }).click();
     await tab(page, 'Muse').click();
