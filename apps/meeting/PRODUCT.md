@@ -33,8 +33,8 @@ Name: Weave In. "Keep the thread. Weave everyone in." The tagline is the product
 
 ## Operating Context
 
-- The meeting runs entirely in the browser: full-mesh WebRTC, public STUN only, up to 8 participants, six-character room codes, invite links of the form `?room=CODE`.
-- Camera, microphone, and screen share travel peer-to-peer and are never sent to, mixed by, or recorded on the operator's server. Chat travels peer-to-peer over the same data channels.
+- The meeting runs in the browser: full-mesh WebRTC with Cloudflare STUN/TURN, up to 8 participants, six-character room codes, invite links of the form `?room=CODE`.
+- Camera, microphone, screen share, chat, files, whiteboard edits, and captions travel over encrypted WebRTC between participants. Connections prefer a direct path and may use Cloudflare TURN to relay encrypted packets. The relay processes connection metadata but cannot decrypt the meeting content. The operator's signaling Worker handles connection setup and credential issuance, not the meeting media or data-channel payloads.
 - Audio for captions travels directly from the speaker's browser to the selected AI provider (Gemini or OpenAI) using a single-use ephemeral token minted by the Worker.
 - Agent settings and connection descriptions go to the Worker for GPT-Live initialization. Meeting records, private conversations and permitted tools then travel directly between the Client and OpenAI.
 - The room Durable Object coordinates Agent identity, the single Group executor, leases and public speaking rights. It does not store utterances or embeddings. Coordination is deleted when the last member leaves.
@@ -55,7 +55,7 @@ Name: Weave In. "Keep the thread. Weave everyone in." The tagline is the product
 - Camera, microphone, screen share with live renegotiation, shared messages and files, per-speaker live captions, and a merged transcript.
 - Up to four selected BCP-47 caption languages or automatic detection; Verbatim or Smart captions. Each browser sends its own audio directly to its caption provider.
 - Signaling reconnects automatically while preserving local state. Refresh/rejoin restores the same tab's checkpoint, including private reminder and Chat text history; it does not replay interrupted speech.
-- No accounts or meeting recording. Human media never reaches the operator's server; configured AI providers receive the selected audio/context. GPT-Live uses native browser WebRTC after authorized initialization, with Responses delegation.
+- No accounts or meeting recording. Meeting media is encrypted between participants; Cloudflare TURN may relay it without decrypting it. The signaling Worker does not carry that media. Configured AI providers receive the selected audio/context. GPT-Live uses native browser WebRTC after authorized initialization, with Responses delegation.
 
 ### In development
 
@@ -78,7 +78,7 @@ These remain proposals. Do not describe them as running in the current implement
 - Name: Weave In. Tagline: "Keep the thread. Weave everyone in." (confirmed by the user, 2026-09-12; replaces the working name On Track)
 - Landing page language: English.
 - The animated demonstration on the landing page is built in-page with React/CSS/SVG, not as a video file.
-- Privacy copy must distinguish peer media, direct AI connections and server metadata. Our server handles Agent settings, SDP and coordination, plus bounded transcript/reminder evidence for stateless Gemini analysis. It does not persist conversation records. AI providers receive the selected audio/context/tool data. Do not claim that nothing leaves the browser or that no metadata reaches the server.
+- Privacy copy must distinguish encrypted peer media (which may use Cloudflare TURN), direct AI connections, and the Worker. TURN handles connection metadata but cannot decrypt WebRTC content. The Worker handles Agent settings, SDP, credential issuance and coordination, plus bounded transcript/reminder evidence for stateless Gemini analysis. It does not persist conversation records. AI providers receive the selected audio/context/tool data. Do not claim that all connections are direct, nothing leaves the browser, or no metadata reaches the server. Update the landing page and README with changes to these data paths.
 - The assistant has no dye: it is not a participant, it is never given a thread colour, and it is never described as a member of the meeting.
 - Detector output is stated as an observation with its evidence, never as a verdict about a person. "Three speakers in a row added no new position" is allowed. "You are being a conformist" is not.
 
