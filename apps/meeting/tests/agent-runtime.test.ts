@@ -55,21 +55,24 @@ it('lets a private voice request draw and post as the owner without publishing p
   expect(editWhiteboard).toHaveBeenCalledOnce(); expect(sendAgentMessage).toHaveBeenCalledOnce();
 });
 
-it.each([false, true])('can continue in the same chat after a timeout (voice: %s)', async (voice) => {
+it.each([false, true])('keeps Muse active beyond the former time limit until stopped (voice: %s)', async (voice) => {
   vi.useFakeTimers();
   const stop = vi.fn(); const endVoice = vi.fn();
   const { runtime } = setup(async () => ({ stop }) as unknown as MediaStreamTrack, endVoice);
-  // Keep room coordination healthy so this exercises the interaction deadline.
+  // Keep room coordination healthy throughout the long-running interaction.
   const heartbeat = setInterval(() => runtime.update(runtime.snapshot().room, Date.now()), 10_000);
   await runtime.ask('Draw a diagram', voice);
   await vi.advanceTimersByTimeAsync(0);
   calls.lives[0]!.transcript('assistant', 'I am checking the whiteboard.', 0, 1000);
   const tools = calls.tools[0] as ToolDefinition[];
-  await vi.advanceTimersByTimeAsync((voice ? 180_000 : 120_000) - 1);
-  expect(runtime.snapshot().working).toBe(true);
-  await vi.advanceTimersByTimeAsync(1);
+  await vi.advanceTimersByTimeAsync(600_000);
+  expect(runtime.snapshot()).toMatchObject({ working: true, voice, error: null });
+  expect(calls.close).not.toHaveBeenCalled();
+  expect(stop).not.toHaveBeenCalled(); expect(endVoice).not.toHaveBeenCalled();
+  expect((await tools.find(tool => tool.name === 'edit_whiteboard')!.execute({ action: 'undo' })).isError).not.toBe(true);
+
+  runtime.stopPersonal();
   expect(runtime.snapshot().working).toBe(false);
-  expect(runtime.snapshot().error).toContain(`timed out after ${voice ? 3 : 2} minutes`);
   expect(calls.close).toHaveBeenCalledOnce();
   expect((await tools.find(tool => tool.name === 'edit_whiteboard')!.execute({ action: 'undo' })).isError).toBe(true);
   if (voice) { expect(stop).toHaveBeenCalledOnce(); expect(endVoice).toHaveBeenCalledOnce(); }
@@ -81,15 +84,18 @@ it.each([false, true])('can continue in the same chat after a timeout (voice: %s
   clearInterval(heartbeat);
 });
 
-it('starts the next queued request immediately after timeout without replaying the failed request', async () => {
+it('keeps follow-ups queued during long requests and starts them when the session finishes', async () => {
   vi.useFakeTimers();
   const { runtime } = setup();
-  // Offset updates from the deadline to catch reliance on update() draining the queue.
   const heartbeat = setInterval(() => runtime.update(runtime.snapshot().room, Date.now()), 9_000);
   await runtime.ask('First request');
   await runtime.ask('Follow-up request');
   expect(runtime.snapshot().queued).toBe(1);
-  await vi.advanceTimersByTimeAsync(120_000);
+  await vi.advanceTimersByTimeAsync(600_000);
+  expect(calls.requests).toHaveBeenCalledOnce();
+  expect(runtime.snapshot()).toMatchObject({ working: true, queued: 1, error: null });
+  calls.lives[0]!.closed();
+  await vi.advanceTimersByTimeAsync(0);
   expect(calls.requests.mock.calls.map(call => call[1])).toEqual(['First request', 'Follow-up request']);
   expect(runtime.snapshot()).toMatchObject({ working: true, queued: 0, error: null });
   expect(runtime.snapshot().lines.filter(line => line.role === 'user')).toHaveLength(2);
