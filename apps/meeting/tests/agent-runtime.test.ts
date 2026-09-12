@@ -55,6 +55,47 @@ it('lets a private voice request draw and post as the owner without publishing p
   expect(editWhiteboard).toHaveBeenCalledOnce(); expect(sendAgentMessage).toHaveBeenCalledOnce();
 });
 
+it.each([false, true])('can continue in the same chat after a timeout (voice: %s)', async (voice) => {
+  vi.useFakeTimers();
+  const stop = vi.fn(); const endVoice = vi.fn();
+  const { runtime } = setup(async () => ({ stop }) as unknown as MediaStreamTrack, endVoice);
+  // Keep room coordination healthy so this exercises the interaction deadline.
+  const heartbeat = setInterval(() => runtime.update(runtime.snapshot().room, Date.now()), 10_000);
+  await runtime.ask('Draw a diagram', voice);
+  await vi.advanceTimersByTimeAsync(0);
+  calls.lives[0]!.transcript('assistant', 'I am checking the whiteboard.', 0, 1000);
+  const tools = calls.tools[0] as ToolDefinition[];
+  await vi.advanceTimersByTimeAsync((voice ? 180_000 : 120_000) - 1);
+  expect(runtime.snapshot().working).toBe(true);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(runtime.snapshot().working).toBe(false);
+  expect(runtime.snapshot().error).toContain(`timed out after ${voice ? 3 : 2} minutes`);
+  expect(calls.close).toHaveBeenCalledOnce();
+  expect((await tools.find(tool => tool.name === 'edit_whiteboard')!.execute({ action: 'undo' })).isError).toBe(true);
+  if (voice) { expect(stop).toHaveBeenCalledOnce(); expect(endVoice).toHaveBeenCalledOnce(); }
+
+  await runtime.ask('Check the whiteboard and continue');
+  expect(runtime.snapshot().working).toBe(true);
+  expect(runtime.snapshot().error).toBeNull();
+  expect(calls.requests).toHaveBeenLastCalledWith(expect.stringContaining('I am checking the whiteboard.'), 'Check the whiteboard and continue');
+  clearInterval(heartbeat);
+});
+
+it('starts the next queued request immediately after timeout without replaying the failed request', async () => {
+  vi.useFakeTimers();
+  const { runtime } = setup();
+  // Offset updates from the deadline to catch reliance on update() draining the queue.
+  const heartbeat = setInterval(() => runtime.update(runtime.snapshot().room, Date.now()), 9_000);
+  await runtime.ask('First request');
+  await runtime.ask('Follow-up request');
+  expect(runtime.snapshot().queued).toBe(1);
+  await vi.advanceTimersByTimeAsync(120_000);
+  expect(calls.requests.mock.calls.map(call => call[1])).toEqual(['First request', 'Follow-up request']);
+  expect(runtime.snapshot()).toMatchObject({ working: true, queued: 0, error: null });
+  expect(runtime.snapshot().lines.filter(line => line.role === 'user')).toHaveLength(2);
+  clearInterval(heartbeat);
+});
+
 it('refreshes file availability and interim captions without a finalized log change', async () => {
   vi.useFakeTimers();
   const { runtime, snapshot } = setup();

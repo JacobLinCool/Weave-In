@@ -332,6 +332,7 @@ export class AgentRuntime {
     const op: Operation = { key: crypto.randomUUID(), agent: structuredClone(agent), audience, floorId: this.#state.floor?.agentId === agent.id ? this.#state.floor.id : '', preparing,
       live: null, microphone: null, stopAudio: null, streamId: null, startedAt: Date.now(), lastSound: 0, heard: false, playback: null, voice, timer: null, speechTimer: null, rows: new Map() };
     this.#operations.set(agent.config.kind, op);
+    this.#error = null;
     const behalf = agent.config.kind === 'personal' && audience === 'public';
     const history = agent.config.kind === 'personal' && !behalf ? this.#lines : [];
     if (inputLine) {
@@ -399,9 +400,12 @@ export class AgentRuntime {
       this.#status = voice ? (audience === 'private' ? 'Speak privately to your assistant. Your meeting microphone is paused.' : 'Speak publicly to your assistant. Everyone can hear you.') : preparing ? 'Preparing a suggestion…' : 'Waiting for the assistant’s response…';
       op.timer = setTimeout(() => {
         if (!valid()) return;
-        this.#error = preparing ? 'Preparation timed out. Trigger the group assistant again.' : 'This interaction reached its time limit. Continue with a new request.';
+        this.#error = preparing ? 'Preparation timed out. Trigger the group assistant again.' : `This interaction timed out after ${voice ? 3 : 2} minutes. Send a new message to continue in this chat. Check whether any shared actions completed before retrying them.`;
         this.#stop(agent.config.kind, 'interrupted');
         if (preparing) this.command({ type: 'agent-cancel', id: agent.id });
+        // Requests already submitted by the owner should resume immediately,
+        // without waiting for another room-state update or replaying the failed request.
+        this.#drain();
         this.#emit();
       }, voice ? 180_000 : preparing ? 55_000 : 120_000);
       this.#emit();
