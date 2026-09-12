@@ -73,7 +73,6 @@ export class AgentRuntime {
   #lastState = 0;
   #signal = 0;
   #releasedFloor = '';
-  #contextHead = 0;
   #error: string | null = null;
   #status = 'Create an assistant to start a conversation.';
   #ready = false;
@@ -84,20 +83,25 @@ export class AgentRuntime {
   #ownPublicRows = new Map<string, Extract<AgentPeerMessage, { type: 'agent-line' }>>();
   #pastFloors = new Map<string, { floor: NonNullable<AgentRoomState['floor']>; until: number }>();
   #heartbeat: ReturnType<typeof setInterval>;
+  #contextTimer: ReturnType<typeof setInterval>;
   #view: AgentView;
   constructor(readonly ctx: RuntimeContext) {
     this.#view = this.#snapshot();
     this.#heartbeat = setInterval(() => {
       this.command({ type: 'agent-heartbeat' });
-      if (this.ctx.tools.log().head !== this.#contextHead) {
-        this.#contextHead = this.ctx.tools.log().head;
-        for (const op of this.#operations.values()) if (this.#valid(op) && !(op.agent.config.kind === 'personal' && op.audience === 'public')) op.live?.context(contextText(this.ctx.tools.log(), op.agent.config, op.agent.owner, []));
-      }
       if (this.#lastState && Date.now() - this.#lastState > 30_000) {
         this.#stop('group', 'interrupted'); this.#stop('personal', 'interrupted');
         this.#error = 'Room coordination lost. Agent audio is stopped.'; this.#emit();
       }
     }, HEARTBEAT_MS);
+    // Include participant, interim-caption and file-availability changes even when
+    // the finalized log has not advanced. Live suppresses unchanged records.
+    this.#contextTimer = setInterval(() => {
+      for (const op of this.#operations.values()) {
+        if (!this.#valid(op) || (op.agent.config.kind === 'personal' && op.audience === 'public')) continue;
+        op.live?.context(contextText(this.ctx.tools.log(), op.agent.config, op.agent.owner, [], this.ctx.tools.snapshot()));
+      }
+    }, 2_000);
   }
   subscribe = (listener: () => void): (() => void) => { this.#listeners.add(listener); return () => this.#listeners.delete(listener); };
   snapshot = (): AgentView => this.#view;
@@ -339,7 +343,10 @@ export class AgentRuntime {
         if (!valid()) { microphone.stop(); this.ctx.endVoice(op.key); return; }
         op.microphone = microphone;
       }
-      const tools = behalf ? [] : scopedTools(this.ctx.tools, agent.config, agent.owner, valid, () => this.#playable(op) && audience === 'public');
+      // A direct private request may ask for a shared text/board action. It does
+      // not grant the assistant a public audio floor or expose private history.
+      const tools = behalf ? [] : scopedTools(this.ctx.tools, agent.config, agent.owner, valid,
+        () => valid() && !preparing && agent.config.kind === 'personal' && audience === 'private');
       const live = new AgentLive({
         stream: (stream) => {
           if (!valid() || !this.#audio || agent.config.kind === 'group') return;
@@ -366,6 +373,11 @@ export class AgentRuntime {
           this.#stop('group', 'not-played', false);
           this.command({ type: 'agent-raised', id: agent.id, epoch: agent.epoch, request: agent.request });
         },
+        contextPaused: () => {
+          if (!valid()) return;
+          this.#status = 'Background updates paused to reserve space for tools. Muse can fetch current meeting details when asked. Start a new voice session for continuous updates.';
+          this.#emit();
+        },
         error: (message) => {
           if (!valid()) { if (!this.#closed && op.playback !== null) { this.#error = message; this.#emit(); } return; }
           this.#error = message; this.#stop(agent.config.kind, 'interrupted', agent.config.kind !== 'group');
@@ -378,7 +390,7 @@ export class AgentRuntime {
       this.#status = voice ? 'Connecting private microphone…' : preparing ? 'Preparing a suggestion…' : 'Connecting assistant…'; this.#emit();
       await live.start({ room: this.ctx.room, token: this.ctx.controller.sessionToken, agent: behalf ? { ...agent, config: { ...agent.config, instructions: 'Speak once on behalf of the owner using only the current approved concern. Modest elaboration is allowed, without new positions, promises, or private information. Speak for at most 20 seconds, then stop.' } } : agent, microphone: op.microphone, silence: this.#audio!.silence() });
       if (!valid()) { live.close(); return; }
-      let context = behalf ? '{}' : contextText(this.ctx.tools.log(), agent.config, agent.owner, history);
+      let context = behalf ? '{}' : contextText(this.ctx.tools.log(), agent.config, agent.owner, history, this.ctx.tools.snapshot());
       if (!behalf && agent.config.system && this.#state.signal) context += `\nSystem signal: ${JSON.stringify(this.#state.signal)}`;
       if (voice) live.context(context); else live.request(context, text);
       this.#status = voice ? (audience === 'private' ? 'Speak privately to your assistant. Your meeting microphone is paused.' : 'Speak publicly to your assistant. Everyone can hear you.') : preparing ? 'Preparing a suggestion…' : 'Waiting for the assistant’s response…';
@@ -388,7 +400,7 @@ export class AgentRuntime {
         this.#stop(agent.config.kind, 'interrupted');
         if (preparing) this.command({ type: 'agent-cancel', id: agent.id });
         this.#emit();
-      }, voice ? 180_000 : 55_000);
+      }, voice ? 180_000 : preparing ? 55_000 : 120_000);
       this.#emit();
     } catch (error) {
       if (valid()) { this.#error = error instanceof Error ? error.message : 'Unable to start the assistant.'; this.#stop(agent.config.kind, 'interrupted'); this.#emit(); }
@@ -484,6 +496,6 @@ export class AgentRuntime {
     for (const cancel of this.#pendingCreations) cancel();
     this.#stop('personal', 'interrupted'); this.#stop('group', 'interrupted');
     this.command({ type: 'agent-ready', ready: false }); this.#closed = true;
-    clearInterval(this.#heartbeat); this.#audio?.close(); this.#listeners.clear(); this.#lines = []; this.#queue = [];
+    clearInterval(this.#heartbeat); clearInterval(this.#contextTimer); this.#audio?.close(); this.#listeners.clear(); this.#lines = []; this.#queue = [];
   }
 }

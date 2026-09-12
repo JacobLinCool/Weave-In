@@ -71,6 +71,9 @@ export interface ExcalidrawToolStore {
   readonly canRedo: boolean;
 }
 type ConvertElements = typeof import('@excalidraw/excalidraw')['convertToExcalidrawElements'];
+function assertAuthorized(authorized: () => boolean): void {
+  if (!authorized()) throw new Error('This whiteboard action is no longer authorized. Nothing was changed.');
+}
 export interface MermaidImporter {
   parse(source: string): Promise<{ elements: ExcalidrawElementSkeleton[]; files?: Record<string, unknown> }>;
   convert: ConvertElements;
@@ -97,13 +100,15 @@ function validateMermaidInput(args: Record<string, unknown>): { source: string; 
 }
 
 /** Parsing and conversion finish before touching the live scene; invalid input never publishes partial diagrams. */
-export async function importMermaidWhiteboard(store: ExcalidrawToolStore, input: unknown, importer?: MermaidImporter): Promise<WhiteboardEditResult> {
+export async function importMermaidWhiteboard(store: ExcalidrawToolStore, input: unknown, importer?: MermaidImporter, authorized: () => boolean = () => true): Promise<WhiteboardEditResult> {
+  assertAuthorized(authorized);
   const args = record(input);
   if (args['action'] !== 'mermaid') throw new Error('Expected action mermaid.');
   const { source, x, y } = validateMermaidInput(args);
   let engine = importer;
   if (!engine) {
     const [mermaid, excalidraw] = await Promise.all([import('@excalidraw/mermaid-to-excalidraw'), import('@excalidraw/excalidraw')]);
+    assertAuthorized(authorized);
     engine = {
       parse: async definition => await mermaid.parseMermaidToExcalidraw(definition, { startOnLoad: false, maxEdges: 150, maxTextSize: MAX_MERMAID_SOURCE, themeVariables: { fontSize: '20px' }, flowchart: { curve: 'linear' } }),
       convert: excalidraw.convertToExcalidrawElements, restore: excalidraw.restoreElements,
@@ -112,6 +117,7 @@ export async function importMermaidWhiteboard(store: ExcalidrawToolStore, input:
   let parsed: Awaited<ReturnType<MermaidImporter['parse']>>;
   try { parsed = await engine.parse(source); }
   catch (error) { throw new Error(`Mermaid could not be parsed. Nothing was changed. ${error instanceof Error ? error.message : 'Check the flowchart syntax.'}`); }
+  assertAuthorized(authorized);
   if (!parsed.elements.length || parsed.elements.length > MAX_MERMAID_ELEMENTS) throw new Error('Mermaid must produce 1–300 native elements. Split a larger diagram into smaller flowcharts.');
   if (Object.keys(parsed.files ?? {}).length || parsed.elements.some(element => ['image', 'iframe', 'embeddable'].includes(element.type))) throw new Error('This Mermaid diagram requires an image fallback. Use supported flowchart shapes so every node stays editable.');
   // Regenerate ids so repeated imports never overwrite nodes, labels, or bindings from earlier imports.
@@ -134,6 +140,7 @@ export async function importMermaidWhiteboard(store: ExcalidrawToolStore, input:
   const importedIds = new Set(generated.map(element => element.id));
   const imported = scene.filter(element => importedIds.has(element.id));
   if (imported.length !== generated.length || scene.some(element => !parseExcalidrawElement(element))) throw new Error('The Mermaid result contains unsupported or oversized native elements. Nothing was changed.');
+  assertAuthorized(authorized);
   if (!store.commit(scene)) throw new Error('The shared board rejected the Mermaid diagram. Nothing was changed.');
   return { ok: true, shared: true, action: 'mermaid', sourceKind: 'mermaid-flowchart', imported: imported.length, count: store.snapshot().filter(element => !element.isDeleted).length, elements: imported, changedIds: imported.map(element => element.id), canUndo: store.canUndo, canRedo: store.canRedo };
 }
@@ -156,9 +163,10 @@ function nativeShape(element: ExcalidrawElement, elements: ReadonlyMap<string, E
 }
 
 /** Uses Excalidraw's converter for its own text layout and bidirectional bindings. */
-export async function editExcalidrawWhiteboard(store: ExcalidrawToolStore, input: unknown, converter?: ConvertElements): Promise<WhiteboardEditResult> {
+export async function editExcalidrawWhiteboard(store: ExcalidrawToolStore, input: unknown, converter?: ConvertElements, authorized: () => boolean = () => true): Promise<WhiteboardEditResult> {
+  assertAuthorized(authorized);
   const args = record(input), action = args['action'];
-  if (action === 'mermaid') return importMermaidWhiteboard(store, input);
+  if (action === 'mermaid') return importMermaidWhiteboard(store, input, undefined, authorized);
   if (action !== 'read' && action !== 'edit' && action !== 'undo' && action !== 'redo') throw new Error('`action` must be read, edit, mermaid, undo or redo.');
   onlyKeys(args, action === 'edit' ? ['action', 'operations'] : action === 'read' ? ['action', 'offset', 'limit'] : ['action']);
   const result = (elements: ExcalidrawElement[], changedIds: string[] = []): WhiteboardEditResult => ({ ok: true, shared: true, action, count: store.snapshot().filter(element => !element.isDeleted).length, elements, changedIds, canUndo: store.canUndo, canRedo: store.canRedo });
@@ -172,6 +180,7 @@ export async function editExcalidrawWhiteboard(store: ExcalidrawToolStore, input
   }
   if (action === 'undo' || action === 'redo') {
     const before = new Map(store.snapshot().map(element => [element.id, element]));
+    assertAuthorized(authorized);
     store[action]();
     const changed = store.snapshot().filter(element => before.get(element.id) !== element);
     return result([...changed], changed.map(element => element.id));
@@ -180,6 +189,7 @@ export async function editExcalidrawWhiteboard(store: ExcalidrawToolStore, input
   if (!Array.isArray(operations) || operations.length < 1 || operations.length > MAX_WHITEBOARD_OPERATIONS) throw new Error('`operations` must contain 1–50 edits.');
   // Load only when editing in the browser, never while importing the WebMCP schema on the server.
   const runtime = converter ? null : await import('@excalidraw/excalidraw');
+  assertAuthorized(authorized);
   const convert = converter ?? runtime!.convertToExcalidrawElements;
   const before = new Map(store.snapshot().map(element => [element.id, element]));
   const planner = new WhiteboardStore(() => {}, 'webmcp');
@@ -303,6 +313,7 @@ export async function editExcalidrawWhiteboard(store: ExcalidrawToolStore, input
     const details = type === 'arrow' ? { elbowed: 'elbowed' in invalid ? invalid.elbowed : undefined, lastCommittedPoint: invalid.lastCommittedPoint, startBinding: invalid.startBinding, endBinding: invalid.endBinding } : {};
     throw new Error(`The shared board rejected ${id} (${type}). Nothing was changed. Details: ${JSON.stringify({ width, height, index, ...details })}`);
   }
+  assertAuthorized(authorized);
   if (!store.commit([...next.values()])) throw new Error('The shared board rejected this batch because the scene exceeds its limits. Nothing was changed.');
   return result(changedElements, changedElements.map(element => element.id));
 }

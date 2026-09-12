@@ -185,6 +185,24 @@ describe('native Excalidraw WebMCP adapter', () => {
     await expect(run({ action: 'read', limit: null })).rejects.toThrow();
   });
 
+  it('rechecks an agent grant immediately before commit and before undo or redo', async () => {
+    const { store, edit } = nativeFixture();
+    await edit(node('existing'));
+    const before = store.snapshot();
+    let allowed = true;
+    const converter: typeof convertFixture = (elements, options) => {
+      const result = convertFixture(elements, options);
+      allowed = false;
+      return result;
+    };
+    await expect(editExcalidrawWhiteboard(store, { action: 'edit', operations: [node('late')] }, converter, () => allowed)).rejects.toThrow('no longer authorized');
+    expect(store.snapshot()).toEqual(before);
+    for (const action of ['undo', 'redo']) {
+      await expect(editExcalidrawWhiteboard(store, { action }, convertFixture, () => false)).rejects.toThrow('no longer authorized');
+      expect(store.snapshot()).toEqual(before);
+    }
+  });
+
   it('moves existing long-label and large native nodes without truncating untouched fields', async () => {
     const { store, edit } = nativeFixture();
     const native = convertFixture([{ type: 'rectangle', id: 'large', x: 0, y: 0, width: 1500, height: 1700, label: { text: '長文'.repeat(600) } }], { regenerateIds: false });
@@ -266,6 +284,20 @@ describe('Mermaid import transaction', () => {
     await importMermaidWhiteboard(store, { action: 'mermaid', source }, parser);
     expect(store.get('arrived')!.isDeleted).toBe(false);
     expect(store.size).toBe(3);
+  });
+
+  it('does not publish a diagram if its agent turn is cancelled while Mermaid is parsing', async () => {
+    const published: ExcalidrawElement[] = [];
+    const store = new ExcalidrawStore((element) => { published.push(element); });
+    let allowed = true;
+    const parser = importer(async () => {
+      await Promise.resolve();
+      allowed = false;
+      return { elements: skeleton };
+    });
+    await expect(importMermaidWhiteboard(store, { action: 'mermaid', source }, parser, () => allowed)).rejects.toThrow('no longer authorized');
+    expect(store.size).toBe(0);
+    expect(published).toEqual([]);
   });
 
   it('rejects invalid source and unsupported options before calling the parser', async () => {

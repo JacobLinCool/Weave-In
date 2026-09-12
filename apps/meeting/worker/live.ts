@@ -10,14 +10,15 @@ export function validLiveRequest(value: unknown, agent: RoomAgent): value is { s
   const backend = session.delegation.responses;
   if (!record(backend) || backend.model !== REASONING_MODEL || typeof backend.instructions !== 'string' || backend.instructions.length > 12_000) return false;
   if (Object.keys(backend).some((key) => !['model', 'instructions', 'tools', 'parallel_tool_calls'].includes(key))) return false;
-  if (backend.parallel_tool_calls !== false || !Array.isArray(backend.tools) || backend.tools.length > 4) return false;
+  if (backend.parallel_tool_calls !== false || !Array.isArray(backend.tools) || backend.tools.length > TOOL_NAMES.length) return false;
   const names = new Set<string>();
   return backend.tools.every((tool: unknown) => {
     if (!record(tool) || tool.type !== 'function' || typeof tool.name !== 'string' || !TOOL_NAMES.includes(tool.name as typeof TOOL_NAMES[number]) || names.has(tool.name)) return false;
     if (Object.keys(tool).some((key) => !['type', 'name', 'description', 'parameters'].includes(key))) return false;
     if (typeof tool.description !== 'string' || tool.description.length > 2_000 || !record(tool.parameters)) return false;
     if (tool.name === 'capture_screen_share' && !agent.config.screen) return false;
-    if (tool.name === 'download_file' && !agent.config.files) return false;
+    if (['download_file', 'read_shared_file'].includes(tool.name) && !agent.config.files) return false;
+    if (['edit_whiteboard', 'capture_whiteboard'].includes(tool.name) && agent.config.kind !== 'personal') return false;
     if (tool.name === 'send_chat_message' && agent.config.kind === 'group' && agent.phase !== 'speaking') return false;
     names.add(tool.name);
     return true;

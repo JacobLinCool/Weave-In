@@ -52,12 +52,13 @@ export function AgentPanel({ runtime, isHost, mode = 'all', reminders }: { runti
     {managing && view.personal && <AgentDialog title={`${view.personal.config.name} settings`} onClose={() => setManaging(false)}>
       {!view.ready && <button type="button" onClick={() => run(() => runtime.enable())}>Enable assistant audio</button>}
       <ConfigSummary config={view.personal.config} />
-      <p className="agent-note">To change sources or permissions, remove this assistant and create a new one.</p>
+      <p className="agent-note">Spoken replies stay private. Ask explicitly to edit the shared whiteboard or post in Room chat.</p>
+      <p className="agent-note">To change sources or permissions, remove this assistant and create a new one. Removing it clears this tab’s private conversation.</p>
       <button type="button" onClick={() => { runtime.remove(view.personal!.id); setManaging(false); }}>Remove assistant</button>
     </AgentDialog>}
     {view.personal && <section className="agent-personal" aria-label="Personal assistant">
       <div className="agent-conversation" role="log" aria-label="Personal assistant transcript" tabIndex={0}>
-        {view.lines.length === 0 && <div className="agent-empty"><p>Ask a question, explore an idea, or rehearse a response.</p></div>}
+        {view.lines.length === 0 && <div className="agent-empty"><p>Ask about the discussion or a shared file. Try “Draw our workflow on the whiteboard” or “Post the agreed steps in Room chat.”</p></div>}
         {view.lines.map((line) => <article key={line.id} className={`agent-line${line.role === 'user' ? ' agent-line--own' : ''}`}><strong>{line.role === 'user' ? 'You' : line.name}</strong><p>{line.text}</p></article>)}
       </div>
       <form onSubmit={submit} className="agent-compose">
@@ -101,8 +102,9 @@ function AgentForm({ personalAvailable, groupAvailable, onCreate, onCancel }: { 
     </fieldset>
     <fieldset disabled={busy}><legend>Tools and output</legend>
       <label className="agent-check"><input type="checkbox" checked={config.screen} onChange={(event) => set('screen', event.target.checked)} /> Allow viewing the shared screen</label>
-      <label className="agent-check"><input type="checkbox" checked={config.files} onChange={(event) => set('files', event.target.checked)} /> Allow reading shared files</label>
-      <p>{config.kind === 'personal' ? 'Private replies. Speaking for you requires approval for each turn.' : 'Public text suggestions only. Omni does not speak aloud.'}</p>
+      <label className="agent-check"><input type="checkbox" checked={config.files} onChange={(event) => set('files', event.target.checked)} /> Allow reading shared files and images</label>
+      {config.kind === 'personal' && <p className="agent-note">Muse can read the shared whiteboard during a private request. It can edit the board or post in Room chat when you ask. Shared files and images are read as needed; unavailable files cannot be inspected.</p>}
+      <p>{config.kind === 'personal' ? 'Spoken replies stay private. Speak for me approves one public spoken turn about a selected reminder.' : 'Public text suggestions only. Omni does not speak aloud.'}</p>
       <p className="agent-note">Voice and text are recorded in the transcript for the selected audience. Instructions cannot override permissions.</p>
     </fieldset>
     {review && <div className="agent-review"><h4>Review before creating</h4><ConfigSummary config={parseAgentConfig(config)!} /></div>}
@@ -128,5 +130,5 @@ function AgentDialog({ title, children, onClose, busy = false }: { title: string
 }
 
 function ConfigSummary({ config }: { config: AgentConfig }): ReactNode {
-  return <dl className="agent-summary"><dt>Type</dt><dd>{config.kind}</dd><dt>Name</dt><dd>{config.name}</dd><dt>Language</dt><dd>{config.language}</dd><dt>Meeting sources</dt><dd>{config.source}</dd><dt>Public chat</dt><dd>{config.chat ? 'Included' : 'Excluded'}</dd><dt>System signals</dt><dd>{config.system ? 'Included' : 'Excluded'}</dd><dt>Shared screen</dt><dd>{config.screen ? 'Allowed' : 'Not allowed'}</dd><dt>Shared files</dt><dd>{config.files ? 'Allowed' : 'Not allowed'}</dd><dt>Audience</dt><dd>{config.audience}</dd></dl>;
+  return <dl className="agent-summary"><dt>Type</dt><dd>{config.kind}</dd><dt>Name</dt><dd>{config.name}</dd><dt>Language</dt><dd>{config.language}</dd><dt>Meeting sources</dt><dd>{config.source}</dd><dt>Public chat</dt><dd>{config.chat ? 'Included' : 'Excluded'}</dd><dt>System signals</dt><dd>{config.system ? 'Included' : 'Excluded'}</dd><dt>Shared screen</dt><dd>{config.screen ? 'Allowed' : 'Not allowed'}</dd><dt>Shared files and images</dt><dd>{config.files ? 'Allowed' : 'Not allowed'}</dd>{config.kind === 'personal' && <><dt>Shared whiteboard</dt><dd>Read during private requests; edit when asked</dd><dt>Room messages</dt><dd>Post when asked</dd></>}<dt>Audience</dt><dd>{config.audience}</dd></dl>;
 }
