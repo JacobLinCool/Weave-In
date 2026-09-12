@@ -33,7 +33,7 @@ export function PrivateNoticeDock({ store, monitor, onHistory }: { store: Privat
 export function PrivateNoticeHistory({ store }: { store: PrivateNotices }) {
   const state = useSyncExternalStore(store.subscribe, store.getSnapshot);
   return <div className="private-notice-history" role="tabpanel" aria-label="Private reminders">
-    <p>Only in this browser. Screen sharing can reveal this content.</p>
+    <p>Saved in this tab for room recovery for up to 12 hours since the last save. Screen sharing can reveal this content.</p>
     <button type="button" aria-pressed={state.hidden} onClick={() => store.setHidden(!state.hidden)}>{state.hidden ? 'Show private content' : 'Hide private content'}</button>
     {state.hidden ? <p>Private content hidden.</p> : <>
       <p>Automatic detection sends recent transcript text and previous automatic reminders to Gemini through our server. Our server does not store them. Reminders are delivered only to the person who raised the concern. Pause stops analysis; Hide only hides private content. No assistant connection is required.</p>

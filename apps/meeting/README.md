@@ -51,7 +51,7 @@ When the browser exposes `navigator.modelContext` (or `document.modelContext`), 
 
 A compact card beside the meeting controls shows one reminder at a time. Empty or hidden reminders use a compact header and monitoring status; visible reminders expand to fit their text. On narrow screens the controls and card stack. New reminders replace the current reminder; dismissing does not surface older ones. The **Private** tab holds up to 50 reminders with copied evidence. Reminders expire after 120 seconds by default (15–300 configurable), and remain in history. **Hide** hides content in both surfaces, including future reminders. It does not stop the assistant from reading the private history. Screen sharing can reveal any visible private content.
 
-Reminder state exists only in this tab's memory, is cleared on leaving, and is never added to the meeting log, peer messages, server storage, or localStorage. Automatic monitoring runs in ordinary browsers while the meeting page is open; no MCP or assistant interaction is required. Existing WebMCP tools remain available as an optional manual delivery path. Follow-up conversation can stay in the user's existing assistant session; there is no automatic conversation handoff.
+Reminder state is private to this tab and checkpointed in sessionStorage for same-room recovery. It is never added to the shared meeting log, peer messages, server storage, or localStorage. Automatic monitoring runs in ordinary browsers while the meeting page is open; no MCP or assistant interaction is required. Existing WebMCP tools remain available as an optional manual delivery path. Follow-up conversation can stay in the user's existing assistant session; there is no automatic conversation handoff.
 
 Example, after reading sequence 42 from the current meeting:
 
@@ -71,7 +71,7 @@ This is a bounded prototype, not the full room-wide design in `ARCHITECTURE.md`:
 
 ## Privacy
 
-Camera, microphone, screen share, and chat are not sent to the operator's server. Automatic analysis sends recent transcript text and previous automatic reminders through the Worker to Gemini. The Worker does not persist this data or embeddings. Reminder history remains in the receiving browser's memory and clears on leaving. Google processes the supplied text under the configured Gemini service's terms; this implementation makes no claim about provider retention. Pause stops new analysis requests; it does not stop transcription. The landing page and Private panel disclose this data flow.
+Camera, microphone, screen share, and chat are not sent to the operator's server. Automatic analysis sends recent transcript text and previous automatic reminders through the Worker to Gemini. The Worker does not persist this data or embeddings. Reminder history is checkpointed in the receiving tab's sessionStorage for same-room recovery. Google processes the supplied text under the configured Gemini service's terms; this implementation makes no claim about provider retention. Pause stops new analysis requests; it does not stop transcription. The landing page and Private panel disclose this data flow.
 
 ## Local development
 
@@ -152,3 +152,11 @@ Run the normal `pnpm check` suite for lifecycle, routing, input validation, retr
 To test in ordinary browsers, join the same room as two participants with captions on. One person raises an untested data-loss concern; the other moves to approve launch without answering it. Pause briefly after the decision so analysis can finish. Only the objection author should receive a private reminder; chat stays empty. Then test Pause/Resume, Hide/Show, and a new room where the concern is answered before approval (no reminder). No assistant tools are needed.
 
 Provider references: [Gemini embeddings](https://ai.google.dev/gemini-api/docs/embeddings), [structured generation](https://ai.google.dev/gemini-api/docs/generate-content/structured-output).
+
+### Reconnection and same-tab recovery
+
+A dropped signaling socket automatically retries joining the same room with the same participant id (1–10 second backoff). The meeting stays open, media state and local history remain, and a reconnecting message replaces the terminal disconnect error. Peers exchange their own history again, with duplicate suppression. A temporary disconnect does not invoke Leave.
+
+The tab checkpoints its latest room in **sessionStorage**: up to 1,000 text chat messages, 1,000 finalized transcript lines, 2,000 meeting-log entries with original sequence numbers, and 50 private reminders including hide/dismiss status and the automatic monitoring pause setting. The checkpoint also preserves participant identity and the locally displayed timer. Refreshing and joining the same room, or deliberately leaving and rejoining it, restores that checkpoint. It is ignored after 12 hours without a save; joining a different room replaces the saved room. Closing the tab normally ends its browser session, though browsers may restore sessionStorage when restoring tabs. This is not account storage or cross-device synchronization.
+
+File bodies, file-transfer state, media permission, and screen sharing are not checkpointed. Refreshing requires rejoining and restarting screen sharing or re-sharing local files. Storage failures preserve live in-memory state and show a warning that refresh recovery is unavailable. Large histories may be trimmed further to fit the checkpoint budget. The room server still owns its own timer lifecycle; this patch preserves the returning tab's local timer, not a server-wide durable meeting archive.

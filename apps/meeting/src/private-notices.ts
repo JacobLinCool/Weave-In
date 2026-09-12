@@ -10,7 +10,7 @@ export interface PrivateNotice {
 }
 export interface PrivateNoticeState { hidden: boolean; notices: readonly PrivateNotice[] }
 
-/** Per-tab memory only. Never passed to the room log, storage, or a transport. */
+/** Per-tab state, checkpointed by App for room recovery. Never sent to shared room transports. */
 export class PrivateNotices {
   #state: PrivateNoticeState = { hidden: false, notices: [] };
   #listeners = new Set<() => void>();
@@ -56,5 +56,9 @@ export class PrivateNotices {
     this.#publish({ ...this.#state, notices: this.#state.notices.map((item) => item.status === 'active' && item.expiresAt <= now ? { ...item, status: 'expired' } : item) });
   }
   setHidden(hidden: boolean): void { this.#publish({ ...this.#state, hidden }); }
+  restore(state: PrivateNoticeState): void {
+    this.#publish(structuredClone(state));
+    this.expire();
+  }
   clear(): void { this.#publish({ hidden: false, notices: [] }); }
 }

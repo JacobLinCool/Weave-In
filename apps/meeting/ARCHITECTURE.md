@@ -140,7 +140,7 @@ Whiteboard is not on this list. See `PRODUCT.md` § Explicitly deferred.
 
 ## Private reminder delivery and automatic prototype (implemented)
 
-`private-notices.ts` holds one per-tab, in-memory store independent of `MeetingLog` and all transports. `show_private_notice` validates and copies evidence from the local log; `read_private_notices` exposes delivery status to the connected agent. `private-notice-ui.tsx` subscribes to this store for the compact dock and history panel. A local timer expires active reminders; room cleanup clears the store and invalidates registered tool handles.
+`private-notices.ts` holds one per-tab store independent of `MeetingLog` and shared transports. `meeting-session.ts` checkpoints it with local text history in sessionStorage for room recovery. `show_private_notice` validates and copies evidence from the local log; `read_private_notices` exposes delivery status to the connected agent. `private-notice-ui.tsx` subscribes to this store for the compact dock and history panel. A local timer expires active reminders; leaving clears live state and invalidates registered tool handles; the tab keeps a recovery checkpoint for rejoining.
 
 PR #2 now also includes a scoped automatic detector, as requested for the private-reminder experiment. `auto-reminders.ts` polls new local finalized speech and calls the same-origin `/api/private-analysis` Worker endpoint. `worker/private-analysis.ts` embeds bounded speech context and uses structured Gemini generation to check for an unresolved explicit objection bypassed by a later decision. Only the objection author can receive the result. The controller handles cooldown, history, pausing, stale results and error backoff; no assistant session is needed.
 

@@ -12,6 +12,7 @@ const ICE_SERVERS: RTCIceServer[] = [{ urls: 'stun:stun.l.google.com:19302' }];
 const DATA_CHANNEL_LABEL = 'weave-in';
 
 export interface MeetingControllerEvents {
+  onReconnecting?(): void;
   onConnected(self: PeerIdentity, peers: PeerIdentity[], startedAt: number): void;
   onPeerJoined(peer: PeerIdentity): void;
   onPeerLeft(peerId: string): void;
@@ -48,6 +49,24 @@ export class MeetingController {
   #socket: WebSocket | null = null;
   #self: PeerIdentity | null = null;
   #closing = false;
+  #args: { roomCode: string; action: 'create' | 'join'; displayName: string; peerId: string } | null = null;
+  #retryTimer: ReturnType<typeof setTimeout> | undefined;
+  #retryDelay = 1000;
+  #retrying = false;
+  #scheduleReconnect(): void {
+    if (this.#closing || this.#retryTimer || !this.#args) return;
+    this.#retrying = true;
+    this.#events.onReconnecting?.();
+    this.#retryTimer = setTimeout(() => {
+      this.#retryTimer = undefined;
+      if (this.#closing || !this.#args) return;
+      this.#socket = null;
+      void this.connect({ ...this.#args, action: 'join' }).catch(() => {
+        this.#retryDelay = Math.min(this.#retryDelay * 2, 10000);
+        this.#scheduleReconnect();
+      });
+    }, this.#retryDelay);
+  }
 
   constructor(localStreams: MediaStream[], events: MeetingControllerEvents) {
     for (const stream of localStreams) this.#localStreams.set(stream.id, stream);
@@ -60,6 +79,8 @@ export class MeetingController {
     displayName: string;
     peerId: string;
   }): Promise<void> {
+    if (this.#closing) return Promise.reject(new Error('Meeting closed.'));
+    this.#args = args;
     if (this.#socket) throw new Error('MeetingController is already connected.');
     const endpoint = new URL(`/api/rooms/${args.roomCode}/connect`, window.location.href);
     endpoint.protocol = endpoint.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -71,26 +92,33 @@ export class MeetingController {
       const socket = new WebSocket(endpoint);
       this.#socket = socket;
       let welcomed = false;
+      const timeout = setTimeout(() => {
+        if (welcomed || this.#closing) return;
+        reject(new Error('Signaling connection timed out.'));
+        socket.close();
+      }, 10000);
       socket.addEventListener('message', (event) => {
+        if (this.#closing || this.#socket !== socket) return;
         void this.#receive(event.data).then((didWelcome) => {
           if (!welcomed && didWelcome) {
             welcomed = true;
+            clearTimeout(timeout);
+            this.#retrying = false;
+            this.#retryDelay = 1000;
             resolve();
           }
         });
       });
       socket.addEventListener('error', () => {
         if (!welcomed) reject(new Error('The signaling connection could not be established.'));
-        this.#events.onError('SIGNALING_ERROR', 'The signaling connection encountered an error.');
+        if (!this.#self && !this.#retrying) this.#events.onError('SIGNALING_ERROR', 'The signaling connection encountered an error.');
       });
-      socket.addEventListener('close', (event) => {
+      socket.addEventListener('close', () => {
+        clearTimeout(timeout);
         if (!welcomed) reject(new Error('The room is unavailable, full, or no longer active.'));
-        if (!this.#closing) {
-          this.#events.onError(
-            'SIGNALING_CLOSED',
-            event.reason || 'The signaling connection closed unexpectedly.',
-          );
-        }
+        if (this.#socket !== socket || this.#closing) return;
+        this.#socket = null;
+        if (welcomed) this.#scheduleReconnect();
       });
     });
   }
@@ -98,6 +126,7 @@ export class MeetingController {
   close(): void {
     if (this.#closing) return;
     this.#closing = true;
+    clearTimeout(this.#retryTimer);
     for (const state of this.#connections.values()) {
       state.channel?.close();
       state.connection.close();
@@ -173,6 +202,8 @@ export class MeetingController {
 
     switch (message.type) {
       case 'welcome':
+        for (const state of this.#connections.values()) { state.channel?.close(); state.connection.close(); }
+        this.#connections.clear();
         this.#self = message.self;
         // Translate the server's elapsed duration onto this device's clock.
         const localStartedAt = Date.now() - Math.max(0, message.serverTime - message.startedAt);
@@ -190,6 +221,7 @@ export class MeetingController {
         await this.#handleSignal(message.from, message.kind, message.payload);
         return false;
       case 'error':
+        if (this.#retrying) return false;
         this.#events.onError(message.code, message.message);
         return false;
     }
