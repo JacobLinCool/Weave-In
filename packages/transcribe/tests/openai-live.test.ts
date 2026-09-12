@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { DEFAULT_OPTIONS } from '../src/contracts';
 import {
@@ -168,8 +168,8 @@ describe('OpenAiLiveTranscriber', () => {
     client.sendAudio(new ArrayBuffer(4_800));
     expect(JSON.parse(peer.channel.sent.at(-1) ?? '{}')).toEqual({ type: 'input_audio_buffer.commit' });
 
-    peer.channel.message({ type: 'conversation.item.created', item: { id: 'first' } });
-    peer.channel.message({ type: 'conversation.item.created', item: { id: 'second' } });
+    peer.channel.message({ type: 'input_audio_buffer.committed', item_id: 'first' });
+    peer.channel.message({ type: 'input_audio_buffer.committed', item_id: 'second' });
     peer.channel.message({
       type: 'conversation.item.input_audio_transcription.delta',
       item_id: 'first',
@@ -181,6 +181,7 @@ describe('OpenAiLiveTranscriber', () => {
       transcript: 'Second final.',
     });
     expect(observed.onFinal).not.toHaveBeenCalled();
+    expect(observed.onInterim).toHaveBeenLastCalledWith('First partial\nSecond final.');
     peer.channel.message({
       type: 'conversation.item.input_audio_transcription.completed',
       item_id: 'first',
@@ -245,6 +246,205 @@ describe('OpenAiLiveTranscriber', () => {
     await client.stop();
   });
 });
+
+describe('OpenAI finalization', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it('waits for an already committed item without an ID before rotating, then publishes new finals', async () => {
+    const { client, peers, observed } = await startFinalizationTest();
+    client.sendAudio(new ArrayBuffer(96_000));
+    await vi.advanceTimersByTimeAsync(OPENAI_ROTATION_INTERVAL_MS);
+    expect(peers).toHaveLength(1);
+    expect(peers[0]!.channel.readyState).toBe('open');
+    await vi.advanceTimersByTimeAsync(1_200);
+    expect(peers).toHaveLength(1);
+
+    // Audio arriving while the old connection drains is sent on the new one.
+    client.sendAudio(new ArrayBuffer(96_000));
+    complete(peers[0]!, 'old', 'Old final.');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(peers).toHaveLength(2);
+    expect(observed.onFinal).toHaveBeenCalledWith('Old final.', 1);
+    ready(peers[1]!);
+    expect(peers[1]!.channel.sent.map((raw) => JSON.parse(raw).type))
+      .toEqual(['session.update', 'input_audio_buffer.append', 'input_audio_buffer.commit']);
+
+    // Late old-connection events must not reintroduce items or fail the new one.
+    peers[0]!.channel.message({ type: 'conversation.item.input_audio_transcription.delta', item_id: 'stale', delta: 'stale' });
+    peers[0]!.channel.dispatchEvent(new Event('error'));
+    complete(peers[1]!, 'new', 'New final.');
+    expect(observed.onFinal.mock.calls).toEqual([['Old final.', 1], ['New final.', 2]]);
+    expect(observed.onFatalError).not.toHaveBeenCalled();
+    await client.stop();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('commits a trailing buffer once and waits for an empty completion', async () => {
+    const { client, peers, observed } = await startFinalizationTest();
+    client.sendAudio(new ArrayBuffer(4_800));
+    await vi.advanceTimersByTimeAsync(OPENAI_ROTATION_INTERVAL_MS);
+    expect(peers[0]!.channel.sent.filter((raw) => JSON.parse(raw).type === 'input_audio_buffer.commit')).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(peers).toHaveLength(1);
+    complete(peers[0]!, 'silent', '');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(peers).toHaveLength(2);
+    ready(peers[1]!);
+    expect(observed.onFinal).not.toHaveBeenCalled();
+    await client.stop();
+  });
+
+  it('keeps stop idempotent and waits for the final committed audio', async () => {
+    const { client, peers, observed } = await startFinalizationTest();
+    client.sendAudio(new ArrayBuffer(96_000));
+    const stopping = client.stop();
+    expect(client.stop()).toBe(stopping);
+    await vi.advanceTimersByTimeAsync(1_200);
+    expect(peers[0]!.channel.readyState).toBe('open');
+    complete(peers[0]!, 'last', 'Last final.');
+    await stopping;
+    expect(observed.onFinal).toHaveBeenCalledWith('Last final.', 1);
+    expect(peers[0]!.channel.readyState).toBe('closed');
+    expect(observed.onFatalError).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('does not reopen when stop interrupts rotation finalization', async () => {
+    const { client, peers, credential } = await startFinalizationTest();
+    client.sendAudio(new ArrayBuffer(96_000));
+    await vi.advanceTimersByTimeAsync(OPENAI_ROTATION_INTERVAL_MS);
+    const stopping = client.stop();
+    complete(peers[0]!, 'last', 'Last final.');
+    await stopping;
+    await vi.advanceTimersByTimeAsync(0);
+    expect(peers).toHaveLength(1);
+    expect(credential).toHaveBeenCalledTimes(1);
+    expect(peers[0]!.channel.readyState).toBe('closed');
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('ignores a late credential result after stop', async () => {
+    const token = Promise.withResolvers<{ type: 'ephemeral-token'; value: string }>();
+    const { client, peers, credential } = await startFinalizationTest();
+    credential.mockImplementationOnce(() => token.promise);
+    await vi.advanceTimersByTimeAsync(OPENAI_ROTATION_INTERVAL_MS);
+    expect(credential).toHaveBeenCalledTimes(2);
+    await client.stop();
+    token.resolve({ type: 'ephemeral-token', value: 'late-token' });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(peers).toHaveLength(1);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('aborts in-flight setup when stop interrupts reconnection', async () => {
+    const answer = Promise.withResolvers<Response>();
+    const { client, peers, fetcher, observed } = await startFinalizationTest();
+    fetcher.mockImplementationOnce(() => answer.promise);
+    await vi.advanceTimersByTimeAsync(OPENAI_ROTATION_INTERVAL_MS);
+    expect(peers).toHaveLength(2);
+    const request = fetcher.mock.calls[1]![1];
+    await client.stop();
+    expect(request.signal?.aborted).toBe(true);
+    answer.resolve(new Response('late-answer'));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(peers[1]!.remoteDescriptions).toEqual([]);
+    expect(observed.onConnectionReady).toHaveBeenCalledTimes(1);
+    expect(observed.onFatalError).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each(['rotation', 'stop'])('reports a bounded finalization timeout during %s', async (operation) => {
+    const { client, peers, observed } = await startFinalizationTest();
+    client.sendAudio(new ArrayBuffer(96_000));
+    let stopping: Promise<void> | undefined;
+    if (operation === 'rotation') await vi.advanceTimersByTimeAsync(OPENAI_ROTATION_INTERVAL_MS);
+    else stopping = client.stop();
+    await vi.advanceTimersByTimeAsync(5_000);
+    await stopping;
+    expect(observed.onFatalError).toHaveBeenCalledExactlyOnceWith(
+      'OPENAI_FINALIZATION_TIMEOUT', expect.stringContaining('transcript may be incomplete'),
+    );
+    expect(observed.onFinal).not.toHaveBeenCalled();
+    expect(peers).toHaveLength(1);
+    await client.stop();
+    expect(peers[0]!.channel.readyState).toBe('closed');
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each([
+    ['error', 'OPENAI_API_ERROR'],
+    ['conversation.item.input_audio_transcription.failed', 'OPENAI_TRANSCRIPTION_FAILED'],
+  ])('handles %s while draining instead of waiting forever', async (type, code) => {
+    const { client, peers, observed } = await startFinalizationTest();
+    client.sendAudio(new ArrayBuffer(96_000));
+    await vi.advanceTimersByTimeAsync(OPENAI_ROTATION_INTERVAL_MS);
+    peers[0]!.channel.message({ type, item_id: 'failed', error: { message: 'Rejected test-token' } });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(observed.onFatalError).toHaveBeenCalledExactlyOnceWith(code, 'Rejected [redacted]');
+    expect(peers).toHaveLength(1);
+    const sent = peers[0]!.channel.sent.length;
+    client.sendAudio(new ArrayBuffer(4_800));
+    expect(peers[0]!.channel.sent).toHaveLength(sent);
+    await client.stop();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('does not count duplicate completions toward other outstanding commits', async () => {
+    const { client, peers, observed } = await startFinalizationTest();
+    client.sendAudio(new ArrayBuffer(96_000));
+    client.sendAudio(new ArrayBuffer(96_000));
+    complete(peers[0]!, 'first', 'First final.');
+    await vi.advanceTimersByTimeAsync(OPENAI_ROTATION_INTERVAL_MS);
+    complete(peers[0]!, 'first', 'First final.');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(peers).toHaveLength(1);
+    expect(observed.onFinal).toHaveBeenCalledTimes(1);
+    complete(peers[0]!, 'second', 'Second final.');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(peers).toHaveLength(2);
+    ready(peers[1]!);
+    await client.stop();
+    expect(observed.onFinal.mock.calls).toEqual([['First final.', 1], ['Second final.', 1]]);
+  });
+});
+
+async function startFinalizationTest() {
+  const peers: MockPeerConnection[] = [];
+  const observed = callbacks();
+  const credential = vi.fn(async () => ({ type: 'ephemeral-token' as const, value: 'test-token' }));
+  const fetcher = vi.fn(async (_input: string, _init: RequestInit) => new Response('answer'));
+  const client = new OpenAiLiveTranscriber({
+    credential,
+    options: { ...DEFAULT_OPTIONS, provider: 'openai' },
+    callbacks: observed,
+    dependencies: {
+      createPeerConnection: () => {
+        const peer = new MockPeerConnection();
+        peers.push(peer);
+        return peer as unknown as RTCPeerConnection;
+      },
+      fetch: fetcher,
+      setTimeout: (callback, delay) => setTimeout(callback, delay),
+      clearTimeout: (timer) => clearTimeout(timer),
+    },
+  });
+  const starting = client.start();
+  await vi.advanceTimersByTimeAsync(0);
+  ready(peers[0]!);
+  await starting;
+  return { client, peers, observed, credential, fetcher };
+}
+
+function ready(peer: MockPeerConnection): void {
+  peer.channel.open();
+  peer.channel.message({ type: 'session.updated' });
+}
+
+function complete(peer: MockPeerConnection, itemId: string, text: string): void {
+  peer.channel.message({ type: 'input_audio_buffer.committed', item_id: itemId });
+  peer.channel.message({ type: 'conversation.item.input_audio_transcription.completed', item_id: itemId, transcript: text });
+}
 
 function dependenciesFor(
   peer: MockPeerConnection,
