@@ -40,13 +40,11 @@ describe('private notices lifecycle', () => {
     expect(store.getSnapshot().notices[0]?.status).toBe('expired');
     expect(store.show(input, log, 121000).status).toBe('expired');
   });
-  it('hides future reminders too and clears private state between meetings', () => {
+  it('clears private state between meetings', () => {
     const { store, log, input } = fixture();
-    store.setHidden(true);
     store.show(input, log, 0);
-    expect(store.getSnapshot().hidden).toBe(true);
     store.clear();
-    expect(store.getSnapshot()).toEqual({ hidden: false, notices: [] });
+    expect(store.getSnapshot()).toEqual({ notices: [] });
   });
   it('bounds history and keeps different browser stores independent', () => {
     const { store, log, input } = fixture();

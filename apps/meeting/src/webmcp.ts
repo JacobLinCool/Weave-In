@@ -74,9 +74,9 @@ export interface MeetingToolsContext {
   /** Resolves null when nobody is sharing a screen. */
   captureScreen(options: CaptureOptions): Promise<ScreenCapture | null>;
   /** Captures the open whiteboard viewport; rejects when the board is closed. */
-  captureWhiteboard(options: CaptureOptions): Promise<CapturedFrame>;
+  captureWhiteboard(options: CaptureOptions, authorized?: () => boolean): Promise<CapturedFrame>;
   /** Mutates the shared room store; implementations should use the validated editWhiteboard helper. */
-  editWhiteboard(input: unknown): WhiteboardEditResult | Promise<WhiteboardEditResult>;
+  editWhiteboard(input: unknown, authorized?: () => boolean): WhiteboardEditResult | Promise<WhiteboardEditResult>;
   sendAgentMessage(text: string, agent: string | null): { id: string; at: string };
 }
 
@@ -393,7 +393,7 @@ export function createMeetingTools(context: MeetingToolsContext): ToolDefinition
       execute: async (input) => {
         try {
           const notice = context.privateNotices.show(input, context.log());
-          return success({ ok: true, notice, hidden: context.privateNotices.getSnapshot().hidden });
+          return success({ ok: true, notice });
         } catch (error) { return failure(error instanceof Error ? error.message : 'Cannot show reminder.'); }
       },
     },

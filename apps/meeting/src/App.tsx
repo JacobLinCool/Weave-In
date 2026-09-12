@@ -129,6 +129,7 @@ export function App(): ReactNode {
   const screenStreamRef = useRef<MediaStream | null>(null);
   const controllerRef = useRef<MeetingController | null>(null);
   const [whiteboard] = useState(() => new ExcalidrawStore((element) => controllerRef.current?.broadcast({ type: 'excalidraw', element })));
+  const [whiteboardOpen, setWhiteboardOpen] = useState(false);
   const whiteboardApiRef = useRef<ExcalidrawImperativeAPI | null>(null);
   const onWhiteboardApi = useCallback((api: ExcalidrawImperativeAPI | null) => { whiteboardApiRef.current = api; }, []);
   const participantsRef = useRef<Record<string, RemoteParticipant>>({});
@@ -163,7 +164,7 @@ export function App(): ReactNode {
   checkpointRef.current = () => {
     const self = selfRef.current;
     if (phaseRef.current !== 'room' || !self || !roomCodeRef.current || !roomStartedAt || !joinedAt) return;
-    const saved = saveMeetingSession({version:1,monitoringEnabled:autoReminders.getSnapshot().enabled,savedAt:Date.now(),roomCode:roomCodeRef.current,peerId:self.peerId,name:nameRef.current,startedAt:roomStartedAt,joinedAt,
+    const saved = saveMeetingSession({version:1,savedAt:Date.now(),roomCode:roomCodeRef.current,peerId:self.peerId,name:nameRef.current,startedAt:roomStartedAt,joinedAt,
       log:logRef.current.snapshot(), personalChat: agentRef.current?.snapshot().lines ?? personalChatRef.current,
       messages:messagesRef.current,transcript:transcriptRef.current,notices:privateNotices.getSnapshot()});
     setRecoveryWarning(!saved);
@@ -560,7 +561,6 @@ export function App(): ReactNode {
         setRoomStartedAt(saved?.startedAt ?? null); setJoinedAt(saved?.joinedAt ?? null);
         seenRef.current = new Set([...messagesRef.current, ...transcriptRef.current].filter(r=>!r.own).map(r=>`${r.from}:${r.id}`));
         if (saved) privateNotices.restore(saved.notices); else privateNotices.clear();
-        autoReminders.setEnabled(saved?.monitoringEnabled ?? true);
       };
       if (roomCodeRef.current !== code) restoreSession();
       const stream = await prepareMedia();
@@ -856,6 +856,21 @@ export function App(): ReactNode {
     };
   };
 
+  const openAgentWhiteboard = async (authorized: () => boolean): Promise<HTMLElement> => {
+    const available = () => phaseRef.current === 'room' && authorized();
+    if (!available()) throw new Error('This agent turn has ended.');
+    setWhiteboardOpen(true);
+    const deadline = Date.now() + 5_000;
+    while (available() && Date.now() < deadline) {
+      const root = document.querySelector<HTMLElement>('.whiteboard');
+      if (root?.querySelector('canvas') && whiteboardApiRef.current) return root;
+      await new Promise<void>(resolve => setTimeout(resolve, 50));
+    }
+    throw new Error(available() ? 'The whiteboard is still loading. Please retry.' : 'This agent turn has ended.');
+  };
+
+  useEffect(() => { if (phase === 'lobby') setWhiteboardOpen(false); }, [phase]);
+
   useEffect(() => {
     if (phase !== 'room') return;
     autoReminders.start({ log: () => logRef.current, you: () => logParticipant(SELF).peerId });
@@ -886,7 +901,7 @@ export function App(): ReactNode {
         }
         return result;
       },
-      sendAgentMessage: (text, agent) => sendChat(text, agent ?? 'Assistant'),
+      sendAgentMessage: (text, agent) => sendChat(text, agent ?? 'Muse'),
     });
     return () => { autoReminders.stop(); window.clearInterval(timer); unregister?.(); privateNotices.clear(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -905,20 +920,25 @@ export function App(): ReactNode {
           if (!file) throw new Error('File no longer available.');
           return { file, blob };
         }, captureScreen,
-      captureWhiteboard: (options) => {
-        const root = document.querySelector<HTMLElement>('.whiteboard');
-        if (!root) throw new Error('Open the whiteboard before capturing it.');
-        return captureWhiteboard(root, options);
-      },
-      editWhiteboard: async (input) => {
-        const result = await editExcalidrawWhiteboard(whiteboard, input);
-        if (result.action !== 'read') {
-          await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
-          whiteboardApiRef.current?.scrollToContent(undefined, { fitToViewport: true, viewportZoomFactor: 0.8, animate: false });
-        }
-        return result;
-      },
-        sendAgentMessage: (text, agent) => sendChat(text, agent ?? 'Assistant'),
+        captureWhiteboard: async (options, authorized = () => true) => {
+          const root = await openAgentWhiteboard(authorized);
+          if (!authorized()) throw new Error('This agent turn has ended.');
+          return captureWhiteboard(root, options);
+        },
+        editWhiteboard: async (input, authorized = () => true) => {
+          const reading = !!input && typeof input === 'object' && 'action' in input && input.action === 'read';
+          if (!reading) await openAgentWhiteboard(authorized);
+          const result = await editExcalidrawWhiteboard(whiteboard, input, undefined,
+            () => phaseRef.current === 'room' && authorized());
+          if (result.action !== 'read' && authorized()) {
+            // The store's subscriber applies the new scene on the next frame.
+            // Fitting an empty/stale scene can zoom to 3000% before it arrives.
+            await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+            if (authorized()) whiteboardApiRef.current?.scrollToContent(whiteboard.snapshot(), { fitToViewport: true, viewportZoomFactor: 0.8, animate: false });
+          }
+          return result;
+        },
+        sendAgentMessage: (text, agent) => sendChat(text, agent ?? 'Muse'),
       },
       beginVoice: async (audience, owner) => {
         const source = localStreamRef.current?.getAudioTracks()[0];
@@ -958,9 +978,12 @@ export function App(): ReactNode {
     agentRef.current = runtime; setAgentRuntime(runtime);
     const saveConversation = runtime.subscribe(() => { personalChatRef.current = runtime.snapshot().lines; checkpointRef.current(); });
     void runtime.initializePersonal().catch((cause: unknown) => {
-      if (agentRef.current === runtime) setError(cause instanceof Error ? cause.message : 'Chat could not initialize.');
+      if (agentRef.current === runtime) setError(cause instanceof Error ? cause.message : 'Muse could not initialize.');
     });
     if (agentStateRef.current) runtime.update(agentStateRef.current.state, agentStateRef.current.now);
+    // Omni is created by the room. Register this device to run its text
+    // suggestions without requiring the participant to open agent settings.
+    void runtime.enable().catch(() => { /* Runtime exposes a retry if browser audio activation is blocked. */ });
     for (const [peer, participant] of Object.entries(participantsRef.current)) for (const stream of Object.values(participant.streams)) runtime.remoteStream(peer, stream);
     return () => { saveConversation(); runtime.close(); if (agentRef.current === runtime) agentRef.current = null; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -968,11 +991,10 @@ export function App(): ReactNode {
   useEffect(() => { checkpointRef.current(); }, [messages, transcript, phase, roomStartedAt, joinedAt]);
   useEffect(() => {
     const unsubscribe = privateNotices.subscribe(() => checkpointRef.current());
-    const unsubscribeMonitor = autoReminders.subscribe(() => checkpointRef.current());
     const save = () => checkpointRef.current();
     window.addEventListener('pagehide', save);
-    return () => { unsubscribe(); unsubscribeMonitor(); window.removeEventListener('pagehide', save); };
-  }, [privateNotices, autoReminders]);
+    return () => { unsubscribe(); window.removeEventListener('pagehide', save); };
+  }, [privateNotices]);
 
   useEffect(() => {
     const track = localStream?.getAudioTracks()[0];
@@ -987,7 +1009,7 @@ export function App(): ReactNode {
             activeSince ??= performance.now();
             if (performance.now() - activeSince >= 100) agentRuntime.ownerStartedSpeaking();
           });
-        } catch { setError('Speech interruption is unavailable. Use Stop in Chat to interrupt your assistant.'); }
+        } catch { setError('Speech interruption is unavailable. Use Stop in Muse to interrupt the response.'); }
       } else if (!agentRuntime.snapshot().publicPersonalSpeaking && stop) {
         const cleanup = stop; stop = undefined; cleanup(); activeSince = null;
       }
@@ -1005,13 +1027,15 @@ export function App(): ReactNode {
     return (
       <>
       <MeetingSurface
-        groupPanel={agentRuntime ? <details><summary>Omni · Public suggestions</summary><AgentPanel runtime={agentRuntime} mode="group" isHost={selfRef.current?.isHost ?? false} /></details> : null}
+        groupPanel={agentRuntime ? <AgentPanel runtime={agentRuntime} mode="group" isHost={selfRef.current?.isHost ?? false} /> : null}
         noticeActions={{
-          onSpeak: async (text) => { if (!agentRuntime) throw new Error('Chat is reconnecting. Please try again.'); await agentRuntime.speakForMe(text); },
-          onDiscuss: async (text) => { if (!agentRuntime) throw new Error('Chat is reconnecting. Please try again.'); await agentRuntime.discussReminder(text); setPanelTab('private'); },
+          onSpeak: async (text) => { if (!agentRuntime) throw new Error('Muse is reconnecting. Please try again.'); await agentRuntime.speakForMe(text); },
+          onDiscuss: async (text) => { if (!agentRuntime) throw new Error('Muse is reconnecting. Please try again.'); await agentRuntime.discussReminder(text); setPanelTab('assistant'); },
         }}
         agentPanel={agentRuntime ? <AgentPanel runtime={agentRuntime} mode="personal" isHost={selfRef.current?.isHost ?? false} /> : null}
         whiteboard={whiteboard}
+        whiteboardOpen={whiteboardOpen}
+        onToggleWhiteboard={() => setWhiteboardOpen(open => !open)}
         onWhiteboardApi={onWhiteboardApi}
         roomCode={roomCode}
         displayName={nameRef.current}
@@ -1081,6 +1105,8 @@ function MeetingSurface(props: {
   groupPanel: ReactNode;
   noticeActions: NoticeActions;
   whiteboard: ExcalidrawStore;
+  whiteboardOpen: boolean;
+  onToggleWhiteboard(): void;
   onWhiteboardApi(api: ExcalidrawImperativeAPI | null): void;
   privateNotices: PrivateNotices;
   autoReminders: AutoReminders;
@@ -1113,7 +1139,6 @@ function MeetingSurface(props: {
   onCopy(): void;
   onLeave(): void;
 }): ReactNode {
-  const [whiteboardOpen, setWhiteboardOpen] = useState(false);
   const participants = Object.values(props.participants);
   const presentation = findPresentation(props.screenStream, props.displayName, participants);
   const tiles = [
@@ -1158,7 +1183,7 @@ function MeetingSurface(props: {
       />
       <div className="meeting-body">
         <section className="meeting-stage">
-          {whiteboardOpen ? (
+          {props.whiteboardOpen ? (
             <><div id="meeting-whiteboard"><Whiteboard store={props.whiteboard} onApi={props.onWhiteboardApi} /></div><div className="whiteboard-video-strip">{tiles}</div></>
           ) : presentation ? (
             <div className="stage-presentation">
@@ -1175,8 +1200,8 @@ function MeetingSurface(props: {
           )}
           <div className="meeting-footer">
             <MeetingControls
-              whiteboardOpen={whiteboardOpen}
-              onToggleWhiteboard={() => setWhiteboardOpen(open => !open)}
+              whiteboardOpen={props.whiteboardOpen}
+              onToggleWhiteboard={props.onToggleWhiteboard}
               micEnabled={props.micEnabled}
               cameraEnabled={props.cameraEnabled}
               sharingScreen={Boolean(props.screenStream)}
@@ -1186,7 +1211,7 @@ function MeetingSurface(props: {
               onToggleScreen={props.onToggleScreen}
             />
           </div>
-          <PrivateNoticeToast store={props.privateNotices} onHistory={() => props.onPanelTab('private')} {...props.noticeActions} />
+          <PrivateNoticeToast store={props.privateNotices} onHistory={() => props.onPanelTab('assistant')} {...props.noticeActions} />
         </section>
         <SidePanel
           agentPanel={props.agentPanel}

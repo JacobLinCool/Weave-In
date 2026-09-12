@@ -26,10 +26,8 @@ function fixture(): MeetingSession {
   const notices = new PrivateNotices();
   notices.show({ id: 'auto-1', text: 'Check the concern', evidenceSeqs: [1] }, log, 1000);
   notices.dismiss('auto-1');
-  notices.setHidden(true);
   return {
     version: 1,
-    monitoringEnabled: false,
     savedAt: 1000,
     roomCode: 'ABCDEF',
     peerId: 'a'.repeat(32),
@@ -45,11 +43,11 @@ function fixture(): MeetingSession {
   };
 }
 function chatLine(id = 'line_1'): AgentLine {
-  return { id, agentId: 'chat_1', name: 'Chat', role: 'assistant', input: 'text', audience: 'private',
+  return { id, agentId: 'chat_1', name: 'Muse', role: 'assistant', input: 'text', audience: 'private',
     text: 'We still need to address your concern.', at: '2026-09-12T00:00:00Z', playback: 'not-played' };
 }
 describe('same-tab room recovery', () => {
-  it('restores identity, text, evidence and dismissed/hidden state only for the same room', () => {
+  it('restores identity, text, evidence and dismissed state only for the same room', () => {
     const s = storage();
     const value = fixture();
     expect(saveMeetingSession(value, s)).toBe(true);
@@ -112,7 +110,7 @@ describe('same-tab room recovery', () => {
     notices.restore({ ...value.notices, notices: value.notices.notices.map((n) => ({ ...n, status: 'active' })) });
     expect(notices.getSnapshot().notices[0]?.status).toBe('expired');
   });
-  it('recovers private Chat in its original tab and room, bounds history, and omits public lines', () => {
+  it('recovers private Muse in its original tab and room, bounds history, and omits public lines', () => {
     const s = storage();
     const value = fixture();
     value.personalChat = Array.from({ length: 205 }, (_, index) => chatLine(`line_${index}`));
@@ -125,7 +123,7 @@ describe('same-tab room recovery', () => {
     expect(loadMeetingSession('ZZZZZZ', s, 2000)).toBeNull();
     expect(loadMeetingSession('ABCDEF', storage(), 2000)).toBeNull();
   });
-  it('rejects malformed private Chat checkpoints, including a public audience', () => {
+  it('rejects malformed private Muse checkpoints, including a public audience', () => {
     const invalid = [null, { ...chatLine(), audience: 'public' }, { ...chatLine(), role: 'system' },
       { ...chatLine(), id: '' }, { ...chatLine(), at: 'invalid' }, { ...chatLine(), playback: 'unknown' },
       { ...chatLine(), text: 'x'.repeat(4001) }];
@@ -134,7 +132,7 @@ describe('same-tab room recovery', () => {
       expect(loadMeetingSession('ABCDEF', source, 2000)).toBeNull();
     }
   });
-  it('trims private Chat along with other history to stay within the checkpoint budget', () => {
+  it('trims private Muse along with other history to stay within the checkpoint budget', () => {
     const s = storage();
     const value = fixture();
     value.personalChat = Array.from({ length: 200 }, (_, index) => ({ ...chatLine(`line_${index}`), text: 'x'.repeat(4000) }));

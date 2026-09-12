@@ -3,6 +3,7 @@ import { AgentRuntime } from '../src/agents/runtime';
 import { emptyAgentRoom, type AgentLine, type RoomAgent } from '../src/agents/contracts';
 import type { LiveCallbacks } from '../src/agents/live';
 import { MeetingLog } from '../src/meeting-log';
+import type { MeetingSnapshot, ToolDefinition } from '../src/webmcp';
 
 const calls = vi.hoisted(() => ({ requests: vi.fn(), contexts: vi.fn(), close: vi.fn(), start: vi.fn(), tools: [] as unknown[][], lives: [] as LiveCallbacks[], enable: vi.fn(async (): Promise<void> => undefined), mute: vi.fn(async (): Promise<void> => undefined), attach: vi.fn((_stream: MediaStream, _allowed: () => boolean, _level: unknown, _error: (message: string) => void) => ({ stop: vi.fn(), output: { id: 'output' } as MediaStream })) }));
 vi.mock('../src/agents/live', () => ({ AgentLive: class {
@@ -19,14 +20,233 @@ let runtime: AgentRuntime | null = null;
 afterEach(() => { runtime?.close(); runtime = null; calls.lives = []; calls.enable.mockReset(); calls.mute.mockReset(); calls.attach.mockClear(); calls.requests.mockClear(); calls.contexts.mockClear(); calls.start.mockClear(); calls.close.mockClear(); calls.tools = []; vi.useRealTimers(); });
 function setup(beginVoice: (audience: string, owner: string) => Promise<MediaStreamTrack> = vi.fn(), endVoice = vi.fn()) {
   const broadcast = vi.fn(); const publicLine = vi.fn(); const sendAgent = vi.fn();
+  const log = new MeetingLog();
+  const snapshot: MeetingSnapshot = { roomCode: 'ABC123', you: { peerId: 'owner', name: 'Owner' }, participants: [], captions: 'idle', presentation: null, live: [], files: [] };
+  const sendAgentMessage = vi.fn(() => ({ id: 'posted', at: new Date().toISOString() }));
+  const editWhiteboard = vi.fn(async () => ({ ok: true, shared: true, action: 'mermaid', count: 3, elements: [], changedIds: ['a', 'b', 'arrow'], canUndo: true, canRedo: false }));
   const agent: RoomAgent = { id: 'personal', owner: 'owner', runner: 'owner', epoch: 1, phase: 'idle', request: 0, pending: false, leaseUntil: Date.now() + 30000,
-    config: { kind: 'personal', name: 'Assistant', instructions: 'Help', language: 'auto', source: 'none', chat: false, system: false, screen: false, files: false, audience: 'private' } };
+    config: { kind: 'personal', name: 'Muse', instructions: 'Help', language: 'auto', source: 'none', chat: false, system: false, screen: false, files: false, audience: 'private' } };
   const ctx = { peerId: 'owner', room: 'ABC123', controller: { broadcast, sendAgent, addStream: vi.fn(), removeStream: vi.fn(), sessionToken: 'token' },
-    tools: { log: () => new MeetingLog(), snapshot: () => ({ you: { name: 'Owner' } }) }, beginVoice, endVoice, publicLine } as unknown as ConstructorParameters<typeof AgentRuntime>[0];
+    tools: { log: () => log, snapshot: () => snapshot, sendAgentMessage, editWhiteboard }, beginVoice, endVoice, publicLine } as unknown as ConstructorParameters<typeof AgentRuntime>[0];
   runtime = new AgentRuntime(ctx);
   runtime.update({ ...emptyAgentRoom(), agents: [agent] }, Date.now());
-  return { runtime, publicLine, broadcast, sendAgent };
+  return { runtime, publicLine, broadcast, sendAgent, log, snapshot, sendAgentMessage, editWhiteboard };
 }
+it('confirms settings from room state, stops old work and keeps private history', async () => {
+  const { runtime, sendAgent } = setup();
+  await runtime.ask('keep this conversation');
+  await runtime.ask('cancel this queued request');
+  const oldCallback = calls.lives[0]!;
+  const state = structuredClone(runtime.snapshot().room);
+  const agent = state.agents[0]!;
+  agent.config.language = '繁體中文'; agent.epoch++; agent.request++;
+  let saved = false;
+  const save = runtime.configure(agent.id, agent.config).then(() => { saved = true; });
+  expect(sendAgent).toHaveBeenCalledWith({ type: 'agent-configure', id: agent.id, config: agent.config });
+  await Promise.resolve(); expect(saved).toBe(false);
+  runtime.update(state, Date.now()); await save;
+  expect(calls.close).toHaveBeenCalled();
+  expect(runtime.snapshot().queued).toBe(0);
+  expect(runtime.snapshot().lines.some(line => line.text === 'keep this conversation')).toBe(true);
+  const lines = runtime.snapshot().lines;
+  oldCallback.transcript('assistant', 'late response with old permissions', 0, 100);
+  expect(runtime.snapshot().lines).toEqual(lines);
+});
+it('reports personal activity through queued work and clears it on stop', async () => {
+  const { runtime } = setup();
+  expect(runtime.snapshot().personalActive).toBe(false);
+  await runtime.ask('first question');
+  await runtime.ask('next question');
+  expect(runtime.snapshot()).toMatchObject({ personalActive: true, queued: 1 });
+  runtime.stopPersonal();
+  expect(runtime.snapshot()).toMatchObject({ personalActive: false, queued: 0, voice: false });
+});
+
+
+it('lets a private voice request draw and post as the owner without publishing private speech', async () => {
+  const { runtime, publicLine, broadcast, sendAgent, sendAgentMessage, editWhiteboard } = setup(async () => ({ stop: vi.fn() }) as unknown as MediaStreamTrack);
+  await runtime.ask('', true);
+  await vi.waitFor(() => expect(calls.tools).toHaveLength(1));
+  const tools = calls.tools[0] as ToolDefinition[];
+  const draw = tools.find(tool => tool.name === 'edit_whiteboard')!;
+  const post = tools.find(tool => tool.name === 'send_chat_message')!;
+  expect((await draw.execute({ action: 'mermaid', source: 'flowchart LR\nA[Draft] --> B[Review]' })).isError).not.toBe(true);
+  expect(editWhiteboard).toHaveBeenCalledOnce();
+  expect((await post.execute({ text: 'The workflow is on the whiteboard.' })).isError).not.toBe(true);
+  expect(sendAgentMessage).toHaveBeenCalledWith('The workflow is on the whiteboard.', 'Muse');
+  calls.lives[0]!.transcript('user', 'Private explanation', 0, 1000);
+  calls.lives[0]!.transcript('assistant', 'I drew the workflow.', 1000, 2000);
+  expect(runtime.snapshot().lines.every(line => line.audience === 'private')).toBe(true);
+  expect(publicLine).not.toHaveBeenCalled(); expect(broadcast).not.toHaveBeenCalled();
+  expect(sendAgent).not.toHaveBeenCalledWith({ type: 'agent-floor', id: 'personal' });
+  runtime.stopPersonal();
+  expect((await draw.execute({ action: 'undo' })).isError).toBe(true);
+  expect((await post.execute({ text: 'Late post' })).isError).toBe(true);
+  expect(editWhiteboard).toHaveBeenCalledOnce(); expect(sendAgentMessage).toHaveBeenCalledOnce();
+});
+
+it.each([false, true])('keeps Muse active beyond the former time limit until stopped (voice: %s)', async (voice) => {
+  vi.useFakeTimers();
+  const stop = vi.fn(); const endVoice = vi.fn();
+  const { runtime } = setup(async () => ({ stop }) as unknown as MediaStreamTrack, endVoice);
+  // Keep room coordination healthy throughout the long-running interaction.
+  const heartbeat = setInterval(() => runtime.update(runtime.snapshot().room, Date.now()), 10_000);
+  await runtime.ask('Draw a diagram', voice);
+  await vi.advanceTimersByTimeAsync(0);
+  calls.lives[0]!.transcript('assistant', 'I am checking the whiteboard.', 0, 1000);
+  const tools = calls.tools[0] as ToolDefinition[];
+  await vi.advanceTimersByTimeAsync(600_000);
+  expect(runtime.snapshot()).toMatchObject({ personalActive: true, voice, error: null });
+  expect(calls.close).not.toHaveBeenCalled();
+  expect(stop).not.toHaveBeenCalled(); expect(endVoice).not.toHaveBeenCalled();
+  expect((await tools.find(tool => tool.name === 'edit_whiteboard')!.execute({ action: 'undo' })).isError).not.toBe(true);
+
+  runtime.stopPersonal();
+  expect(runtime.snapshot().personalActive).toBe(false);
+  expect(calls.close).toHaveBeenCalledOnce();
+  expect((await tools.find(tool => tool.name === 'edit_whiteboard')!.execute({ action: 'undo' })).isError).toBe(true);
+  if (voice) { expect(stop).toHaveBeenCalledOnce(); expect(endVoice).toHaveBeenCalledOnce(); }
+
+  await runtime.ask('Check the whiteboard and continue');
+  expect(runtime.snapshot().personalActive).toBe(true);
+  expect(runtime.snapshot().error).toBeNull();
+  expect(calls.requests).toHaveBeenLastCalledWith(expect.stringContaining('I am checking the whiteboard.'), 'Check the whiteboard and continue');
+  clearInterval(heartbeat);
+});
+
+it('keeps follow-ups queued during long requests and starts them when the session finishes', async () => {
+  vi.useFakeTimers();
+  const { runtime } = setup();
+  const heartbeat = setInterval(() => runtime.update(runtime.snapshot().room, Date.now()), 9_000);
+  await runtime.ask('First request');
+  await runtime.ask('Follow-up request');
+  expect(runtime.snapshot().queued).toBe(1);
+  await vi.advanceTimersByTimeAsync(600_000);
+  expect(calls.requests).toHaveBeenCalledOnce();
+  expect(runtime.snapshot()).toMatchObject({ personalActive: true, queued: 1, error: null });
+  calls.lives[0]!.closed();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(calls.requests.mock.calls.map(call => call[1])).toEqual(['First request', 'Follow-up request']);
+  expect(runtime.snapshot()).toMatchObject({ personalActive: true, queued: 0, error: null });
+  expect(runtime.snapshot().lines.filter(line => line.role === 'user')).toHaveLength(2);
+  clearInterval(heartbeat);
+});
+
+it('refreshes file availability and interim captions without a finalized log change', async () => {
+  vi.useFakeTimers();
+  const { runtime, snapshot } = setup();
+  const state = structuredClone(runtime.snapshot().room);
+  state.agents[0]!.config = { ...state.agents[0]!.config, source: 'all', chat: true, files: true };
+  runtime.update(state, Date.now());
+  await runtime.ask('Help with this meeting');
+  snapshot.files.push({ id: 'diagram', name: 'workflow.png', size: 1024, mime: 'image/png', at: new Date().toISOString(), sharedBy: { peerId: 'other', name: 'Other' }, status: 'available' });
+  snapshot.live.push({ peerId: 'other', name: 'Other', text: 'Add a review stage' });
+  await vi.advanceTimersByTimeAsync(2_000);
+  expect(String(calls.contexts.mock.calls.at(-1)?.[0])).toContain('workflow.png');
+  expect(String(calls.contexts.mock.calls.at(-1)?.[0])).toContain('Add a review stage');
+  runtime.stopPersonal(); calls.contexts.mockClear();
+  await vi.advanceTimersByTimeAsync(2_000);
+  expect(calls.contexts).not.toHaveBeenCalled();
+});
+
+it.each(['personal', 'group'] as const)('waits for acknowledgement before completing %s assistant creation', async (kind) => {
+  vi.useFakeTimers();
+  const { runtime, sendAgent } = setup();
+  const agent = structuredClone(runtime.snapshot().room.agents[0]!);
+  agent.id = 'created'; agent.config.kind = kind;
+  runtime.update(emptyAgentRoom(), Date.now());
+  let completed = false;
+  const creating = runtime.create(agent.config).then(() => { completed = true; });
+  await vi.advanceTimersByTimeAsync(0);
+  expect(sendAgent).toHaveBeenCalledWith({ type: 'agent-create', config: agent.config });
+  expect(completed).toBe(false);
+  runtime.update({ ...emptyAgentRoom(), agents: [agent] }, Date.now());
+  await creating;
+  expect(completed).toBe(true);
+});
+it('shows a ready status when Muse exists and setup guidance only after it is removed', () => {
+  const { runtime } = setup();
+  expect(runtime.snapshot().status).toBe('Ready for your question.');
+  expect(runtime.snapshot().personalActive).toBe(false);
+  runtime.update(emptyAgentRoom(), Date.now());
+  expect(runtime.snapshot().status).toBe('Add Muse to start a conversation.');
+});
+
+it('automatically creates Muse with system signals enabled', async () => {
+  const { runtime, sendAgent } = setup();
+  const state = structuredClone(runtime.snapshot().room);
+  runtime.update(emptyAgentRoom(), Date.now());
+  const initializing = runtime.initializePersonal();
+  runtime.update(state, Date.now());
+  await initializing;
+  expect(sendAgent).toHaveBeenCalledWith(expect.objectContaining({ type: 'agent-create', config: expect.objectContaining({ system: true }) }));
+});
+
+it.each(['personal', 'group'] as const)('delivers new system signals once to an active %s session as background context', async (kind) => {
+  const { runtime } = setup();
+  await runtime.enable();
+  const state = structuredClone(runtime.snapshot().room);
+  const agent = state.agents[0]!;
+  agent.config.system = true;
+  agent.config.kind = kind;
+  if (kind === 'group') { agent.phase = 'preparing'; agent.request = 1; }
+  state.signal = { id: 1, at: Date.now(), by: 'owner', kind: 'manual' };
+  runtime.update(structuredClone(state), Date.now());
+  if (kind === 'personal') await runtime.ask('Review the meeting');
+  await Promise.resolve();
+  expect(calls.requests).toHaveBeenLastCalledWith(expect.stringContaining(JSON.stringify(state.signal)), expect.any(String));
+  calls.requests.mockClear(); calls.contexts.mockClear();
+
+  state.signal = { ...state.signal, id: 2 };
+  runtime.update(structuredClone(state), Date.now());
+  runtime.update(structuredClone(state), Date.now());
+  expect(calls.contexts).toHaveBeenCalledExactlyOnceWith(JSON.stringify({ systemSignal: state.signal }));
+  expect(calls.requests).not.toHaveBeenCalled();
+});
+
+it('does not forward system signals when Muse has opted out', async () => {
+  const { runtime } = setup();
+  const state = structuredClone(runtime.snapshot().room);
+  state.signal = { id: 1, at: Date.now(), by: 'owner', kind: 'manual' };
+  runtime.update(structuredClone(state), Date.now());
+  await runtime.ask('Private question');
+  await Promise.resolve();
+  expect(calls.requests.mock.calls[0]![0]).not.toContain('System signal');
+  state.signal.id++;
+  runtime.update(state, Date.now());
+  expect(calls.contexts).not.toHaveBeenCalled();
+});
+
+it('excludes system signals from approved public Muse speech even when enabled', async () => {
+  const { runtime } = setup();
+  const state = structuredClone(runtime.snapshot().room);
+  state.agents[0]!.config.system = true;
+  state.signal = { id: 1, at: Date.now(), by: 'owner', kind: 'manual' };
+  runtime.update(state, Date.now());
+  await runtime.speakForMe('Approved concern');
+  grantPersonal(runtime);
+  await Promise.resolve();
+  expect(calls.requests).toHaveBeenLastCalledWith('{}', expect.stringContaining('Approved concern'));
+  const next = structuredClone(runtime.snapshot().room);
+  next.signal!.id++;
+  runtime.update(next, Date.now());
+  expect(calls.contexts).not.toHaveBeenCalled();
+});
+it.each(['timeout', 'disconnect', 'close'] as const)('rejects unconfirmed creation on %s', async (failure) => {
+  vi.useFakeTimers();
+  const { runtime } = setup();
+  const config = structuredClone(runtime.snapshot().room.agents[0]!.config);
+  runtime.update(emptyAgentRoom(), Date.now());
+  const pending = runtime.create(config);
+  const rejected = expect(pending).rejects.toThrow(failure === 'timeout' ? 'did not confirm' : failure === 'disconnect' ? 'disconnected' : 'closed');
+  await vi.advanceTimersByTimeAsync(0);
+  if (failure === 'timeout') await vi.advanceTimersByTimeAsync(10_000);
+  else if (failure === 'disconnect') runtime.connectionLost();
+  else runtime.close();
+  await rejected;
+  runtime.close();
+  expect(vi.getTimerCount()).toBe(0);
+});
 it('ignores legacy persistent public mode and keeps personal transcripts private', async () => {
   const { runtime, publicLine, broadcast, sendAgent } = setup();
   await runtime.ask('private question');
@@ -86,7 +306,7 @@ it('rejects unproven public history before it can enter shared context', () => {
   expect(publicLine).not.toHaveBeenCalled();
 });
 
-it('continues private Chat while Omni publishes a text suggestion', async () => {
+it('continues private Muse while Omni publishes a text suggestion', async () => {
   const { runtime } = setup();
   const state = structuredClone(runtime.snapshot().room);
   const group: RoomAgent = { ...state.agents[0]!, id: 'group', owner: 'other', runner: 'other', config: { ...state.agents[0]!.config, kind: 'group' }, phase: 'speaking' };
@@ -174,7 +394,7 @@ it('isolates approved public speech from private history and tools, and returns 
   expect(calls.tools.at(-1)).toEqual([]);
   expect(JSON.stringify(calls.start.mock.calls.at(-1))).not.toContain('Secret private position');
   calls.lives.at(-1)!.transcript('assistant', 'Can we verify mute still works?', 0, 500);
-  expect(publicLine).toHaveBeenLastCalledWith(expect.objectContaining({ name: 'Owner’s Chat', audience: 'public' }), 'owner');
+  expect(publicLine).toHaveBeenLastCalledWith(expect.objectContaining({ name: 'Owner’s Muse', audience: 'public' }), 'owner');
   runtime.stopPersonal();
   const state = structuredClone(runtime.snapshot().room); state.floor = null; runtime.update(state, Date.now());
   await runtime.ask('Continue privately');
@@ -218,12 +438,12 @@ it('caps public personal speech at 20 seconds from the first audible sample', as
   expect(sendAgent).toHaveBeenCalledWith({ type: 'agent-finish', floorId: 'personal-floor' });
 });
 
-it('creates Chat on an explicit reminder action and waits for room acknowledgement', async () => {
+it('creates Muse on an explicit reminder action and waits for room acknowledgement', async () => {
   const { runtime, sendAgent } = setup();
   const saved = runtime.snapshot().room;
   runtime.update(emptyAgentRoom(), Date.now());
   const request = runtime.discussReminder('Unresolved concern');
-  await vi.waitFor(() => expect(sendAgent).toHaveBeenCalledWith(expect.objectContaining({ type: 'agent-create', config: expect.objectContaining({ name: 'Chat', audience: 'private' }) })));
+  await vi.waitFor(() => expect(sendAgent).toHaveBeenCalledWith(expect.objectContaining({ type: 'agent-create', config: expect.objectContaining({ name: 'Muse', audience: 'private' }) })));
   runtime.update(saved, Date.now()); await request;
   expect(calls.requests).toHaveBeenLastCalledWith(expect.any(String), expect.stringContaining('Unresolved concern'));
 });
@@ -246,7 +466,7 @@ it('publishes Omni text once without audible output or a voice approval', async 
 });
 
 
-it('reconnects Chat without resuming public speech or losing private conversation', async () => {
+it('reconnects Muse without resuming public speech or losing private conversation', async () => {
   const { runtime, sendAgent } = setup();
   await runtime.ask('Retain my private context');
   const saved = runtime.snapshot().room;
@@ -271,7 +491,7 @@ it('does not accept late public words after owner interruption', async () => {
   expect(publicLine).not.toHaveBeenCalled();
 });
 
-it('creates Chat on room entry without audio playback or Live connection', async () => {
+it('creates Muse on room entry without audio playback or Live connection', async () => {
   const { runtime, sendAgent } = setup(); const saved = runtime.snapshot().room;
   runtime.update(emptyAgentRoom(), Date.now()); const pending = runtime.initializePersonal();
   expect(sendAgent).toHaveBeenCalledWith(expect.objectContaining({ type: 'agent-create' }));
@@ -280,11 +500,11 @@ it('creates Chat on room entry without audio playback or Live connection', async
 });
 
 
-it('restores private Chat history before a fresh personal agent exists without replay or audio', async () => {
+it('restores private Muse history before a fresh personal agent exists without replay or audio', async () => {
   const { runtime, publicLine, broadcast } = setup();
   const savedState = runtime.snapshot().room;
   runtime.update(emptyAgentRoom(), Date.now());
-  const saved: AgentLine = { id: 'saved', agentId: 'previous-agent', name: 'Chat', role: 'assistant', input: 'speech', audience: 'private', text: 'Your earlier private concern', at: new Date().toISOString(), playback: 'playing' };
+  const saved: AgentLine = { id: 'saved', agentId: 'previous-agent', name: 'Muse', role: 'assistant', input: 'speech', audience: 'private', text: 'Your earlier private concern', at: new Date().toISOString(), playback: 'playing' };
   runtime.restoreConversation([saved, { ...saved, id: 'public', audience: 'public' }]);
   const fresh = structuredClone(savedState); fresh.agents[0]!.id = 'new-chat';
   runtime.update(fresh, Date.now());

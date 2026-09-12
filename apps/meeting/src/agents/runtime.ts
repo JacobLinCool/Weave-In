@@ -46,6 +46,7 @@ export interface AgentView {
   ready: boolean;
   queued: number;
   publicPersonalSpeaking: boolean;
+  personalActive: boolean;
 }
 
 export class AgentRuntime {
@@ -72,9 +73,8 @@ export class AgentRuntime {
   #lastState = 0;
   #signal = 0;
   #releasedFloor = '';
-  #contextHead = 0;
   #error: string | null = null;
-  #status = 'Create an assistant to start a conversation.';
+  #status = 'Add Muse to start a conversation.';
   #ready = false;
   #remoteStreams = new Map<string, { peer: string; stream: MediaStream }>();
   #announcements = new Map<string, { peer: string; message: Extract<AgentPeerMessage, { type: 'agent-stream' }>; stop: (() => void) | null }>();
@@ -83,25 +83,31 @@ export class AgentRuntime {
   #ownPublicRows = new Map<string, Extract<AgentPeerMessage, { type: 'agent-line' }>>();
   #pastFloors = new Map<string, { floor: NonNullable<AgentRoomState['floor']>; until: number }>();
   #heartbeat: ReturnType<typeof setInterval>;
+  #contextTimer: ReturnType<typeof setInterval>;
   #view: AgentView;
   constructor(readonly ctx: RuntimeContext) {
     this.#view = this.#snapshot();
     this.#heartbeat = setInterval(() => {
       this.command({ type: 'agent-heartbeat' });
-      if (this.ctx.tools.log().head !== this.#contextHead) {
-        this.#contextHead = this.ctx.tools.log().head;
-        for (const op of this.#operations.values()) if (this.#valid(op) && !(op.agent.config.kind === 'personal' && op.audience === 'public')) op.live?.context(contextText(this.ctx.tools.log(), op.agent.config, op.agent.owner, []));
-      }
       if (this.#lastState && Date.now() - this.#lastState > 30_000) {
         this.#stop('group', 'interrupted'); this.#stop('personal', 'interrupted');
         this.#error = 'Room coordination lost. Agent audio is stopped.'; this.#emit();
       }
     }, HEARTBEAT_MS);
+    // Include participant, interim-caption and file-availability changes even when
+    // the finalized log has not advanced. Live suppresses unchanged records.
+    this.#contextTimer = setInterval(() => {
+      for (const op of this.#operations.values()) {
+        if (!this.#valid(op) || (op.agent.config.kind === 'personal' && op.audience === 'public')) continue;
+        op.live?.context(contextText(this.ctx.tools.log(), op.agent.config, op.agent.owner, [], this.ctx.tools.snapshot()));
+      }
+    }, 2_000);
   }
   subscribe = (listener: () => void): (() => void) => { this.#listeners.add(listener); return () => this.#listeners.delete(listener); };
   snapshot = (): AgentView => this.#view;
   #snapshot(): AgentView {
     return { room: this.#state, personal: this.#personal(), group: this.#state.agents.find((agent) => agent.config.kind === 'group') ?? null,
+      personalActive: this.#operations.has('personal') || this.#queue.length > 0 || this.#publicRequestPending,
       audience: this.#audience, lines: [...this.#lines], status: this.#status, error: this.#error, voice: !!this.#operations.get('personal')?.microphone, ready: this.#ready, queued: this.#queue.length, publicPersonalSpeaking: this.#publicRequestPending || this.#operations.get('personal')?.audience === 'public' || this.#queue.some((item) => item.audience === 'public') };
   }
   #emit(): void { if (this.#closed) return; this.#view = this.#snapshot(); for (const listener of this.#listeners) listener(); }
@@ -114,7 +120,35 @@ export class AgentRuntime {
       this.#attachRemote(); this.#emit();
     } catch (error) { this.#error = error instanceof Error ? error.message : 'Unable to enable audio.'; this.#emit(); throw error; }
   }
-  async create(config: AgentConfig): Promise<void> { await this.enable(); this.command({ type: 'agent-create', config }); }
+  #pendingSaves = new Set<() => void>();
+  async create(config: AgentConfig): Promise<void> {
+    if (config.kind === 'group') await this.enable();
+    await this.#saveConfig({ type: 'agent-create', config });
+  }
+  async configure(id: string, config: AgentConfig): Promise<void> {
+    await this.#saveConfig({ type: 'agent-configure', id, config });
+  }
+  #saveConfig(command: Extract<AgentCommand, { type: 'agent-create' | 'agent-configure' }>): Promise<void> {
+    if (this.#closed || this.#connectionLost) return Promise.reject(new Error('Reconnect to the meeting before saving agent settings.'));
+    if (command.type === 'agent-create' && this.#state.agents.some((agent) => agent.config.kind === command.config.kind && (agent.config.kind === 'group' || agent.owner === this.ctx.peerId))) return Promise.reject(new Error('This agent already exists. Open settings to edit it.'));
+    return new Promise((resolve, reject) => {
+      const finish = (error?: Error): void => {
+        clearTimeout(timeout); unsubscribe(); this.#pendingSaves.delete(cancel);
+        if (error) reject(error); else resolve();
+      };
+      const cancel = () => finish(new Error('The meeting closed before settings were saved.'));
+      const unsubscribe = this.subscribe(() => {
+        if (this.#connectionLost) { finish(new Error('The meeting disconnected. Please retry.')); return; }
+        const agent = this.#state.agents.find((entry) => command.type === 'agent-configure' ? entry.id === command.id : entry.config.kind === command.config.kind && (entry.config.kind === 'group' || entry.owner === this.ctx.peerId));
+        if (agent && command.type === 'agent-create' && agent.owner !== this.ctx.peerId) finish(new Error('Another participant has already added Omni. Open settings to edit it.'));
+        else if (agent && JSON.stringify(agent.config) === JSON.stringify(command.config)) finish();
+      });
+      const timeout = setTimeout(() => finish(new Error('The room did not confirm settings. Please retry.')), 10_000);
+      this.#pendingSaves.add(cancel);
+      try { this.command(command); } catch (error) { finish(error instanceof Error ? error : new Error('Unable to save settings.')); }
+    });
+  }
+
   remove(id: string): void {
     for (const [kind, op] of this.#operations) if (op.agent.id === id) this.#stop(kind, 'interrupted');
     if (id === this.#personalId) { this.#queue = []; this.#lines = []; }
@@ -136,10 +170,10 @@ export class AgentRuntime {
     if (existing) return existing;
     if (this.#creatingPersonal) return this.#creatingPersonal;
     this.#creatingPersonal = (async () => {
-      if (this.#closed || this.#connectionLost) throw new Error('Reconnect to the meeting before using Chat.');
+      if (this.#closed || this.#connectionLost) throw new Error('Reconnect to the meeting before using Muse.');
       this.command({ type: 'agent-create', config });
       return await new Promise<RoomAgent>((resolve, reject) => {
-        const timeout = setTimeout(() => { unsubscribe(); reject(new Error('Chat could not be created. Please try again.')); }, 10_000);
+        const timeout = setTimeout(() => { unsubscribe(); reject(new Error('Muse could not be created. Please try again.')); }, 10_000);
         const unsubscribe = this.subscribe(() => {
           const personal = this.#personal();
           if (personal) { clearTimeout(timeout); unsubscribe(); resolve(personal); }
@@ -217,7 +251,7 @@ export class AgentRuntime {
     if (op?.microphone) {
       void op.live?.muteMicrophone().catch(() => { if (!this.#valid(op)) return; this.#error = 'Unable to finish microphone input.'; this.#stop('personal', 'interrupted'); });
       op.microphone.stop(); op.microphone = null; this.ctx.endVoice(op.key);
-      this.#status = 'Listening ended. Waiting for your assistant.'; this.#emit();
+      this.#status = 'Listening ended. Waiting for Muse.'; this.#emit();
     }
   }
   stopPersonal(): void { this.#approvalVersion++; this.#publicRequestPending = false; this.#queue = []; this.#stop('personal', 'interrupted'); if (this.#personal()) this.command({ type: 'agent-cancel', id: this.#personal()!.id }); this.#emit(); }
@@ -227,21 +261,30 @@ export class AgentRuntime {
   }
   humanSpeech(_text: string): void { /* Speech cannot approve a public text publication. */ }
   update(state: AgentRoomState, serverNow: number): void {
+    const previousPersonal = this.#personal();
     this.#serverOffset = serverNow - Date.now(); this.#lastState = Date.now();
     if (this.#state.floor && this.#state.floor.id !== state.floor?.id) this.#pastFloors.set(this.#state.floor.id, { floor: this.#state.floor, until: this.#now() + 15_000 });
     for (const [id, past] of this.#pastFloors) if (past.until < this.#now()) this.#pastFloors.delete(id);
     this.#state = state;
     const personal = this.#personal();
+    if (personal && previousPersonal?.id === personal.id && previousPersonal.epoch !== personal.epoch) {
+      this.#approvalVersion++; this.#publicRequestPending = false; this.#queue = [];
+      this.#stop('personal', 'interrupted');
+    }
     if (personal?.id !== this.#personalId) {
       this.#stop('personal', 'interrupted'); if (!this.#restorePrivateHistory) this.#lines = []; this.#queue = [];
       if (personal) this.#restorePrivateHistory = false;
       this.#personalId = personal?.id ?? ''; this.#audience = 'private';
+      this.#status = personal ? 'Ready for your question.' : 'Add Muse to start a conversation.';
     }
     for (const [kind, op] of this.#operations) if (!this.#valid(op)) this.#stop(kind, 'interrupted');
     const group = this.#viewGroup();
     if (state.signal && state.signal.id !== this.#signal) {
       this.#signal = state.signal.id;
-      if (personal?.config.system && this.#operations.get('personal')?.audience === 'private') this.#operations.get('personal')?.live?.context(JSON.stringify({ systemSignal: state.signal }));
+      for (const op of this.#operations.values()) {
+        if (!this.#valid(op) || !op.agent.config.system || (op.agent.config.kind === 'personal' && op.audience === 'public')) continue;
+        op.live?.context(JSON.stringify({ systemSignal: state.signal }));
+      }
     }
     if (group?.runner === this.ctx.peerId && group.phase === 'raised' && !state.floor) this.approve();
     if (group?.runner === this.ctx.peerId && ['preparing', 'speaking'].includes(group.phase) && this.#ready) {
@@ -250,7 +293,7 @@ export class AgentRuntime {
         this.#seenGroup = key;
         this.#stop('group', 'interrupted', false);
         const preparing = group.phase === 'preparing';
-        this.#status = group.epoch > 1 ? 'Taking over using the public history available on this device; earlier records may be missing.' : preparing ? 'Preparing a group suggestion…' : 'Group assistant is connecting to speak…';
+        this.#status = group.epoch > 1 ? 'Taking over using the public history available on this device; earlier records may be missing.' : preparing ? 'Preparing a group suggestion…' : 'Omni is preparing to share…';
         if (preparing) void this.#start(group, 'public', true, 'A manual system signal requests a review. Prepare one concise public text suggestion or question in at most 240 characters. Do not publish it or speak aloud.', false);
         else {
           // Omni is text only, including when old room state calls this phase “speaking”.
@@ -267,7 +310,7 @@ export class AgentRuntime {
     if (this.#awaitingRecoveryState && !this.#connectionLost) {
       this.#awaitingRecoveryState = false;
       const config = this.#recoverConfig; this.#recoverConfig = null;
-      if (config && !personal) void this.#ensurePersonal(config).catch((error: unknown) => { this.#error = error instanceof Error ? error.message : 'Unable to restore Chat.'; this.#emit(); });
+      if (config && !personal) void this.#ensurePersonal(config).catch((error: unknown) => { this.#error = error instanceof Error ? error.message : 'Unable to restore Muse.'; this.#emit(); });
     }
     const pending = this.#pendingPeer.splice(0);
     for (const item of pending) if (item.until > Date.now()) this.receive(item.peer, item.message, item.until);
@@ -297,6 +340,7 @@ export class AgentRuntime {
     const op: Operation = { key: crypto.randomUUID(), agent: structuredClone(agent), audience, floorId: this.#state.floor?.agentId === agent.id ? this.#state.floor.id : '', preparing,
       live: null, microphone: null, stopAudio: null, streamId: null, startedAt: Date.now(), lastSound: 0, heard: false, playback: null, voice, timer: null, speechTimer: null, rows: new Map() };
     this.#operations.set(agent.config.kind, op);
+    this.#error = null;
     const behalf = agent.config.kind === 'personal' && audience === 'public';
     const history = agent.config.kind === 'personal' && !behalf ? this.#lines : [];
     if (inputLine) {
@@ -311,7 +355,10 @@ export class AgentRuntime {
         if (!valid()) { microphone.stop(); this.ctx.endVoice(op.key); return; }
         op.microphone = microphone;
       }
-      const tools = behalf ? [] : scopedTools(this.ctx.tools, agent.config, agent.owner, valid, () => this.#playable(op) && audience === 'public');
+      // A direct private request may ask for a shared text/board action. It does
+      // not grant the assistant a public audio floor or expose private history.
+      const tools = behalf ? [] : scopedTools(this.ctx.tools, agent.config, agent.owner, valid,
+        () => valid() && !preparing && agent.config.kind === 'personal' && audience === 'private');
       const live = new AgentLive({
         stream: (stream) => {
           if (!valid() || !this.#audio || agent.config.kind === 'group') return;
@@ -338,6 +385,11 @@ export class AgentRuntime {
           this.#stop('group', 'not-played', false);
           this.command({ type: 'agent-raised', id: agent.id, epoch: agent.epoch, request: agent.request });
         },
+        contextPaused: () => {
+          if (!valid()) return;
+          this.#status = 'Background updates paused to reserve space for tools. Muse can fetch current meeting details when asked. Start a new voice session for continuous updates.';
+          this.#emit();
+        },
         error: (message) => {
           if (!valid()) { if (!this.#closed && op.playback !== null) { this.#error = message; this.#emit(); } return; }
           this.#error = message; this.#stop(agent.config.kind, 'interrupted', agent.config.kind !== 'group');
@@ -347,29 +399,33 @@ export class AgentRuntime {
         closed: () => { if (valid()) { this.#stop(agent.config.kind, op.heard ? 'finished' : 'not-played'); this.#drain(); } },
       }, tools, preparing, valid);
       op.live = live;
-      this.#status = voice ? 'Connecting private microphone…' : preparing ? 'Preparing a suggestion…' : 'Connecting assistant…'; this.#emit();
+      this.#status = voice ? 'Connecting private microphone…' : preparing ? 'Preparing a suggestion…' : 'Connecting Muse…'; this.#emit();
       await live.start({ room: this.ctx.room, token: this.ctx.controller.sessionToken, agent: behalf ? { ...agent, config: { ...agent.config, instructions: 'Speak once on behalf of the owner using only the current approved concern. Modest elaboration is allowed, without new positions, promises, or private information. Speak for at most 20 seconds, then stop.' } } : agent, microphone: op.microphone, silence: this.#audio!.silence() });
       if (!valid()) { live.close(); return; }
-      let context = behalf ? '{}' : contextText(this.ctx.tools.log(), agent.config, agent.owner, history);
+      let context = behalf ? '{}' : contextText(this.ctx.tools.log(), agent.config, agent.owner, history, this.ctx.tools.snapshot());
       if (!behalf && agent.config.system && this.#state.signal) context += `\nSystem signal: ${JSON.stringify(this.#state.signal)}`;
       if (voice) live.context(context); else live.request(context, text);
-      this.#status = voice ? (audience === 'private' ? 'Speak privately to your assistant. Your meeting microphone is paused.' : 'Speak publicly to your assistant. Everyone can hear you.') : preparing ? 'Preparing a suggestion…' : 'Waiting for the assistant’s response…';
-      op.timer = setTimeout(() => {
+      this.#status = voice ? (audience === 'private' ? 'Speak privately to Muse. Your meeting microphone is paused.' : 'Speak publicly to Muse. Everyone can hear you.') : preparing ? 'Preparing a suggestion…' : 'Waiting for Muse’s response…';
+      // Muse conversations have no fixed duration limit. Only group suggestion
+      // preparation is bounded by the room's preparation lease.
+      if (preparing) op.timer = setTimeout(() => {
         if (!valid()) return;
-        this.#error = preparing ? 'Preparation timed out. Trigger the group assistant again.' : 'This interaction reached its time limit. Continue with a new request.';
+        this.#error = 'Omni preparation timed out.';
         this.#stop(agent.config.kind, 'interrupted');
-        if (preparing) this.command({ type: 'agent-cancel', id: agent.id });
+        this.command({ type: 'agent-cancel', id: agent.id });
+        this.#drain();
         this.#emit();
-      }, voice ? 180_000 : 55_000);
+      }, 55_000);
       this.#emit();
     } catch (error) {
-      if (valid()) { this.#error = error instanceof Error ? error.message : 'Unable to start the assistant.'; this.#stop(agent.config.kind, 'interrupted'); this.#emit(); }
+      if (valid()) { this.#error = error instanceof Error ? error.message : 'Unable to start the agent.'; this.#stop(agent.config.kind, 'interrupted'); this.#emit(); }
     }
   }
   #line(op: Operation, role: AgentLine['role'], delta: string, start: number, end: number, input: AgentLine['input']): void {
+    if (!this.#state.agents.some((agent) => agent.id === op.agent.id && agent.epoch === op.agent.epoch)) return;
     // Group nearby fragments by timestamp, including late arrivals, without rewriting their text.
     const matching = [...op.rows.values()].find((row) => row.line.role === role && row.line.input === input && start <= row.end + 1_500 && end >= row.start - 1_500 && row.line.text.length + delta.length <= 4_000);
-    const row = matching ?? { line: { id: crypto.randomUUID(), agentId: op.agent.id, name: role === 'user' ? this.ctx.tools.snapshot().you.name : op.agent.config.kind === 'personal' && op.audience === 'public' ? `${this.ctx.tools.snapshot().you.name.slice(0, 24)}’s Chat` : op.agent.config.name,
+    const row = matching ?? { line: { id: crypto.randomUUID(), agentId: op.agent.id, name: role === 'user' ? this.ctx.tools.snapshot().you.name : op.agent.config.kind === 'personal' && op.audience === 'public' ? `${this.ctx.tools.snapshot().you.name.slice(0, 24)}’s Muse` : op.agent.config.name,
       role, input, audience: op.audience, text: '', at: new Date(this.#now()).toISOString(), playback: 'not-played' } as AgentLine, start, end };
     row.line = { ...row.line, text: row.line.text + delta.slice(0, 4_000), playback: role === 'assistant' ? (op.playback ?? (this.#playable(op) && op.heard ? 'playing' : 'not-played')) : 'not-played' };
     row.start = Math.min(row.start, start); row.end = Math.max(row.end, end); op.rows.set(row.line.id, row);
@@ -453,8 +509,9 @@ export class AgentRuntime {
   }
   close(): void {
     if (this.#closed) return;
+    for (const cancel of this.#pendingSaves) cancel();
     this.#stop('personal', 'interrupted'); this.#stop('group', 'interrupted');
     this.command({ type: 'agent-ready', ready: false }); this.#closed = true;
-    clearInterval(this.#heartbeat); this.#audio?.close(); this.#listeners.clear(); this.#lines = []; this.#queue = [];
+    clearInterval(this.#heartbeat); clearInterval(this.#contextTimer); this.#audio?.close(); this.#listeners.clear(); this.#lines = []; this.#queue = [];
   }
 }

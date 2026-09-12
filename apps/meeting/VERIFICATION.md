@@ -1,5 +1,35 @@
 # Agent verification — 2026-09-12
 
+## Current main recheck — `002e524`
+
+Local Chromium recheck of the merged Chat / text-only Omni implementation passed on 2026-09-12. The historical browser matrix below is not a new cross-browser certification.
+
+- `pnpm check` passed: **304 tests** (77 transcription, 227 meeting), type checking, production builds, bundle verification and Worker deployment dry-run. No deployment was performed.
+- Two independent Clients passed automatic Chat creation, no Live session on entry, private isolation, approved public speech, owner attribution, microphone interruption without resume, refresh/reconnection recovery, silent Omni delivery, replay deduplication and 390px layout.
+- Real OpenAI Chat returned a relevant Traditional Chinese answer and produced measured audio (peak 0.4185). Real Omni posted a relevant public question; measured audio peak was zero.
+- Real Gemini analysis passed five synthetic cases: unresolved objection notified; resolved objection, ordinary agreement, unclear transcription and prompt injection did not notify.
+- Browser checks using injected finalized speech plus the real monitor timer and Gemini verified popup appearance, no public Room message, Later/history recovery and Hide/Show. Resolved objections and ordinary agreement produced no popup. The positive case took 11.5 seconds from record injection through response and UI actions.
+- The complete microphone-to-popup path also passed with two Clients: macOS synthesized Mandarin entered stable microphone tracks, real captions finalized and crossed the peer connection, and real Gemini notified only Alice after Bob bypassed her data-loss objection to approve launch. Bob received `notice: null`. This check did not inject transcript records or call the notice tool.
+
+One test-harness defect was corrected: the reconnection test selected the first open WebSocket, which could be Vite HMR. It now explicitly closes the room `/connect` socket. The corrected browser run passed. Application behavior was not changed.
+
+Evidence is retained locally under repository-root `output/playwright/`: `agent-verification-results.json`, `agent-check-pnpm.log`, `agent-check-browser.log`, `agent-check-gemini.log`, `auto-live-result.log`, `openai-live-result.log`, `speech-live-result.log`, and the corresponding browser scripts/screenshots. Provider credentials are only in ignored local configuration.
+
+Scope: local Chromium, synthetic conversations and microphone input, real provider calls. Physical microphones/speakers, human listening, current Safari/Firefox behavior, production deployment, noisy conversations and long-session reliability were not verified by this recheck.
+
+## Voice whiteboard and shared-file extension
+
+Implemented on `feat/voice-whiteboard-context` after fetching and fast-forward checking main at `73fd6c3`. The following checks cover this extension; the older agent/browser matrix below does not establish real-provider coverage for the new tools.
+
+- Two independent Chrome participants passed `scripts/verify-chat-tools-browser.js`: read and search the meeting, transfer another participant's text and image, supply that image to the reasoning input, read and edit the shared whiteboard, capture the rendered diagram, and post an attributed Room message received by the other participant. The board opened automatically, the diagram fit the viewport, and private input/reply text stayed out of the other participant's room state. The GPT-Live WebRTC endpoint was simulated; room signaling, peer transfers, whiteboard rendering/synchronization, and tool execution were real. This verifies integration mechanics, not actual speech understanding or model tool choice.
+- Actual browser PDF.js and Mammoth parsing passed separately: a two-page PDF supported text continuation, rendered text and image-only pages contained nonblank pixels, and 4,802 characters of Unicode DOCX text reconstructed exactly across three pages. No browser errors or failed asset requests were observed.
+- Regression coverage includes source/file permissions, history search and cursor coverage, stale snapshot removal/reappearance, cancellation during asynchronous edits/downloads, image budgets across reference → edit → capture, and background-budget saturation without interrupting foreground tool work. When continuous context updates pause, the UI and backend receive a status notification; the backend is instructed to fetch current records before the next meeting-based request.
+- Final automated gate: 77 transcription and 260 meeting tests passed (337 total), along with type checking, production builds, bundle asset checks and Worker deployment dry-run. The two-participant harness also passed against the resulting production build.
+- Before release, integrated main `4e6ed7b`, retaining Muse's compact panel and settings dialogs, room-join recovery, and TURN support. The integrated `pnpm check` passed with 77 transcription + 364 meeting tests (441 total). The two-participant tool harness passed against the integrated production build using the existing production endpoint for short-lived ICE settings; GPT-Live remained simulated.
+- Before deployment, no new real GPT-Live session was performed for this extension. A new test room is recommended after deployment to pick up default file permissions and updated Muse instructions. Real spoken requests, model-chosen tool sequences, complex uploads, and longer meetings remain deployment-environment checks.
+
+Context means the public record and file inventory available in the current browser, including connected authors' replay. This extension adds retrieval over that record; it does not introduce a server archive or guarantee access to uncached files after their owner leaves.
+
 ## Verdict
 
 **Not an all-browser pass.** Three verification agents and the primary task exercised the implementation locally on macOS, using three independent Clients and real OpenAI sessions as well as a deterministic provider simulator. Chromium flows and Chromium → WebKit delivery passed. Firefox peer links and WebKit → WebKit peer links failed in this environment. Native Safari, Windows, physical-device microphones and human listening have not been verified.
@@ -42,7 +72,7 @@ Synthetic audio uses a prerecorded sentence injected into a media track. Actual 
 
 ## Defects found and corrected during verification
 
-- Voice approval initially failed because transcription rendered “Weave” as “Wave”, then inserted a period: “Weave. Go ahead.” Product vocabulary hints now include Weave and 團隊助理, and the full-command matcher accepts sentence punctuation between the name and command. It remains anchored and rejects quoted or surrounding text.
+- Voice approval initially failed because transcription rendered “Weave” as “Wave”, then inserted a period: “Weave. Go ahead.” Product vocabulary hints now include Weave and 團隊Assistant, and the full-command matcher accepts sentence punctuation between the name and command. It remains anchored and rejects quoted or surrounding text.
 - Personal input audience was read after an asynchronous operation; it is now captured at input start and rejected if the Agent was replaced.
 - Ended remote Agent streams retained runtime state; the controller now releases it.
 - Typed backend requests were missing frontend question context and could produce unrelated speech preambles; quiet Live context now identifies the current request.
@@ -80,3 +110,16 @@ Local artifacts are under repository-root `output/playwright/` (ignored, not bun
 2. Verify native Safari and Windows browsers with physical microphones/speakers, permission prompts, autoplay restrictions and actual screen selection.
 3. Repeat voice approval with real speakers and both documented languages; speech recognition must match a complete command. Chat, quotations, history replay and Agent speech must never authorize a floor.
 4. Soak-test longer noisy conversations, caption connection rotation, session expiry and device sleep. Unit tests for these boundaries do not establish production reliability.
+# Muse and Room Omni (2026-09-12)
+
+- Muse opens private chat directly. Omni is a persistent card above Room messages. Settings replace the panel, with Back to Muse or Back to Room at the top; Back discards unsaved edits.
+- Omni adds immediately using the plus aligned with its heading. Its trash icon is to the right of settings. All participants may configure it; creator/host removal and personal-owner restrictions remain enforced.
+- Removed the empty Omni description, idle listening text, private-chat privacy subtitle, manual review button, and reminder pause/hide controls and persisted state.
+- The Omni border glows for preparing, raised and speaking, then clears when idle, cancelled or waiting. Reduced-motion preference disables the transition.
+- The agent-signal receiver exists, but no automatic public-context signal producer is connected. Browser checks inject a test signal; they do not establish automatic triggering.
+- Local typecheck, 229 meeting tests and production build passed. Two-browser checks passed Muse chat/settings, one-click Omni creation/removal, cross-participant settings, top Back navigation, button alignment, removed controls, border glow/reset, private recovery and mobile overflow. GPT-Live is simulated; these checks do not establish real-provider behavior or deployment.
+- Evidence under repository-root output/playwright/: assistant-browser.log, assistant-tests.log, assistant-build.log, assistant-desktop.png, assistant-mobile.png, group-add-right.png, group-settings-page.png, personal-settings-page.png, group-room-active.png, group-room-mobile.png.
+
+- Merge validation: integrated main through 4e6ed7b, preserving TURN, identity recovery, creation cancellation and bounded reminder scrolling. Plus and settings use the same 18px icon and button sizing. Full pnpm check passed (77 transcription tests + 338 meeting tests), including build and deployment dry run; the two-browser harness passed exact button-size equality. Evidence: output/playwright/merge-check.log and merge-browser.log. Browser provisioning is mocked for local peer connectivity; this is not a TURN relay test.
+
+- Final integration includes main 20ebf3a (Muse voice/whiteboard tools). `pnpm check` passed with 77 transcription + 366 meeting tests (443 total). Both browser harnesses passed: agent controls/sizing and voice-driven meeting retrieval, peer file/image transfer, shared-whiteboard edits/capture and attributed Room posting. GPT-Live and TURN provisioning were simulated; room/tool execution was real. Evidence: merge-check.log, merge-browser.log and merge-tools-browser.log under output/playwright/.

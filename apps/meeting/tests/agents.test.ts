@@ -5,7 +5,9 @@ import { liveSettings } from '../src/agents/live';
 import { validLiveRequest, initializeLive } from '../worker/live';
 import { visibleRecord, scopedTools, contextText, utf8Bytes } from '../src/agents/tools';
 import { MeetingLog } from '../src/meeting-log';
-import type { MeetingToolsContext } from '../src/webmcp';
+import type { MeetingSnapshot, MeetingToolsContext, ToolResult } from '../src/webmcp';
+import { WhiteboardStore } from '../src/whiteboard-model';
+import { editWhiteboard } from '../src/whiteboard-webmcp';
 
 const config: AgentConfig = { kind: 'group', name: 'Facilitator', instructions: 'Help the room think.', language: 'auto', source: 'all', chat: true, system: true, screen: false, files: false, audience: 'public' };
 const member = (id: string, joinedAt = 0): AgentMember => ({ peerId: id, isHost: id === 'host', ready: true, joinedAt, heartbeat: 1000 });
@@ -16,6 +18,56 @@ function fixture() {
   return { state, host, guest, uuid, agent: state.agents[0]! };
 }
 describe('agent creation, approval and recovery', () => {
+  it('creates one default Omni on room entry and assigns a ready device', () => {
+    const state = emptyAgentRoom(); const host = { ...member('host'), ready: false }; const guest = member('guest', 1);
+    let next = 0; const uuid = () => `default-${++next}`;
+    reconcileAgents(state, [], 1000, uuid);
+    expect(state.agents).toEqual([]);
+    reconcileAgents(state, [host], 1000, uuid);
+    expect(state.agents).toHaveLength(1);
+    const omni = state.agents[0]!;
+    expect(omni).toMatchObject({ owner: 'host', runner: null, phase: 'waiting', config: { kind: 'group', name: 'Omni', source: 'all', chat: true, system: true, audience: 'public' } });
+    reconcileAgents(state, [host, guest], 1001, uuid);
+    reconcileAgents(state, [host, guest], 1002, uuid);
+    expect(state.agents).toHaveLength(1);
+    expect(omni).toMatchObject({ runner: 'guest', phase: 'idle', request: 0 });
+  });
+  it('preserves explicit Omni removal through later joins and persisted room recovery', () => {
+    const state = emptyAgentRoom(); const host = member('host'); const guest = member('guest', 1);
+    const uuid = () => 'default-omni';
+    reconcileAgents(state, [host], 1000, uuid);
+    applyAgentCommand(state, host, { type: 'agent-remove', id: state.agents[0]!.id }, 1001, uuid);
+    const recovered = structuredClone(state);
+    reconcileAgents(recovered, [host, guest], 1002, uuid);
+    expect(recovered.agents).toEqual([]);
+    applyAgentCommand(recovered, host, { type: 'agent-create', config }, 1003, uuid);
+    expect(recovered.agents).toHaveLength(1);
+  });
+  it('preserves existing Omni settings when initializing an older room', () => {
+    const { state, host, uuid, agent } = fixture();
+    delete state.groupInitialized;
+    reconcileAgents(state, [host], 1001, uuid);
+    expect(state.agents).toEqual([agent]);
+    expect(agent.config).toEqual(config);
+    expect(state.groupInitialized).toBe(true);
+  });
+  it('updates settings in place, restricts editors and invalidates active work', () => {
+    const { state, host, guest, uuid, agent } = fixture();
+    const updated = { ...config, language: '繁體中文', files: true };
+    const command = { type: 'agent-configure' as const, id: agent.id, config: updated };
+    expect(parseAgentCommand(command)).toEqual(command);
+    expect(parseAgentCommand({ ...command, config: { ...updated, files: 'yes' } })).toBeNull();
+    applyAgentCommand(state, guest, command, 1000, uuid);
+    expect(agent.config).toEqual(updated);
+    expect(() => applyAgentCommand(state, host, { ...command, config: { ...updated, kind: 'personal' } }, 1000, uuid)).toThrow('type');
+    agent.phase = 'preparing'; agent.pending = true; state.queue.push(agent.id);
+    state.floor = { id: 'floor', agentId: agent.id, runner: host.peerId, epoch: 1, startedAt: 1000, expiresAt: 2000 };
+    applyAgentCommand(state, host, command, 1001, uuid);
+    expect(agent).toMatchObject({ id: command.id, config: updated, epoch: 3, phase: 'idle', pending: false });
+    expect(state.floor).toBeNull(); expect(state.queue).toEqual([]);
+    applyAgentCommand(state, guest, { type: 'agent-create', config: { ...config, kind: 'personal' } }, 1002, uuid);
+    expect(() => applyAgentCommand(state, host, { ...command, id: state.agents[1]!.id, config: { ...updated, kind: 'personal' } }, 1003, uuid)).toThrow('owner');
+  });
   it('enforces fixed group configuration and validates boundary inputs', () => {
     expect(parseAgentConfig({ ...config, source: 'none', chat: false, system: false, audience: 'private' })).toMatchObject({ source: 'all', chat: true, system: true, audience: 'public' });
     expect(parseAgentConfig({ ...config, name: 'x'.repeat(41) })).toBeNull();
@@ -131,11 +183,11 @@ describe('agent privacy and Live request boundaries', () => {
     let posted = false;
     const context = { log: () => log, snapshot: () => ({ roomCode: 'ABC123', you: { peerId: 'owner', name: 'Owner' }, participants: [], captions: 'idle', presentation: null, live: [{ peerId: 'other', name: 'Other', text: 'secret' }], files: [] }), sendAgentMessage: () => { posted = true; return { id: 'id', at: 'now' }; } } as unknown as MeetingToolsContext;
     const tools = scopedTools(context, settings, 'owner', () => true, () => false);
-    expect(tools.map((tool) => tool.name)).toEqual(['read_meeting', 'send_chat_message']);
+    expect(tools.map((tool) => tool.name)).toEqual(['read_meeting', 'capture_whiteboard', 'edit_whiteboard', 'send_chat_message', 'search_meeting']);
     const read = await tools[0]!.execute({});
     expect(JSON.stringify(read)).not.toContain('not allowed');
     expect(JSON.stringify(read)).not.toContain('secret');
-    expect((await tools[1]!.execute({ text: 'leak' })).isError).toBe(true);
+    expect((await tools.find((tool) => tool.name === 'send_chat_message')!.execute({ text: 'leak' })).isError).toBe(true);
     expect(posted).toBe(false);
   });
   it('rejects private peer records and malformed messages', () => {
@@ -250,9 +302,162 @@ describe('public record provenance and incremental context', () => {
 });
 
 
-it('creates personal Chat without opening microphone or requiring audio readiness', () => {
+it('creates personal Muse without opening microphone or requiring audio readiness', () => {
   const state = emptyAgentRoom(); const owner = { ...member('owner'), ready: false };
-  applyAgentCommand(state, owner, { type: 'agent-create', config: { ...config, kind: 'personal', name: 'Chat', audience: 'private' } }, 1_000, () => 'chat');
-  expect(state.agents[0]).toMatchObject({ owner: 'owner', config: { name: 'Chat', audience: 'private' } });
+  applyAgentCommand(state, owner, { type: 'agent-create', config: { ...config, kind: 'personal', name: 'Muse', audience: 'private' } }, 1_000, () => 'chat');
+  expect(state.agents[0]).toMatchObject({ owner: 'owner', config: { name: 'Muse', audience: 'private' } });
   expect(state.floor).toBeNull();
+});
+
+function toolPayload(result: ToolResult): Record<string, any> {
+  const part = result.content.find((content) => content.type === 'text');
+  if (!part || part.type !== 'text') throw new Error('Missing tool text');
+  return JSON.parse(part.text);
+}
+
+function personalToolsFixture() {
+  const snapshot: MeetingSnapshot = { roomCode: 'ABC123', you: { peerId: 'owner', name: 'Owner' },
+    participants: ['owner', 'other'].map((peerId) => ({ peerId, name: peerId, you: peerId === 'owner', isHost: peerId === 'owner', micOn: true, cameraOn: false, sharingScreen: false })),
+    captions: 'idle', presentation: null, live: [], files: [] };
+  const log = new MeetingLog(), board = new WhiteboardStore(() => {}, 'owner');
+  const posted: string[] = [];
+  const base = { log: () => log, snapshot: () => snapshot, editWhiteboard: (input: unknown, authorized?: () => boolean) => {
+    if (authorized && !authorized()) throw new Error('Cancelled');
+    return editWhiteboard(board, input);
+  }, captureWhiteboard: async () => ({ blob: new Blob(['pixels'], { type: 'image/png' }), width: 320, height: 200, sourceWidth: 320, sourceHeight: 200 }),
+  sendAgentMessage: (text: string, name: string) => { posted.push(`${name}: ${text}`); return { id: 'chat', at: 'now' }; } } as unknown as MeetingToolsContext;
+  const settings: AgentConfig = { ...config, kind: 'personal', audience: 'private', files: true };
+  return { snapshot, log, board, posted, base, settings };
+}
+
+describe('personal assistant whiteboard and meeting context tools', () => {
+  it('accepts the complete personal tool set at the worker and rejects disabled file or group board access', () => {
+    const { base, settings } = personalToolsFixture();
+    const agent = { ...fixture().agent, config: { ...settings, screen: true } };
+    const tools = scopedTools(base, agent.config, 'owner', () => true, () => true);
+    expect(tools).toHaveLength(8);
+    const session = liveSettings(agent, tools, false);
+    const body = { sdp: 'v=0\r\n', epoch: agent.epoch, request: agent.request, session };
+    expect(validLiveRequest(body, agent)).toBe(true);
+    expect(validLiveRequest(body, { ...agent, config: { ...agent.config, files: false } })).toBe(false);
+    expect(validLiveRequest(body, { ...agent, config: { ...agent.config, kind: 'group' } })).toBe(false);
+    const fractionalNumbers: number[] = [];
+    JSON.stringify(session, (_key, value) => { if (typeof value === 'number' && !Number.isInteger(value)) fractionalNumbers.push(value); return value; });
+    expect(fractionalNumbers).toEqual([]);
+  });
+
+  it('permits board reading but fences every shared mutation until the current owner request authorizes it', async () => {
+    const { base, settings, board, posted } = personalToolsFixture();
+    let allowed = false;
+    const tools = scopedTools(base, settings, 'owner', () => true, () => allowed);
+    const edit = tools.find((tool) => tool.name === 'edit_whiteboard')!;
+    const send = tools.find((tool) => tool.name === 'send_chat_message')!;
+    expect(toolPayload(await edit.execute({ action: 'read' }))).toMatchObject({ count: 0, elements: [] });
+    const operations = [{ op: 'create', id: 'idea', kind: 'rectangle', x: 0, y: 0, text: 'Meeting workflow' }];
+    for (const input of [{ action: 'edit', operations }, { action: 'mermaid', source: 'flowchart TD\nA-->B' }, { action: 'undo' }, { action: 'redo' }]) {
+      expect((await edit.execute(input)).isError).toBe(true);
+    }
+    expect((await send.execute({ text: 'Shared summary' })).isError).toBe(true);
+    expect(board.size).toBe(0);
+    expect(posted).toEqual([]);
+    allowed = true;
+    const mutation = toolPayload(await edit.execute({ action: 'edit', operations }));
+    expect(mutation).toMatchObject({ ok: true, action: 'edit', count: 1, changedIds: ['idea'] });
+    expect(mutation.elements).toBeUndefined();
+    expect(board.get('idea')?.text).toBe('Meeting workflow');
+    expect((await send.execute({ text: 'Shared summary' })).isError).not.toBe(true);
+    expect(posted).toEqual(['Facilitator: Shared summary']);
+    allowed = false;
+    expect((await tools.find((tool) => tool.name === 'capture_whiteboard')!.execute({})).content.some((part) => part.type === 'image')).toBe(true);
+    expect(scopedTools(base, config, 'owner', () => true, () => true).some((tool) => /whiteboard/u.test(tool.name))).toBe(false);
+  });
+
+  it('forwards a live permission guard so cancelled asynchronous edits cannot publish', async () => {
+    const { base, settings, board } = personalToolsFixture();
+    let active = true;
+    base.editWhiteboard = async (input, authorized) => {
+      await Promise.resolve();
+      active = false;
+      if (!authorized?.()) throw new Error('Cancelled before commit');
+      return editWhiteboard(board, input);
+    };
+    const edit = scopedTools(base, settings, 'owner', () => active, () => true).find((tool) => tool.name === 'edit_whiteboard')!;
+    expect((await edit.execute({ action: 'edit', operations: [{ op: 'create', id: 'late', kind: 'text', x: 0, y: 0 }] })).isError).toBe(true);
+    expect(board.size).toBe(0);
+  });
+
+  it('returns compact paginated native board objects with labels and connector identities', async () => {
+    const { base, settings } = personalToolsFixture();
+    let seen: unknown;
+    base.editWhiteboard = async (input) => {
+      seen = input;
+      return { ok: true, shared: true, action: 'read', count: 20, changedIds: [], canUndo: false, canRedo: false, nextOffset: 10, hasMore: true,
+        elements: [{ id: 'node', type: 'rectangle', x: 10, y: 20, width: 180, height: 90, boundElements: [{ id: 'label', type: 'text' }], enormousInternalData: 'x'.repeat(40000) },
+          { id: 'label', type: 'text', containerId: 'node', originalText: '可編輯節點', x: 20, y: 30 },
+          { id: 'edge', type: 'arrow', startBinding: { elementId: 'node', focus: 1 }, endBinding: { elementId: 'target', gap: 8 } }] as any };
+    };
+    const edit = scopedTools(base, settings, 'owner', () => true, () => false).find((tool) => tool.name === 'edit_whiteboard')!;
+    const result = toolPayload(await edit.execute({ action: 'read', limit: 100 }));
+    expect(seen).toEqual({ action: 'read', limit: 10 });
+    expect(result).toMatchObject({ nextOffset: 10, hasMore: true, elements: [
+      { id: 'node', boundElements: [{ id: 'label', type: 'text' }] }, { id: 'label', containerId: 'node', text: '可編輯節點' },
+      { id: 'edge', startBinding: { elementId: 'node' }, endBinding: { elementId: 'target' } },
+    ] });
+    expect(JSON.stringify(result)).not.toContain('enormousInternalData');
+    expect(utf8Bytes(JSON.stringify(result))).toBeLessThan(3000);
+  });
+
+  it('finds older discussion and attachments with source-preserving pagination instead of relying on the recent seed', async () => {
+    const { base, settings, log, snapshot } = personalToolsFixture();
+    for (let i = 0; i < 8; i++) log.append({ kind: 'transcript', at: 'now', speaker: { peerId: 'owner', name: 'Owner' }, text: `DEPLOYMENT decision ${i}` });
+    log.append({ kind: 'chat', at: 'now', sender: { peerId: 'other', name: 'Other' }, agent: null, text: 'deployment hidden chat' });
+    log.append({ kind: 'file', at: 'now', sender: { peerId: 'other', name: 'Other' }, file: { id: 'plan', name: 'deployment.pdf', size: 20, mime: 'application/pdf' } });
+    for (let i = 0; i < 200; i++) log.append({ kind: 'transcript', at: 'now', speaker: { peerId: 'other', name: 'Other' }, text: `Later discussion ${i}` });
+    expect(contextText(log, settings, 'owner', [], snapshot)).not.toContain('DEPLOYMENT decision');
+    const tool = scopedTools(base, { ...settings, source: 'owner', chat: false }, 'owner', () => true, () => false).find((candidate) => candidate.name === 'search_meeting')!;
+    const first = toolPayload(await tool.execute({ query: 'deployment' }));
+    expect(first.records).toHaveLength(5);
+    expect(first).toMatchObject({ nextCursor: 5, hasMore: true });
+    const next = toolPayload(await tool.execute({ query: 'deployment', after: first.nextCursor }));
+    expect(next.records.map((entry: { seq: number }) => entry.seq)).toEqual([6, 7, 8, 10]);
+    expect(next).toMatchObject({ nextCursor: log.head, hasMore: false });
+    expect(JSON.stringify(next)).not.toContain('hidden chat');
+    const none = scopedTools(base, { ...settings, source: 'none', files: false }, 'owner', () => true, () => false).find((candidate) => candidate.name === 'search_meeting')!;
+    expect(toolPayload(await none.execute({ query: 'deployment' })).records).toEqual([]);
+    expect((await tool.execute({ query: '' })).isError).toBe(true);
+  });
+
+  it('retains a compact file inventory and exposes complete inventory pages even without recent file announcements', async () => {
+    const { base, settings, log, snapshot } = personalToolsFixture();
+    snapshot.files = Array.from({ length: 32 }, (_, i) => ({ id: `file-${i}`, name: `image-${i}.png`, mime: 'image/png', size: 10, at: 'now', sharedBy: snapshot.you, status: 'available' }));
+    log.append({ kind: 'transcript', at: 'now', speaker: snapshot.you, text: 'latest conclusion' });
+    const seeded = JSON.parse(contextText(log, settings, 'owner', [], snapshot));
+    expect(seeded.coverage).toMatchObject({ localOnly: true, throughCursor: 1, availableFiles: 32 });
+    expect(seeded.files.length + seeded.coverage.omittedFiles).toBe(32);
+    expect(seeded.meeting).toMatchObject([{ text: 'latest conclusion' }]);
+    expect(utf8Bytes(JSON.stringify(seeded))).toBeLessThanOrEqual(6000);
+    const read = scopedTools(base, settings, 'owner', () => true, () => false).find((tool) => tool.name === 'read_meeting')!;
+    const page = toolPayload(await read.execute({}));
+    const last = toolPayload(await read.execute({ fileOffset: page.fileInventory.nextOffset }));
+    expect([...page.files, ...last.files].map((file) => file.id)).toEqual(snapshot.files.map((file) => file.id));
+    expect(last.fileInventory.hasMore).toBe(false);
+    const restricted = JSON.parse(contextText(log, { ...settings, source: 'owner', files: false }, 'owner', [], snapshot));
+    expect(restricted.files).toEqual([]);
+    expect(restricted.participants.map((participant: { peerId: string }) => participant.peerId)).toEqual(['owner']);
+  });
+
+  it('discards a capture result when the requesting turn ends while pixels are loading', async () => {
+    const { base, settings } = personalToolsFixture();
+    let active = true;
+    base.captureWhiteboard = async (_options, authorized) => {
+      expect(authorized?.()).toBe(true);
+      await Promise.resolve(); active = false;
+      return { blob: new Blob(['private pixels'], { type: 'image/png' }), width: 320, height: 200, sourceWidth: 320, sourceHeight: 200 };
+    };
+    const capture = scopedTools(base, settings, 'owner', () => active, () => false).find((tool) => tool.name === 'capture_whiteboard')!;
+    const result = await capture.execute({});
+    expect(result.isError).toBe(true);
+    expect(result.content.every((part) => part.type === 'text')).toBe(true);
+    expect(JSON.stringify(result)).not.toContain('private pixels');
+  });
 });

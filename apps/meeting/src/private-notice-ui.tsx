@@ -17,27 +17,6 @@ function Evidence({ notice }: { notice: PrivateNotice }) {
   );
 }
 
-function Monitoring({ monitor, hidden, onToggleHidden }: {
-  monitor: AutoReminders;
-  hidden: boolean;
-  onToggleHidden(): void;
-}) {
-  const monitoring = useSyncExternalStore(monitor.subscribe, monitor.getSnapshot);
-  return (
-    <>
-      <div className="private-monitor" aria-label="Private reminder controls">
-        <button type="button" onClick={() => monitor.setEnabled(!monitoring.enabled)}>
-          {monitoring.enabled ? 'Pause reminders' : 'Resume reminders'}
-        </button>
-        <button type="button" aria-pressed={hidden} onClick={onToggleHidden}>
-          {hidden ? 'Show private content' : 'Hide private content'}
-        </button>
-      </div>
-      {monitoring.status === 'unavailable' && <p role="status">Reminders unavailable · retrying</p>}
-    </>
-  );
-}
-
 export interface NoticeActions { onSpeak?: ((text: string) => Promise<void>) | undefined; onDiscuss?: ((text: string) => Promise<void>) | undefined }
 export function PrivateNoticeToast({ store, onHistory, ...actions }: { store: PrivateNotices; onHistory(): void } & NoticeActions) {
   const state = useSyncExternalStore(store.subscribe, store.getSnapshot);
@@ -47,7 +26,7 @@ export function PrivateNoticeToast({ store, onHistory, ...actions }: { store: Pr
     if (notice) return; // A new reminder must not replace the one being read.
     setSelected(state.notices.find((n) => n.status === 'active' && !n.collapsed && !n.read)?.id ?? null);
   }, [notice, state.notices]);
-  if (state.hidden || !notice) return null;
+  if (!notice) return null;
   return <TimedNotice key={notice.id} notice={notice} store={store} onHistory={onHistory} {...actions} />;
 }
 
@@ -118,7 +97,7 @@ function TimedNotice({
     <section
       ref={card}
       className="private-notice-toast"
-      aria-label="Private reminder from Chat"
+      aria-label="Private reminder from Muse"
       style={{ bottom: position.bottom, visibility: position.fits ? 'visible' : 'hidden' }}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
@@ -129,7 +108,7 @@ function TimedNotice({
     >
       <div className="private-notice-dock__heading">
         <span>
-          <LockKeyhole size={13} /> Chat · Only you
+          <LockKeyhole size={13} /> Muse · Only you
         </span>
         <button
           type="button"
@@ -192,37 +171,36 @@ function ReminderActions({ notice, onSpeak, onDiscuss }: { notice: PrivateNotice
 
 export function PrivateNoticeHistory({ store, monitor, ...actions }: { store: PrivateNotices; monitor: AutoReminders } & NoticeActions) {
   const state = useSyncExternalStore(store.subscribe, store.getSnapshot);
+  const [expanded, setExpanded] = useState(() => state.notices.some((notice) => !notice.read));
+  const monitoring = useSyncExternalStore(monitor.subscribe, monitor.getSnapshot);
   useEffect(() => {
-    if (!state.hidden) store.markRead(state.notices.filter((n) => !n.read).map((n) => n.id));
-  }, [state, store]);
+    if (expanded) store.markRead(state.notices.filter((n) => !n.read).map((n) => n.id));
+  }, [state, store, expanded]);
+  if (!state.notices.length && monitoring.status !== 'unavailable') return null;
   return (
     <div className="private-notice-history" role="tabpanel" aria-label="Private reminders">
-      <Monitoring monitor={monitor} hidden={state.hidden} onToggleHidden={() => store.setHidden(!state.hidden)} />
-      {state.hidden ? (
-        <p>Private content hidden.</p>
-      ) : (
-        <>
-          {!state.notices.length && <p>No reminders yet.</p>}
-          {state.notices.map((notice) => (
-            <article key={notice.id}>
-              <header>
-                <time dateTime={new Date(notice.at).toISOString()}>
-                  {new Date(notice.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                </time>
-                <span>{notice.status}</span>
-              </header>
-              <p>{notice.text}</p>
-              <Evidence notice={notice} />
-              <ReminderActions notice={notice} {...actions} />
-              {notice.status === 'active' && (
-                <button type="button" onClick={() => store.dismiss(notice.id)}>
-                  Dismiss
-                </button>
-              )}
-            </article>
-          ))}
-        </>
-      )}
+      {monitoring.status === 'unavailable' && <p role="status">Reminders unavailable · retrying</p>}
+      <details className="private-reminder-list" open={expanded} onToggle={(event) => setExpanded(event.currentTarget.open)}>
+        <summary>Private reminders · {state.notices.length}{state.notices.some((notice) => !notice.read) ? ' · New' : ''}</summary>
+      {state.notices.map((notice) => (
+        <article key={notice.id}>
+          <header>
+            <time dateTime={new Date(notice.at).toISOString()}>
+              {new Date(notice.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+            </time>
+            <span>{notice.status}</span>
+          </header>
+          <p>{notice.text}</p>
+          <Evidence notice={notice} />
+          <ReminderActions notice={notice} {...actions} />
+          {notice.status === 'active' && (
+            <button type="button" onClick={() => store.dismiss(notice.id)}>
+              Dismiss
+            </button>
+          )}
+        </article>
+      ))}
+      </details>
     </div>
   );
 }
