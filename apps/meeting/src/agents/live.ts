@@ -188,7 +188,7 @@ export class AgentLive {
     }
     if (this.#finishing || !this.valid()) return;
     if (event.type === 'session.started') { clearTimeout(this.#timer); this.#ready = true; this.#resolve?.(); return; }
-    if (event.type === 'error') { this.fail(record(event.error) && event.error.code === 'response_input_buffer_full' ? INPUT_LIMIT_MESSAGE : 'GPT-Live rejected a session command. Stop and retry the request.'); return; }
+    if (event.type === 'error') { this.fail(record(event.error) && event.error.code === 'response_input_buffer_full' ? 'GPT-Live reported a full input buffer. Some content may not have reached the model. Start a new question.' : 'GPT-Live rejected a session command. Stop and retry the request.'); return; }
     if (event.type !== 'response.event' || !record(event.event)) return;
     const nested = event.event;
     const key = String(event.delegation_id ?? 'manual');

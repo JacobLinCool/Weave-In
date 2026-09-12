@@ -81,11 +81,12 @@ Use the capture tool after an edit to verify its rendered appearance. Closing
 the board preserves shared content; viewport position and selection remain local.
 
 The personal **Muse** assistant uses the same whiteboard tools from an ordinary
-meeting browser. Open **Muse → Talk** and ask, for example, “Turn our
+meeting browser. Open **Muse → Talk to Muse** and ask, for example, “Turn our
 discussion into a flowchart on the whiteboard,” or “Read the uploaded design
 and draw its workflow.” Room posting is off by default. To allow public summaries,
-enable **Allow posting to Room (visible to everyone)** when creating Muse, then
-explicitly ask it to post. **Muse → Settings** shows whether this is allowed.
+open **Muse → Settings**, enable **Allow posting to Room (visible to everyone)**,
+and choose **Save settings**. Then explicitly ask Muse to post. Saving keeps
+your private conversation and stops work using the previous permissions.
 Its spoken replies remain private. It reads earlier meeting records and supported
 files as needed; it cannot recover records missing from this browser or fetch an
 uncached file from a participant who has left. Whiteboard output consists of

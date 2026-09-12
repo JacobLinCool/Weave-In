@@ -19,7 +19,7 @@ Detect groupthink while it is happening and intervene before the decision is mad
 
 Groupthink is the failure mode where a group suppresses dissent to preserve harmony, stops thinking critically, and converges on a low-quality decision that no individual member would have defended alone. It is invisible from inside the room: the meeting feels productive precisely because nobody is arguing.
 
-The current product pairs browser meetings and per-participant transcription with a personal **Muse** and shared **Omni**. Muse is configured on join and gives silent, evidence-based reminders when the owner’s explicit concern remains unresolved while a decision moves ahead. It supports private follow-up and can speak once for the owner after approval. Omni provides brief public text suggestions in Room chat. The wider room-level Groupthink model remains proposed.
+The current product pairs browser meetings and per-participant transcription with a personal **Muse** tab and shared **Omni**. Muse opens directly into private chat with a settings button. Muse is configured on join and gives silent, evidence-based reminders when the owner’s explicit concern remains unresolved while a decision moves ahead. It supports private follow-up and can speak once for the owner after approval. Omni provides brief public text suggestions in Room chat. The wider room-level Groupthink model remains proposed.
 
 Success means a participant can raise an overlooked concern before a decision is finalized. Post-meeting intervention reports remain future work.
 
@@ -38,7 +38,7 @@ Name: Weave In. "Keep the thread. Weave everyone in." The tagline is the product
 - Audio for captions travels directly from the speaker's browser to the selected AI provider (Gemini or OpenAI) using a single-use ephemeral token minted by the Worker.
 - Agent settings and connection descriptions go to the Worker for GPT-Live initialization. Meeting records, private conversations and permitted tools then travel directly between the Client and OpenAI.
 - The room Durable Object coordinates Agent identity, the single Group executor, leases and public speaking rights. It does not store utterances or embeddings. Coordination is deleted when the last member leaves.
-- Personal source permissions are chosen at creation. Private conversations stay out of public replay and the meeting log. Speaking for the owner uses only the specifically approved reminder in a fresh session, without private history or tools; persistent public mode is disabled.
+- Personal source permissions can be set at creation and edited by the owner. Private conversations stay out of public replay and the meeting log. Speaking for the owner uses only the specifically approved reminder in a fresh session, without private history or tools; persistent public mode is disabled.
 - Automatic reminder analysis sends bounded human transcript text and prior reminder evidence through the Worker to Gemini, without Worker persistence. It runs while the meeting page is open, without a Codex browser or external assistant session.
 - Same-tab room recovery uses sessionStorage for meeting text, reminders and up to 200 private Muse lines, for up to 12 hours since the last save. It does not restore active audio sessions or queued speaking approvals.
 - Display name and settings (languages spoken, caption style, captions on/off) persist in the browser's localStorage.
@@ -47,11 +47,11 @@ Name: Weave In. "Keep the thread. Weave everyone in." The tagline is the product
 
 ### Current implementation
 
-- Silent private reminder cards float at the stage's lower left without reserving layout space. They collapse after 15 seconds, pausing while hovered or focused; evidence and history remain in the unified Muse panel. Hiding private content also hides the personal discussion.
+- Silent private reminder cards float at the stage's lower left without reserving layout space. They collapse after 15 seconds, pausing while hovered or focused; evidence and history remain in the Muse panel.
 - Automatic analysis covers explicit unresolved concerns bypassed by later decisions, delivered only to the concern's author. The same concern can recur on a substantive new commitment, execution or scope change, not a timer or paraphrased decision. Meaning and novelty remain model judgments, not a validated diagnosis of Groupthink.
 - **Discuss privately** opens follow-up in personal Muse. **Speak for me** grants one brief public turn, allowing slight elaboration without new commitments or private details. The owner's microphone remains in its current state; owner speech stops the assistant without automatic resume. Every new turn needs another approval.
 - One personal Muse is configured automatically per participant; one shared Omni can be created for the room. Role, language, source and tool permissions remain configurable.
-- Omni publishes at most 240 characters to shared Room chat, labelled Omni, without audio or human approval. Compact Omni settings live inside Room; public suggestions replay to late joiners. A ready browser can take over if the runner leaves.
+- Omni publishes at most 240 characters to shared Room chat, labelled Omni, without audio or human approval. A persistent Omni card at the top of Room shows status, glows while preparing or publishing, and lets every participant edit settings; public suggestions replay to late joiners. A ready browser can take over if the runner leaves.
 - Camera, microphone, screen share with live renegotiation, shared messages and files, per-speaker live captions, and a merged transcript.
 - Up to four selected BCP-47 caption languages or automatic detection; Verbatim or Smart captions. Each browser sends its own audio directly to its caption provider.
 - Signaling reconnects automatically while preserving local state. Refresh/rejoin restores the same tab's checkpoint, including private reminder and Muse text history; it does not replay interrupted speech.
