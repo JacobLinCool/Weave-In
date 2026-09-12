@@ -90,12 +90,13 @@ Local evidence is retained in the ignored repository-root `output/playwright/ali
 
 ## Reproducible browser checks
 
-Launch/configuration instructions are in [README.md](README.md#browser-verification). All harnesses require a running development or built-Worker origin; pass it explicitly. The two app harnesses use independent browser contexts with real room WebSockets and local peer connections. Their default Jev, GPT-Live and ICE provisioning responses are simulated.
+Launch/configuration instructions are in [README.md](README.md#browser-verification). All harnesses require a running development or built-Worker origin; pass it explicitly. The app harnesses use independent browser contexts with real room WebSockets and local peer connections. Their default Jev, GPT-Live and ICE provisioning responses are simulated.
 
 | Script | What the current harness checks |
 | --- | --- |
 | `scripts/verify-agents-browser.js` | Automatic Muse/Omni setup without a Live connection on entry; private isolation; dictation stop/send; a bounded simulated Live start/answer/End cycle; selected-reply reading; settings and permission changes; owner attribution, microphone interruption and no automatic resume; silent Omni preparation, approval-before-audio, public delivery/replay; room recovery and mobile layout |
 | `scripts/verify-chat-tools-browser.js` | Actual meeting read; another peer's text/image transfer and readable/vision result; shared-board read, Mermaid edit and rendered capture; receiving peer's board; default file access, screen opt-in, 500-record tool schema, and no private-response publication or default Room-posting tool |
+| `scripts/verify-demo-whiteboard-browser.js` | Provider-free WebMCP adapter calling the real tool callbacks: meeting read and attributed post, Mermaid import into a closed board that opens and is framed, a pointer-drawn human rectangle connected by its actual ID with prior elements unchanged, capture after closing, late join, and an empty board after everyone leaves |
 | `scripts/verify-turn-relay.js` | Real credential provisioning and two peers with relay-only policy for all transports, TCP-only and TLS/443-only; bidirectional data/media and selected relay candidate pairs via `getStats()` |
 | `scripts/evaluate-group-detection.mjs` | Opt-in real Jev routing checks using synthetic English and Traditional Chinese discussion; reports confidence, selected category and request latency |
 | `scripts/evaluate-private-analysis.mjs` | Opt-in real Gemini checks using synthetic unresolved/resolved objections, ordinary agreement, unclear transcription and prompt-injection fixtures |

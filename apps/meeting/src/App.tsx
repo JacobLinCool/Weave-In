@@ -852,14 +852,20 @@ export function App(): ReactNode {
     };
   };
 
-  const openAgentWhiteboard = async (authorized: () => boolean): Promise<HTMLElement> => {
+  const openAgentWhiteboard = async (authorized: () => boolean = () => true): Promise<HTMLElement> => {
     const available = () => phaseRef.current === 'room' && authorized();
     if (!available()) throw new Error('This agent turn has ended.');
+    const opening = !whiteboardApiRef.current;
     setWhiteboardOpen(true);
     const deadline = Date.now() + 5_000;
     while (available() && Date.now() < deadline) {
       const root = document.querySelector<HTMLElement>('.whiteboard');
-      if (root?.querySelector('canvas') && whiteboardApiRef.current) return root;
+      if (root?.querySelector('canvas') && whiteboardApiRef.current) {
+        if (opening && whiteboard.snapshot().some(element => !element.isDeleted)) {
+          whiteboardApiRef.current.scrollToContent(whiteboard.snapshot(), { fitToViewport: true, viewportZoomFactor: 0.8, animate: false });
+        }
+        return root;
+      }
       await new Promise<void>(resolve => setTimeout(resolve, 50));
     }
     throw new Error(available() ? 'The whiteboard is still loading. Please retry.' : 'This agent turn has ended.');
@@ -884,16 +890,18 @@ export function App(): ReactNode {
         return { file, blob };
       },
       captureScreen,
-      captureWhiteboard: (options) => {
-        const root = document.querySelector<HTMLElement>('.whiteboard');
-        if (!root) throw new Error('Open the whiteboard before capturing it.');
+      captureWhiteboard: async (options) => {
+        const root = await openAgentWhiteboard();
         return captureWhiteboard(root, options);
       },
       editWhiteboard: async (input) => {
-        const result = await editExcalidrawWhiteboard(whiteboard, input);
+        const reading = !!input && typeof input === 'object' && 'action' in input && input.action === 'read';
+        if (!reading) await openAgentWhiteboard();
+        const result = await editExcalidrawWhiteboard(whiteboard, input, undefined,
+          () => phaseRef.current === 'room');
         if (result.action !== 'read') {
           await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
-          whiteboardApiRef.current?.scrollToContent(undefined, { fitToViewport: true, viewportZoomFactor: 0.8, animate: false });
+          if (phaseRef.current === 'room') whiteboardApiRef.current?.scrollToContent(whiteboard.snapshot(), { fitToViewport: true, viewportZoomFactor: 0.8, animate: false });
         }
         return result;
       },

@@ -288,7 +288,7 @@ export function createMeetingTools(context: MeetingToolsContext): ToolDefinition
       name: MEETING_TOOL_NAMES.captureWhiteboard,
       description:
         'Capture an image of the current shared whiteboard viewport, including shapes, their text, pen strokes and connectors, ' +
-        'without the toolbars. Open the whiteboard using the meeting controls first. Pan or zoom the canvas to frame the area ' +
+        'without the toolbars. A closed board opens automatically with its content fitted to the viewport. Pan or zoom an open canvas to frame the area ' +
         'you want to inspect. This reads the board currently rendered in this browser and does not modify the shared board. ' +
         'Use after edit_whiteboard to visually verify the resulting layout and text; a successful edit alone does not verify appearance.',
       inputSchema: {
