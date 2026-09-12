@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { MeetingController, type MeetingControllerEvents } from '../src/meeting-controller';
+import { connectWithIdentityRecovery, MeetingController, RoomAdmissionError, type MeetingControllerEvents } from '../src/meeting-controller';
 import { emptyAgentRoom } from '../src/agents/contracts';
 class Socket extends EventTarget {
   static instances: Socket[] = [];
@@ -82,12 +82,147 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
   Socket.instances = [];
   PeerConnection.instances = [];
-  vi.restoreAllMocks();
 });
 describe('signaling recovery', () => {
+  it('recovers through real controller events before the rejected socket finishes closing', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('window', { location: { href: 'https://meeting.test' } });
+    vi.stubGlobal('WebSocket', Socket);
+    const events = { onConnected: vi.fn(), onReconnecting: vi.fn(), onError: vi.fn() } as unknown as MeetingControllerEvents;
+    const controller = new MeetingController([], events);
+    const resetSession = vi.fn();
+    const ready = connectWithIdentityRecovery(controller, {
+      roomCode: 'ABCDEF', action: 'join', displayName: 'Sky', peerId: 'a'.repeat(32),
+    }, resetSession);
+    await vi.advanceTimersByTimeAsync(0);
+    const rejectedSocket = Socket.instances[0]!;
+    vi.spyOn(rejectedSocket, 'close').mockImplementation(() => { rejectedSocket.readyState = 2; });
+    rejectedSocket.dispatchEvent(new MessageEvent('message', {
+      data: JSON.stringify({ type: 'error', code: 'DUPLICATE_PEER', message: 'Already connected.' }),
+    }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(Socket.instances).toHaveLength(2);
+    expect(resetSession).toHaveBeenCalledTimes(1);
+    expect(new URL(Socket.instances[1]!.url).searchParams.get('peerId')).not.toBe('a'.repeat(32));
+    Socket.instances[1]!.welcome();
+    await ready;
+    rejectedSocket.dispatchEvent(new Event('close'));
+    rejectedSocket.dispatchEvent(new Event('error'));
+    expect(events.onConnected).toHaveBeenCalledTimes(1);
+    expect(events.onReconnecting).not.toHaveBeenCalled();
+    expect(events.onError).not.toHaveBeenCalled();
+    expect(Socket.instances[1]!.readyState).toBe(1);
+    controller.close();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('retries an initial duplicate identity once, resetting copied history before admission', async () => {
+    const resetSession = vi.fn();
+    const args = { roomCode: 'ABCDEF', action: 'join' as const, displayName: 'Sky', peerId: 'a'.repeat(32) };
+    const connect = vi.fn()
+      .mockRejectedValueOnce(new RoomAdmissionError('DUPLICATE_PEER', 'Already connected.'))
+      .mockImplementationOnce(async () => { expect(resetSession).toHaveBeenCalledTimes(1); });
+    await connectWithIdentityRecovery({ connect }, args, resetSession);
+    expect(connect).toHaveBeenCalledTimes(2);
+    expect(connect.mock.calls[0]![0]).toEqual(args);
+    const retry = connect.mock.calls[1]![0];
+    expect(retry).toMatchObject({ roomCode: args.roomCode, action: 'join', displayName: 'Sky' });
+    expect(retry.peerId).not.toBe(args.peerId);
+    expect(retry.peerId).toMatch(/^[a-f0-9]{32}$/u);
+  });
+
+  it.each(['ROOM_FULL', 'ROOM_EXISTS', 'SIGNALING_ERROR'])('does not switch identity for %s', async (code) => {
+    const error = new RoomAdmissionError(code, 'Unable to join.');
+    const connect = vi.fn().mockRejectedValue(error);
+    const resetSession = vi.fn();
+    await expect(connectWithIdentityRecovery({ connect }, {
+      roomCode: 'ABCDEF', action: 'join', displayName: 'Sky', peerId: 'a'.repeat(32),
+    }, resetSession)).rejects.toBe(error);
+    expect(connect).toHaveBeenCalledTimes(1);
+    expect(resetSession).not.toHaveBeenCalled();
+  });
+
+  it('surfaces a failed fresh-identity retry instead of looping', async () => {
+    const error = new RoomAdmissionError('DUPLICATE_PEER', 'Already connected.');
+    const connect = vi.fn().mockRejectedValue(error);
+    const resetSession = vi.fn();
+    await expect(connectWithIdentityRecovery({ connect }, {
+      roomCode: 'ABCDEF', action: 'join', displayName: 'Sky', peerId: 'a'.repeat(32),
+    }, resetSession)).rejects.toBe(error);
+    expect(connect).toHaveBeenCalledTimes(2);
+    expect(resetSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves the admission error, releases the socket, and permits a fresh attempt', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('window', { location: { href: 'https://meeting.test' } });
+    vi.stubGlobal('WebSocket', Socket);
+    const events = { onConnected: vi.fn(), onReconnecting: vi.fn(), onError: vi.fn() } as unknown as MeetingControllerEvents;
+    const controller = new MeetingController([], events);
+    const args = { roomCode: 'ABCDEF', action: 'join' as const, displayName: 'Alice', peerId: 'a'.repeat(32) };
+    const ready = controller.connect(args);
+    const rejected = expect(ready).rejects.toThrow('This room is full (8 people).');
+    await vi.advanceTimersByTimeAsync(0);
+    Socket.instances[0]!.dispatchEvent(new MessageEvent('message', {
+      data: JSON.stringify({ type: 'error', code: 'ROOM_FULL', message: 'This room is full (8 people).' }),
+    }));
+    await rejected;
+    Socket.instances[0]!.dispatchEvent(new Event('error'));
+    Socket.instances[0]!.welcome();
+    await vi.advanceTimersByTimeAsync(20000);
+    expect(events.onConnected).not.toHaveBeenCalled();
+    expect(events.onError).not.toHaveBeenCalled();
+    expect(events.onReconnecting).not.toHaveBeenCalled();
+    const retry = controller.connect(args);
+    await vi.advanceTimersByTimeAsync(0);
+    Socket.instances[1]!.welcome();
+    await retry;
+    expect(events.onConnected).toHaveBeenCalledTimes(1);
+    controller.close();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each(['error', 'close', 'timeout'])('cleans up a failed initial connection after %s', async (failure) => {
+    vi.useFakeTimers();
+    vi.stubGlobal('window', { location: { href: 'https://meeting.test' } });
+    vi.stubGlobal('WebSocket', Socket);
+    const events = { onConnected: vi.fn(), onReconnecting: vi.fn(), onError: vi.fn() } as unknown as MeetingControllerEvents;
+    const controller = new MeetingController([], events);
+    const ready = controller.connect({ roomCode: 'ABCDEF', action: 'join', displayName: 'Alice', peerId: 'a'.repeat(32) });
+    const rejected = expect(ready).rejects.toThrow(failure === 'timeout' ? 'timed out' : failure === 'close' ? 'connection closed' : 'Unable to connect');
+    await vi.advanceTimersByTimeAsync(0);
+    if (failure === 'timeout') await vi.advanceTimersByTimeAsync(10000);
+    else Socket.instances[0]!.dispatchEvent(new Event(failure));
+    await rejected;
+    expect(Socket.instances[0]!.readyState).toBe(3);
+    expect(events.onReconnecting).not.toHaveBeenCalled();
+    controller.close();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('reports errors after admission without disconnecting the room', async () => {
+    vi.stubGlobal('window', { location: { href: 'https://meeting.test' } });
+    vi.stubGlobal('WebSocket', Socket);
+    const events = { onConnected: vi.fn(), onError: vi.fn() } as unknown as MeetingControllerEvents;
+    const controller = new MeetingController([], events);
+    const ready = controller.connect({ roomCode: 'ABCDEF', action: 'join', displayName: 'Alice', peerId: 'a'.repeat(32) });
+    await vi.advanceTimersByTimeAsync(0);
+    Socket.instances[0]!.welcome();
+    await ready;
+    Socket.instances[0]!.dispatchEvent(new MessageEvent('message', {
+      data: JSON.stringify({ type: 'error', code: 'PEER_NOT_FOUND', message: 'The peer left.' }),
+    }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(events.onError).toHaveBeenCalledWith('PEER_NOT_FOUND', 'The peer left.');
+    expect(Socket.instances[0]!.readyState).toBe(1);
+    controller.close();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it('rejoins with the same identity after socket loss, backs off, and stops retrying after leave', async () => {
     vi.useFakeTimers();
     vi.stubGlobal('window', { location: { href: 'https://meeting.test' } });
@@ -115,16 +250,20 @@ describe('signaling recovery', () => {
     expect(String(Socket.instances[1]!.url)).toContain('peerId=' + 'a'.repeat(32));
     Socket.instances[1]!.close();
     await vi.advanceTimersByTimeAsync(2000);
-    Socket.instances[2]!.welcome([], 'reconnected-token');
+    Socket.instances[2]!.dispatchEvent(new MessageEvent('message', {
+      data: JSON.stringify({ type: 'error', code: 'DUPLICATE_PEER', message: 'Already connected.' }),
+    }));
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(String(Socket.instances[3]!.url)).toContain('peerId=' + 'a'.repeat(32));
+    Socket.instances[3]!.welcome([], 'reconnected-token');
     await vi.advanceTimersByTimeAsync(0);
     expect(events.onConnected).toHaveBeenCalledTimes(2);
     expect(controller.sessionToken).toBe('reconnected-token');
     expect(events.onError).not.toHaveBeenCalled();
-    expect(fetch).toHaveBeenCalledTimes(1);
-    Socket.instances[2]!.close();
+    Socket.instances[3]!.close();
     controller.close();
     await vi.advanceTimersByTimeAsync(60000);
-    expect(Socket.instances).toHaveLength(3);
+    expect(Socket.instances).toHaveLength(4);
     expect(controller.sessionToken).toBe('');
   });
   it('ignores a welcome from an obsolete socket', async () => {
@@ -153,6 +292,7 @@ describe('signaling recovery', () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(events.onConnected).toHaveBeenCalledTimes(1);
     controller.close();
+    expect(vi.getTimerCount()).toBe(0);
   });
 });
 
@@ -207,6 +347,7 @@ describe('relay-backed peer connections', () => {
     expect(PeerConnection.instances[0]!.configuration).toEqual({ iceServers: credentials().iceServers });
     expect(fetch).toHaveBeenCalledTimes(1);
     controller.close();
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it('rejects provisioning failures with a readable error and allows joining again', async () => {
@@ -223,6 +364,7 @@ describe('relay-backed peer connections', () => {
     Socket.instances[0]!.welcome([peer]);
     await ready;
     controller.close();
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it('updates existing and late peer connections when credentials renew', async () => {
@@ -235,6 +377,7 @@ describe('relay-backed peer connections', () => {
     expect(PeerConnection.instances[1]!.configuration.iceServers).toEqual(credentials('renewed').iceServers);
     expect(fetch).toHaveBeenCalledTimes(2);
     controller.close();
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it('restarts healthy ICE connections after renewed credentials replace their configuration', async () => {
@@ -245,6 +388,7 @@ describe('relay-backed peer connections', () => {
     expect(connection.restartIce).toHaveBeenCalledTimes(1);
     expect(connection.setConfiguration.mock.invocationCallOrder[0]).toBeLessThan(connection.restartIce.mock.invocationCallOrder[0]!);
     controller.close();
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it('announces recovery of the precise provisioning error after a later renewal succeeds', async () => {
@@ -257,6 +401,7 @@ describe('relay-backed peer connections', () => {
     await vi.advanceTimersByTimeAsync(300000 - 3000);
     expect(callbacks.onIceRecovered).toHaveBeenCalledWith(code, message);
     controller.close();
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it('fetches fresh credentials for late peers after a throttled timer misses expiry', async () => {
@@ -272,6 +417,7 @@ describe('relay-backed peer connections', () => {
     expect(PeerConnection.instances[1]!.configuration.iceServers).toEqual(credentials('after-sleep').iceServers);
     expect(PeerConnection.instances[2]!.configuration.iceServers).toEqual(credentials('after-sleep').iceServers);
     controller.close();
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it('never creates a peer using expired credentials when renewal fails', async () => {
@@ -283,6 +429,7 @@ describe('relay-backed peer connections', () => {
     expect(PeerConnection.instances).toHaveLength(1);
     expect(callbacks.onError).toHaveBeenCalledWith('ICE_PROVISIONING_FAILED', expect.any(String));
     controller.close();
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it('revalidates credentials before an ICE restart after expiry', async () => {
@@ -296,6 +443,7 @@ describe('relay-backed peer connections', () => {
     expect(connection.restartIce).toHaveBeenCalledTimes(1);
     expect(connection.setConfiguration.mock.invocationCallOrder[0]).toBeLessThan(connection.restartIce.mock.invocationCallOrder[0]!);
     controller.close();
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it('refreshes before negotiation when a sleeping tab missed credential expiry', async () => {
@@ -308,6 +456,7 @@ describe('relay-backed peer connections', () => {
     expect(connection.setLocalDescription).toHaveBeenCalledTimes(1);
     expect(connection.setConfiguration.mock.invocationCallOrder[0]).toBeLessThan(connection.setLocalDescription.mock.invocationCallOrder[0]!);
     controller.close();
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it('never restarts with expired credentials when provisioning remains unavailable', async () => {
@@ -321,6 +470,7 @@ describe('relay-backed peer connections', () => {
     expect(callbacks.onError).toHaveBeenCalledWith('ICE_PROVISIONING_FAILED', expect.any(String));
     expect(callbacks.onError).toHaveBeenCalledWith('PEER_CONNECTION_FAILED', expect.any(String));
     controller.close();
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it('bounds failed ICE restarts and reports exhaustion once', async () => {
@@ -335,6 +485,7 @@ describe('relay-backed peer connections', () => {
     expect(connection.restartIce).toHaveBeenCalledTimes(3);
     expect(callbacks.onError).toHaveBeenCalledTimes(1);
     controller.close();
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it('allows a disconnected grace period, cancels it on recovery, and resets the restart budget', async () => {
@@ -354,6 +505,7 @@ describe('relay-backed peer connections', () => {
     expect(connection.restartIce).toHaveBeenCalledTimes(3);
     expect(callbacks.onError).not.toHaveBeenCalled();
     controller.close();
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it('cancels peer recovery on departure and all meeting timers on leave', async () => {
@@ -363,7 +515,6 @@ describe('relay-backed peer connections', () => {
     await vi.advanceTimersByTimeAsync(5000);
     expect(connection.restartIce).not.toHaveBeenCalled();
     controller.close();
-    expect(vi.getTimerCount()).toBe(0);
     await vi.advanceTimersByTimeAsync(HOUR * 2);
     expect(fetch).toHaveBeenCalledTimes(1);
   });
@@ -382,6 +533,5 @@ describe('relay-backed peer connections', () => {
     expect(signal?.aborted).toBe(true);
     expect(callbacks.onError).not.toHaveBeenCalled();
     expect(Socket.instances).toHaveLength(0);
-    expect(vi.getTimerCount()).toBe(0);
   });
 });

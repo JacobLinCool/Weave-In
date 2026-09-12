@@ -36,6 +36,9 @@ const GEMINI_TOKEN_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/
 const OPENAI_TOKEN_ENDPOINT = 'https://api.openai.com/v1/realtime/client_secrets';
 const TOKEN_LIFETIME_MS = 12 * 60 * 1_000;
 const NEW_SESSION_LIFETIME_MS = 60 * 1_000;
+// Clients already send agent-heartbeat while in a meeting, even with no agents.
+// Allow background timer throttling before retiring an unresponsive connection.
+const ROOM_CONNECTION_IDLE_MS = 90_000;
 
 interface SelectedProvider {
   provider: TranscriptionProvider;
@@ -61,7 +64,11 @@ export default {
       }
       if (request.headers.get('Origin') !== url.origin) return jsonError('INVALID_ORIGIN', 403);
       const room = env.ROOMS.get(env.ROOMS.idFromName(code));
-      return room.fetch(request);
+      const response = await room.fetch(request);
+      if (match[2] === 'connect' && (response.status === 400 || response.status === 409)) {
+        return roomAdmissionError(response);
+      }
+      return response;
     }
     if (url.pathname.startsWith('/api/rooms/')) return jsonError('INVALID_ROOM', 400);
 
@@ -193,6 +200,7 @@ export class MeetingRoom extends DurableObject<Env> {
     ctx.blockConcurrencyWhile(async () => { this.#agents = await ctx.storage.get<AgentRoomState>('agents') ?? emptyAgentRoom(); });
   }
   async #publish(): Promise<void> {
+    this.#pruneStaleSockets();
     const active = this.#activeSockets();
     if (!active.length) {
       this.#agents = emptyAgentRoom();
@@ -202,7 +210,7 @@ export class MeetingRoom extends DurableObject<Env> {
     }
     reconcileAgents(this.#agents, active.map(({ attachment }) => attachment), Date.now(), () => crypto.randomUUID());
     await this.ctx.storage.put('agents', this.#agents);
-    if (this.#agents.agents.length) await this.ctx.storage.setAlarm(Date.now() + 10_000);
+    await this.ctx.storage.setAlarm(Date.now() + 10_000);
     if (!this.#agents.agents.length && !active.some(({ attachment }) => attachment.ready)) return;
     for (const { socket, attachment } of active) {
       const state: AgentRoomState = { ...this.#agents, agents: this.#agents.agents.map((agent) => agent.config.kind === 'personal' && agent.owner !== attachment.peerId
@@ -238,13 +246,15 @@ export class MeetingRoom extends DurableObject<Env> {
     if (!name) return jsonError('INVALID_NAME', 400);
     if (!PEER_ID_PATTERN.test(peerId)) return jsonError('INVALID_PEER', 400);
 
+    const expired = this.#pruneStaleSockets();
     const active = this.#activeSockets();
     if (action === 'create' && active.length !== 0) return jsonError('ROOM_EXISTS', 409);
     const host = active.find(({ attachment }) => attachment.isHost);
     // Admission is synchronous: the first arrival claims an empty/hostless room,
     // and subsequent arrivals see its accepted socket and join as guests.
     const isHost = action === 'create' || !host;
-    const startedAt = host?.attachment.startedAt ?? active[0]?.attachment.startedAt ?? Date.now();
+    const startedAt = host?.attachment.startedAt ?? active[0]?.attachment.startedAt
+      ?? expired.find((peer) => peer.peerId === peerId)?.startedAt ?? Date.now();
     if (active.length >= MAX_PARTICIPANTS) return jsonError('ROOM_FULL', 409);
     if (active.some(({ attachment }) => attachment.peerId === peerId)) {
       return jsonError('DUPLICATE_PEER', 409);
@@ -287,10 +297,11 @@ export class MeetingRoom extends DurableObject<Env> {
       this.#send(socket, { type: 'error', code: 'INVALID_SIGNAL', message: 'Signaling message is invalid.' });
       return;
     }
+    attachment.heartbeat = Date.now();
+    socket.serializeAttachment(attachment);
     if (message.type !== 'signal') {
       try {
         if (message.type === 'agent-ready') attachment.ready = message.ready;
-        if (message.type === 'agent-ready' || message.type === 'agent-heartbeat') attachment.heartbeat = Date.now();
         applyAgentCommand(this.#agents, attachment, message, Date.now(), () => crypto.randomUUID());
         socket.serializeAttachment(attachment);
         await this.#publish();
@@ -336,6 +347,21 @@ export class MeetingRoom extends DurableObject<Env> {
     });
   }
 
+  #pruneStaleSockets(): SocketAttachment[] {
+    const expired = this.#activeSockets().filter(({ attachment }) =>
+      Date.now() - attachment.heartbeat > ROOM_CONNECTION_IDLE_MS);
+    for (const { socket } of expired) {
+      // Invalidate before closing so a delayed close/message from this socket
+      // cannot announce that a replacement using the same peer ID has left.
+      socket.serializeAttachment(null);
+      socket.close(4000, 'Connection timed out');
+    }
+    for (const { attachment } of expired) {
+      this.#broadcast({ type: 'peer-left', peerId: attachment.peerId }, attachment.peerId);
+    }
+    return expired.map(({ attachment }) => attachment);
+  }
+
   #broadcast(message: ServerMessage, excludedPeerId?: string): void {
     for (const { socket, attachment } of this.#activeSockets()) {
       if (attachment.peerId !== excludedPeerId) this.#send(socket, message);
@@ -368,6 +394,27 @@ function readAttachment(socket: WebSocket): SocketAttachment | null {
 
 function jsonError(code: string, status: number): Response {
   return Response.json({ ok: false, code }, { status });
+}
+
+/** Browsers hide HTTP error bodies from WebSocket clients. Deliver admission
+ * errors over a short-lived socket, without registering a room participant. */
+async function roomAdmissionError(response: Response): Promise<Response> {
+  const { code } = await response.clone().json<{ code: string }>();
+  const messages: Record<string, string> = {
+    INVALID_ACTION: 'This room link is invalid. Reload the page and try again.',
+    INVALID_NAME: 'Enter a display name before joining.',
+    INVALID_PEER: 'Your meeting identity is invalid. Reload the page and try again.',
+    ROOM_EXISTS: 'This room already exists. Join it or create another room.',
+    ROOM_FULL: `This room is full (${MAX_PARTICIPANTS} people). Try again after someone leaves.`,
+    DUPLICATE_PEER: 'You are already connected to this room. Close the other meeting tab or wait a moment and try again.',
+  };
+  const message = messages[code];
+  if (!message) return response;
+  const { 0: client, 1: server } = new WebSocketPair();
+  server.accept();
+  server.send(JSON.stringify({ type: 'error', code, message } satisfies ServerMessage));
+  server.close(1008, code);
+  return new Response(null, { status: 101, webSocket: client });
 }
 
 function tokenError(code: string, status: number, extraHeaders: HeadersInit = {}): Response {

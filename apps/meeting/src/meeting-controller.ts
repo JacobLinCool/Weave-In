@@ -15,6 +15,29 @@ const MAX_ICE_RESTARTS = 3;
 const ICE_RESTART_WAIT_MS = 10000;
 const ICE_DISCONNECTED_GRACE_MS = 5000;
 
+export class RoomAdmissionError extends Error {
+  constructor(readonly code: string, message: string) {
+    super(message);
+    this.name = 'RoomAdmissionError';
+  }
+}
+
+/** A duplicated tab can inherit sessionStorage and its active peer ID. Only an
+ * initial join may switch identity; automatic reconnects must keep their ID. */
+export async function connectWithIdentityRecovery(
+  controller: Pick<MeetingController, 'connect'>,
+  args: Parameters<MeetingController['connect']>[0],
+  resetSession: () => void,
+): Promise<void> {
+  try {
+    await controller.connect(args);
+  } catch (error) {
+    if (args.action !== 'join' || !(error instanceof RoomAdmissionError) || error.code !== 'DUPLICATE_PEER') throw error;
+    resetSession();
+    await controller.connect({ ...args, peerId: createPeerId() });
+  }
+}
+
 export interface MeetingControllerEvents {
   onAgentState?(state: AgentRoomState, serverNow: number): void;
   onReconnecting?(): void;
@@ -126,18 +149,29 @@ export class MeetingController {
       const socket = new WebSocket(endpoint);
       this.#socket = socket;
       let welcomed = false;
+      let failed = false;
       let messages = Promise.resolve();
+      const fail = (error: Error): void => {
+        if (welcomed || failed) return;
+        failed = true;
+        clearTimeout(timeout);
+        if (this.#socket === socket) {
+          this.#generation += 1;
+          this.#socket = null;
+        }
+        reject(error);
+        socket.close();
+      };
       const timeout = setTimeout(() => {
         if (welcomed || this.#closing) return;
-        reject(new Error('Signaling connection timed out.'));
-        socket.close();
+        fail(new Error('Signaling connection timed out. Check your connection and try joining again.'));
       }, 10000);
       socket.addEventListener('message', (event) => {
-        if (this.#closing || this.#socket !== socket) return;
+        if (failed || this.#closing || this.#socket !== socket) return;
         messages = messages.then(async () => {
-          if (this.#closing || this.#socket !== socket) return;
-          const didWelcome = await this.#receive(event.data);
-          if (this.#closing || this.#socket !== socket) return;
+          if (failed || this.#closing || this.#socket !== socket) return;
+          const didWelcome = await this.#receive(event.data, welcomed);
+          if (failed || this.#closing || this.#socket !== socket) return;
           if (!welcomed && didWelcome) {
             welcomed = true;
             clearTimeout(timeout);
@@ -146,21 +180,18 @@ export class MeetingController {
             resolve();
           }
         }).catch((error: unknown) => {
-          if (this.#closing || this.#socket !== socket) return;
-          this.#reportIceError(error);
-          if (!welcomed) {
-            reject(error);
-            socket.close();
-          }
+          if (failed || this.#closing || this.#socket !== socket) return;
+          if (error instanceof IceConfigurationError) this.#reportIceError(error);
+          fail(error instanceof Error ? error : new Error('Unable to join the room. Try again.'));
         });
       });
       socket.addEventListener('error', () => {
-        if (!welcomed) reject(new Error('The signaling connection could not be established.'));
-        if (!this.#self && !this.#retrying) this.#events.onError('SIGNALING_ERROR', 'The signaling connection encountered an error.');
+        if (this.#closing || this.#socket !== socket) return;
+        fail(new Error('Unable to connect to the room. Check your connection or try another network, then join again.'));
       });
       socket.addEventListener('close', () => {
         clearTimeout(timeout);
-        if (!welcomed) reject(new Error('The room is unavailable, full, or no longer active.'));
+        if (!welcomed) fail(new Error('The connection closed before you could join. Try joining again.'));
         if (this.#socket !== socket || this.#closing) return;
         this.#generation += 1;
         this.#socket = null;
@@ -238,7 +269,7 @@ export class MeetingController {
     }
   }
 
-  async #receive(raw: unknown): Promise<boolean> {
+  async #receive(raw: unknown, welcomed: boolean): Promise<boolean> {
     if (typeof raw !== 'string') return false;
     let message: ServerMessage;
     try {
@@ -274,6 +305,7 @@ export class MeetingController {
         await this.#handleSignal(message.from, message.kind, message.payload);
         return false;
       case 'error':
+        if (!welcomed) throw new RoomAdmissionError(message.code, message.message);
         if (this.#retrying) return false;
         this.#events.onError(message.code, message.message);
         return false;
