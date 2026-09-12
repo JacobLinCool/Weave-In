@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type FormEvent, type ReactNode } from 'react';
-import { ArrowLeft, ArrowUp, Mic, Plus, Send, Settings, Square, Trash2, Volume2 } from 'lucide-react';
+import { ArrowLeft, ArrowUp, AudioLines, Mic, Plus, Send, Settings, Square, Trash2, Volume2 } from 'lucide-react';
 import { parseAgentConfig, type AgentConfig, type AgentKind } from './contracts';
 import { AgentRuntime } from './runtime';
 import { defaultAgentConfig } from './config';
@@ -18,6 +18,8 @@ export function AgentPanel({ runtime, isHost, mode = 'personal' }: { runtime: Ag
   const conversation = useRef<HTMLDivElement>(null);
   const followLatest = useRef(true);
   const [sending, setSending] = useState(false);
+  const [startingLive, setStartingLive] = useState(false);
+  const liveSession = startingLive || view.voice;
   const [tooltipDismissed, setTooltipDismissed] = useState(false);
   useEffect(() => {
     const dismiss = (event: KeyboardEvent) => { if (event.key === 'Escape') setTooltipDismissed(true); };
@@ -41,7 +43,7 @@ export function AgentPanel({ runtime, isHost, mode = 'personal' }: { runtime: Ag
   }, [view.lines]);
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    if (sending || view.personalActive || dictationBusy || (!dictating && !text.trim())) return;
+    if (sending || liveSession || view.personalActive || dictationBusy || (!dictating && !text.trim())) return;
     setSending(true);
     followLatest.current = true;
     run(async () => {
@@ -95,18 +97,22 @@ export function AgentPanel({ runtime, isHost, mode = 'personal' }: { runtime: Ag
       <form onSubmit={submit} className="agent-compose">
         {(view.personalActive || sending) && <p className="agent-note agent-compose__status" role="status">{sending ? 'Sending…' : view.status}{view.queued > 0 ? ` ${view.queued} queued.` : ''}</p>}
         <div className="agent-compose__input">
-          <textarea aria-label="Message Muse" readOnly={dictating} value={text} onChange={(event) => setText(event.target.value)} onKeyDown={(event) => {
+          <textarea aria-label="Message Muse" readOnly={dictating || liveSession} value={text} onChange={(event) => setText(event.target.value)} onKeyDown={(event) => {
             if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); }
-          }} maxLength={4000} rows={2} placeholder={dictating ? 'Listening…' : 'Think it through with Muse…'} />
+          }} maxLength={4000} rows={2} placeholder={liveSession ? 'Talk with Muse — Live is listening…' : dictating ? 'Listening…' : 'Think it through with Muse…'} />
           <div className="agent-compose__actions">
             {dictating && <div className="agent-dictation" role="status"><span className="agent-dictation__level" aria-hidden="true">{[.45, .8, 1, .8, .45].map((scale, index) => <i key={index} style={{ height: `${4 + dictated.level * 20 * scale}px` }} />)}</span>{dictated.status === 'starting' ? 'Connecting…' : dictated.status === 'stopping' ? 'Finishing…' : 'Recording'}</div>}
-            <button type="button" className="agent-voice" aria-label={dictating ? 'Stop recording' : 'Dictate message'} title={dictating ? 'Stop recording and keep draft' : 'Dictate message'} disabled={sending || dictationBusy || (!dictating && view.personalActive)} onClick={() => {
+            <button type="button" className="agent-voice" aria-label={dictating ? 'Stop recording' : 'Dictate message'} title={dictating ? 'Stop recording and keep draft' : 'Dictate message'} disabled={sending || liveSession || dictationBusy || (!dictating && view.personalActive)} onClick={() => {
               if (dictating) run(async () => { const words = await dictation.stop(); setText([draftPrefix.current, words].filter(Boolean).join(' ')); });
               else { draftPrefix.current = text.trimEnd(); run(() => dictation.start()); }
             }}>{dictating ? <Square size={20} fill="currentColor" /> : <Mic size={22} />}</button>
-            {responding
+            {!dictating && <button type="button" className="agent-voice agent-live" aria-label={liveSession ? 'End live conversation' : 'Start live conversation'} title={liveSession ? 'End private live conversation' : 'Talk continuously with Muse'} aria-pressed={liveSession} disabled={!liveSession && (sending || view.personalActive)} onClick={() => {
+              if (liveSession) { runtime.stopPersonal(); setStartingLive(false); }
+              else { setStartingLive(true); followLatest.current = true; run(async () => { try { await runtime.startVoice(); } finally { setStartingLive(false); } }); }
+            }}>{liveSession ? <Square size={18} fill="currentColor" /> : <AudioLines size={20} />}<span>{liveSession ? 'End' : 'Live'}</span></button>}
+            {!liveSession && (responding
               ? <button className="agent-send" type="button" aria-label="Stop response" title="Stop response" disabled={sending} onClick={() => runtime.stopPersonal()}><Square size={20} fill="currentColor" aria-hidden="true" /></button>
-              : <button className="agent-send" type="submit" aria-label="Send" title="Send message" disabled={(!dictating && !text.trim()) || sending || dictationBusy}><ArrowUp size={24} aria-hidden="true" /></button>}
+              : <button className="agent-send" type="submit" aria-label="Send" title="Send message" disabled={(!dictating && !text.trim()) || sending || dictationBusy}><ArrowUp size={24} aria-hidden="true" /></button>)}
           </div>
         </div>
       </form>

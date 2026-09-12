@@ -275,6 +275,17 @@ export class AgentRuntime {
     this.#queue.push({ text, voice, audience, line });
     this.#drain(); this.#emit();
   }
+  async startVoice(): Promise<void> {
+    const personal = this.#personal();
+    if (!personal || this.#closed || this.#connectionLost) throw new Error('Reconnect before starting a live conversation.');
+    if (this.#operations.has('personal') || this.#queue.length || this.#publicRequestPending) throw new Error('Stop the current reply before starting Live.');
+    const version = this.#approvalVersion;
+    await this.enable();
+    if (this.#closed || this.#connectionLost || version !== this.#approvalVersion || this.#personal()?.id !== personal.id) return;
+    if (this.#operations.has('personal')) return;
+    await this.#start(personal, 'private', false, '', true);
+    this.#emit();
+  }
   endVoice(): void {
     const op = this.#operations.get('personal');
     if (op?.microphone) {
@@ -503,7 +514,7 @@ export class AgentRuntime {
       }
       if (!behalf && agent.config.system && this.#state.signal) context += `\nSystem signal: ${JSON.stringify(this.#state.signal)}`;
       if (voice) live.context(context); else live.request(context, text);
-      this.#status = voice ? (audience === 'private' ? 'Speak privately to Muse. Your meeting microphone is paused.' : 'Speak publicly to Muse. Everyone can hear you.') : preparing ? 'Preparing a suggestion…' : 'Waiting for Muse’s response…';
+      this.#status = voice ? (audience === 'private' ? 'Live with Muse · Speak naturally or interrupt at any time. Your meeting microphone is paused.' : 'Speak publicly to Muse. Everyone can hear you.') : preparing ? 'Preparing a suggestion…' : 'Waiting for Muse’s response…';
       // Muse conversations have no fixed duration limit. Only group suggestion
       // preparation is bounded by the room's preparation lease.
       if (preparing) op.timer = setTimeout(() => {
