@@ -516,7 +516,7 @@ it('owner speech immediately cuts the active public audio and does not resume', 
   expect(calls.lives).toHaveLength(1);
 });
 
-it('caps public personal speech at 20 seconds from the first audible sample', async () => {
+it('keeps reading after 20 seconds until the owner stops the public turn', async () => {
   vi.useFakeTimers();
   const { runtime, sendAgent } = setup();
   await runtime.speakForMe('Approved concern'); grantPersonal(runtime); await Promise.resolve();
@@ -526,6 +526,8 @@ it('caps public personal speech at 20 seconds from the first audible sample', as
   await vi.advanceTimersByTimeAsync(19_999);
   expect(runtime.snapshot().publicPersonalSpeaking).toBe(true);
   await vi.advanceTimersByTimeAsync(1);
+  expect(runtime.snapshot().publicPersonalSpeaking).toBe(true);
+  runtime.stopPersonal();
   expect(runtime.snapshot().publicPersonalSpeaking).toBe(false);
   expect(sendAgent).toHaveBeenCalledWith({ type: 'agent-finish', floorId: 'personal-floor' });
 });
@@ -729,4 +731,38 @@ it('retries unaccepted review work instead of consuming its discussion cursor', 
   runtime.update(structuredClone(state), Date.now());
   await vi.advanceTimersByTimeAsync(6000);
   expect(sendAgent.mock.calls.filter(([c]) => c.type === 'agent-review')).toHaveLength(2);
+});
+
+it('sends only the selected completed private Muse reply and rejects unfinished or other messages', async () => {
+  const { runtime } = setup();
+  await runtime.ask('Secret context that must stay private');
+  const callbacks = calls.lives[0]!;
+  callbacks.transcript('assistant', 'Please include a review step.', 0, 1000);
+  const reply = runtime.snapshot().lines.at(-1)!;
+  expect(runtime.canSpeakReply(reply.id)).toBe(false);
+  await expect(runtime.speakReply(reply.id)).rejects.toThrow('completed');
+  callbacks.closed();
+  expect(runtime.canSpeakReply(reply.id)).toBe(true);
+  expect(runtime.canSpeakReply(runtime.snapshot().lines[0]!.id)).toBe(false);
+  await expect(runtime.speakReply('missing')).rejects.toThrow('completed');
+  await runtime.speakReply(reply.id);
+  expect(runtime.canSpeakReply(reply.id)).toBe(false);
+  grantPersonal(runtime); await Promise.resolve();
+  expect(calls.requests).toHaveBeenLastCalledWith('{}', expect.stringContaining(JSON.stringify(reply.text)));
+  expect(String(calls.requests.mock.calls.at(-1))).not.toContain('Secret context');
+  expect(calls.tools.at(-1)).toEqual([]);
+  expect(calls.start.mock.calls.at(-1)?.[0].agent.config).toMatchObject({ audience: 'public', language: 'auto' });
+});
+
+
+it.each(['stop', 'error'] as const)('does not offer an incomplete reply after %s before any audio', async (cause) => {
+  const { runtime } = setup();
+  await runtime.ask('Draft a message');
+  const callbacks = calls.lives[0]!;
+  callbacks.transcript('assistant', 'An unfinished draft', 0, 100);
+  const id = runtime.snapshot().lines.at(-1)!.id;
+  if (cause === 'stop') runtime.stopPersonal(); else callbacks.error('Provider disconnected');
+  expect(runtime.snapshot().lines.at(-1)?.playback).toBe('interrupted');
+  expect(runtime.canSpeakReply(id)).toBe(false);
+  await expect(runtime.speakReply(id)).rejects.toThrow('completed');
 });

@@ -122,7 +122,7 @@ Local artifacts are under repository-root `output/playwright/` (ignored, not bun
 
 1. Repeat failed peer paths on a supported non-VPN/cross-device network and decide whether TURN is required for the supported connectivity envelope.
 2. Verify native Safari and Windows browsers with physical microphones/speakers, permission prompts, autoplay restrictions and actual screen selection.
-3. Repeat voice approval with real speakers and both documented languages; speech recognition must match a complete command. Chat, quotations, history replay and Agent speech must never authorize a floor.
+3. Verify automatic Group quiet detection with physical microphones and both documented languages. Replayed history and Agent output must not trigger review; Group manual and voice approval commands are removed.
 4. Soak-test longer noisy conversations, caption connection rotation, session expiry and device sleep. Unit tests for these boundaries do not establish production reliability.
 # Muse and Room Omni (2026-09-12)
 
@@ -159,3 +159,5 @@ The focused scenarios below used real GPT-Live and its reasoning backend, normal
 These are behavioral samples, not a general detection-accuracy estimate. Human microphones, noisy rooms, cross-device TURN and production deployment were not part of this check.
 
 Local evidence: `output/playwright/integrated-group-check.log`, `integrated-agents-browser.log`, and `integrated-real-group.log`. The harness supports `{ groupOnly: true, scenario, realProvider: true }` to repeat each real-provider case.
+
+Final integration includes main `1bbd3bc` (Muse selected-reply reading and generic landing copy). `pnpm check` passed with 77 transcription + 423 meeting tests (500 total), including builds and Worker dry-run. The full two-browser harness passed again, including selected Muse reply playback and automatic silent Omni publication. This integration retains the Group policy and real-provider samples above. Evidence: `output/playwright/final-integrated-check.log` and `final-integrated-browser.log`.

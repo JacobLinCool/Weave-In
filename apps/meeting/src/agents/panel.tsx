@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type FormEvent, type ReactNode } from 'react';
-import { ArrowLeft, ArrowUp, Mic, Plus, Settings, Square, Trash2, Volume2 } from 'lucide-react';
+import { ArrowLeft, ArrowUp, Mic, Plus, Send, Settings, Square, Trash2, Volume2 } from 'lucide-react';
 import { parseAgentConfig, type AgentConfig, type AgentKind } from './contracts';
 import { AgentRuntime } from './runtime';
 import { defaultAgentConfig } from './config';
@@ -18,6 +18,12 @@ export function AgentPanel({ runtime, isHost, mode = 'personal' }: { runtime: Ag
   const conversation = useRef<HTMLDivElement>(null);
   const followLatest = useRef(true);
   const [sending, setSending] = useState(false);
+  const [tooltipDismissed, setTooltipDismissed] = useState(false);
+  useEffect(() => {
+    const dismiss = (event: KeyboardEvent) => { if (event.key === 'Escape') setTooltipDismissed(true); };
+    document.addEventListener('keydown', dismiss);
+    return () => document.removeEventListener('keydown', dismiss);
+  }, []);
   const responding = !dictating && (sending || view.personalActive);
   const [addingGroup, setAddingGroup] = useState(false);
   const [creating, setCreating] = useState<AgentKind | null>(null);
@@ -78,8 +84,10 @@ export function AgentPanel({ runtime, isHost, mode = 'personal' }: { runtime: Ag
         {view.lines.map((line) => <article key={line.id} className={`agent-line agent-line--${line.role}`}>
           <header><strong>{line.role === 'user' ? 'You' : line.name}</strong>{line.audience === 'public' && <span>Shared with the room</span>}{line.playback === 'interrupted' && <span>Interrupted</span>}</header>
           {line.role === 'assistant' ? <Markdown text={line.text} /> : <p>{line.text}</p>}
+          {!dictating && runtime.canSpeakReply(line.id) && <button className="agent-line__send" type="button" aria-label="Send to everyone" aria-describedby={`send-tip-${line.id}`} onMouseEnter={() => setTooltipDismissed(false)} onFocus={() => setTooltipDismissed(false)} onClick={() => run(() => runtime.speakReply(line.id))}><Send size={18} aria-hidden="true" />{!tooltipDismissed && <span id={`send-tip-${line.id}`} className="agent-line__tooltip" role="tooltip">Read aloud to everyone</span>}</button>}
         </article>)}
       </div>
+      {view.publicPersonalSpeaking && <div className="agent-public-status"><p role="status">Speaking to everyone · {view.status}</p></div>}
       <form onSubmit={submit} className="agent-compose">
         {(view.personalActive || sending) && <p className="agent-note agent-compose__status" role="status">{sending ? 'Sending…' : view.status}{view.queued > 0 ? ` ${view.queued} queued.` : ''}</p>}
         <div className="agent-compose__input">
@@ -140,7 +148,7 @@ function AgentForm({ initialConfig, editing = false, onSave, onCancel }: { initi
       <label className="agent-check"><input type="checkbox" checked={config.files} onChange={(event) => set('files', event.target.checked)} /> Allow reading shared files and images</label>
       {config.kind === 'personal' && <label className="agent-check"><input type="checkbox" checked={config.roomMessages === true} onChange={(event) => set('roomMessages', event.target.checked)} /> Allow posting to Room (visible to everyone)</label>}
       {config.kind === 'personal' && <p className="agent-note">Muse can read the shared whiteboard during a private request and edit it when you ask. Room posting is disabled unless you allow it above, then request a public message. Shared files and images are read as needed; unavailable files cannot be inspected.</p>}
-      <p>{config.kind === 'personal' ? 'Spoken replies stay private. Speak for me approves one public spoken turn about a selected reminder.' : 'Public text suggestions only. Omni does not speak aloud.'}</p>
+      <p>{config.kind === 'personal' ? 'Replies stay private until you choose Send on a completed Muse message. Send reads only that message aloud to everyone.' : 'Public text suggestions only. Omni does not speak aloud.'}</p>
       <p className="agent-note">Voice and text are recorded in the transcript for the selected audience. Instructions cannot override permissions.</p>
     </fieldset>
     {review && <div className="agent-review"><h4>Review before creating</h4><ConfigSummary config={parseAgentConfig(config)!} /></div>}

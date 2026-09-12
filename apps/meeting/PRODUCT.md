@@ -38,7 +38,7 @@ Name: Weave In. "Keep the thread. Weave everyone in." The tagline is the product
 - Audio for captions travels directly from the speaker's browser to the selected AI provider (Gemini or OpenAI) using a single-use ephemeral token minted by the Worker.
 - Agent settings and connection descriptions go to the Worker for GPT-Live initialization. Meeting records, private conversations and permitted tools then travel directly between the Client and OpenAI.
 - The room Durable Object coordinates Agent identity, the single Group executor, leases and public speaking rights. It does not store utterances or embeddings. Coordination is deleted when the last member leaves.
-- Personal source permissions can be set at creation and edited by the owner. Private conversations stay out of public replay and the meeting log. Speaking for the owner uses only the specifically approved reminder in a fresh session, without private history or tools; persistent public mode is disabled.
+- Personal source permissions can be set at creation and edited by the owner. Private conversations stay out of public replay and the meeting log. Speaking for the owner uses only the selected completed Muse reply or specifically approved reminder in a fresh session, without private history or tools; persistent public mode is disabled.
 - Automatic reminder analysis sends bounded human transcript text and prior reminder evidence through the Worker to Gemini, without Worker persistence. It runs while the meeting page is open, without a Codex browser or external assistant session.
 - Same-tab room recovery uses sessionStorage for meeting text, reminders and up to 200 private Muse lines, for up to 12 hours since the last save. It does not restore active audio sessions or queued speaking approvals.
 - Display name and settings (languages spoken, caption style, captions on/off) persist in the browser's localStorage.
@@ -91,7 +91,7 @@ These remain proposals. Do not describe them as running in the current implement
 ## Product Principles
 
 1. **Name the moment, not the person.** Every signal is attached to a timestamp and an utterance the group can go back and look at. The product describes what the discussion did, never what a participant is.
-2. **Respect private and shared audiences.** Muse reminders and discussion belong to their owner. Only a specifically approved reminder may be spoken for them; Omni uses public context and posts visibly to the room.
+2. **Respect private and shared audiences.** Muse reminders and discussion belong to their owner. Only a selected completed Muse reply or specifically approved reminder may be spoken for them; Omni uses public context and posts visibly to the room.
 3. **AI assists thinking and never replaces it.** Participants retain decisions. Muse needs approval for each public spoken turn and stops when its owner speaks. Omni offers brief text, never unsolicited audio.
 4. **Truth over slogans.** Privacy claims name exactly what leaves the browser and where it goes. The claim changed when the product changed; the copy changes with it.
 5. **Every voice is its own source.** Each person transcribes themselves; nothing is mixed or attributed by guesswork. Correct attribution is a precondition for every measurement downstream.

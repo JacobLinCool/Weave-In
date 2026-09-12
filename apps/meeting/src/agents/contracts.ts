@@ -3,6 +3,7 @@ export const LIVE_MODEL = 'gpt-live-1';
 export const REASONING_MODEL = 'gpt-5.6-terra';
 export const HEARTBEAT_MS = 10_000;
 export const LEASE_MS = 30_000;
+export const PUBLIC_TURN_MS = 10 * 60_000;
 export const MAX_AGENT_TEXT = 4_000;
 export const TOOL_NAMES = ['read_meeting', 'capture_screen_share', 'read_shared_file', 'send_chat_message', 'capture_whiteboard', 'edit_whiteboard'] as const;
 export type AgentKind = 'personal' | 'group';
