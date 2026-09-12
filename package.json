@@ -1,0 +1,22 @@
+{
+  "name": "weave-in",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Browser-native meetings with per-participant live transcription shared over WebRTC.",
+  "license": "MIT",
+  "packageManager": "pnpm@11.24.0",
+  "scripts": {
+    "dev": "pnpm --filter @weave-in/meeting dev",
+    "build": "pnpm -r --if-present build",
+    "typecheck": "pnpm --filter @weave-in/transcribe build && pnpm -r --if-present typecheck",
+    "test": "pnpm --filter @weave-in/transcribe build && pnpm -r --if-present test",
+    "deploy": "pnpm --filter @weave-in/meeting deploy",
+    "deploy:dry-run": "pnpm --filter @weave-in/meeting deploy:dry-run",
+    "check": "pnpm typecheck && pnpm test && pnpm build && pnpm deploy:dry-run"
+  },
+  "devDependencies": {
+    "typescript": "7.0.2",
+    "vitest": "4.1.11"
+  }
+}
