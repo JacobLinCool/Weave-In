@@ -17,9 +17,10 @@ export function validLiveRequest(value: unknown, agent: RoomAgent): value is { s
     if (Object.keys(tool).some((key) => !['type', 'name', 'description', 'parameters'].includes(key))) return false;
     if (typeof tool.description !== 'string' || tool.description.length > 2_000 || !record(tool.parameters)) return false;
     if (tool.name === 'capture_screen_share' && !agent.config.screen) return false;
-    if (['download_file', 'read_shared_file'].includes(tool.name) && !agent.config.files) return false;
+    if (tool.name === 'read_shared_file' && !agent.config.files) return false;
     if (['edit_whiteboard', 'capture_whiteboard'].includes(tool.name) && agent.config.kind !== 'personal') return false;
     if (tool.name === 'send_chat_message' && agent.config.kind === 'group' && agent.phase !== 'speaking') return false;
+    if (tool.name === 'send_chat_message' && agent.config.kind === 'personal' && agent.config.roomMessages !== true) return false;
     names.add(tool.name);
     return true;
   });

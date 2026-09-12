@@ -3,6 +3,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import type { RoomAgent } from '../src/agents/contracts';
 import { type MeetingToolsContext } from '../src/webmcp';
 import { AgentLive, liveSettings } from '../src/agents/live';
+import { defaultAgentConfig } from '../src/agents/config';
 
 class Channel extends EventTarget {
   readyState = 'open';
@@ -23,13 +24,13 @@ it('processes delayed transcription and session.closed while a tool is still pen
   const execute = vi.fn(async () => { await pending; return { content: [{ type: 'text' as const, text: 'file' }] }; });
   const transcript = vi.fn(); const closed = vi.fn();
   const live = new AgentLive({ stream: vi.fn(), transcript, prepared: vi.fn(), error: vi.fn(), closed }, [
-    { name: 'download_file', description: '', inputSchema: {}, annotations: { readOnlyHint: true }, execute },
+    { name: 'read_shared_file', description: '', inputSchema: {}, annotations: { readOnlyHint: true }, execute },
   ], false, () => true);
   const channel = live.channel as unknown as Channel;
   channel.event({ type: 'session.started' });
   const response = (event: unknown) => channel.event({ type: 'response.event', delegation_id: 'd1', event });
   response({ type: 'response.created' });
-  response({ type: 'response.output_item.done', item: { type: 'function_call', name: 'download_file', call_id: 'call', arguments: '{}' } });
+  response({ type: 'response.output_item.done', item: { type: 'function_call', name: 'read_shared_file', call_id: 'call', arguments: '{}' } });
   response({ type: 'response.completed' });
   await vi.waitFor(() => expect(execute).toHaveBeenCalledOnce());
   live.close();
@@ -107,15 +108,17 @@ it('keeps an input audio track for typed requests and after microphone input end
 
 
 it('keeps meeting and whiteboard tool schemas compatible with Live initialization', () => {
-  const tools = scopedTools({} as MeetingToolsContext, { kind: 'personal', source: 'all', chat: true, screen: true, files: true } as RoomAgent['config'], 'owner', () => true, () => true);
-  const agent = { config: { language: 'auto', instructions: 'Help' } } as RoomAgent;
+  const config = { ...defaultAgentConfig('personal'), screen: true };
+  const tools = scopedTools({} as MeetingToolsContext, config, 'owner', () => true, () => true);
+  const agent = { config } as RoomAgent;
   const settings = liveSettings(agent, tools, false);
   const serialized = JSON.stringify(settings);
   JSON.parse(serialized, (_key, value: unknown) => {
     if (typeof value === 'number') expect(Number.isInteger(value)).toBe(true);
     return value;
   });
-  expect(tools.map(tool => tool.name)).toEqual(expect.arrayContaining(['read_meeting', 'search_meeting', 'read_shared_file', 'edit_whiteboard', 'capture_whiteboard', 'send_chat_message']));
+  expect(tools.map(tool => tool.name)).toEqual(['read_meeting', 'capture_screen_share', 'capture_whiteboard', 'edit_whiteboard', 'read_shared_file']);
+  expect(tools.find((tool) => tool.name === 'read_meeting')!.inputSchema.properties).toMatchObject({ limit: { default: 500, maximum: 500 } });
 });
 
 it('sends only new background records and reserves input bytes for foreground work', () => {
@@ -211,7 +214,7 @@ it('replaces changing inventories including removals and a return to a previousl
   live.close(); channel.event({ type: 'session.closed' });
 });
 
-it('continues a voice image-to-whiteboard tool sequence and does not repeat a completed action', async () => {
+it('continues a voice image-to-whiteboard and enabled Room-post sequence without repeating completed actions', async () => {
   vi.stubGlobal('RTCPeerConnection', Connection);
   const image = vi.fn(async () => ({ content: [
     { type: 'text' as const, text: '{"fileId":"diagram","name":"workflow.png"}' },
@@ -219,11 +222,10 @@ it('continues a voice image-to-whiteboard tool sequence and does not repeat a co
   ] }));
   const edit = vi.fn(async () => ({ content: [{ type: 'text' as const, text: '{"ok":true,"changedIds":["draft","review"]}' }] }));
   const post = vi.fn(async () => ({ content: [{ type: 'text' as const, text: '{"id":"shared-message"}' }] }));
-  const live = new AgentLive({ stream: vi.fn(), transcript: vi.fn(), prepared: vi.fn(), error: vi.fn(), closed: vi.fn() }, [
-    { name: 'read_shared_file', description: '', inputSchema: {}, annotations: {}, execute: image },
-    { name: 'edit_whiteboard', description: '', inputSchema: {}, annotations: {}, execute: edit },
-    { name: 'send_chat_message', description: '', inputSchema: {}, annotations: {}, execute: post },
-  ], false, () => true);
+  const tools = scopedTools({} as MeetingToolsContext, { ...defaultAgentConfig('personal'), roomMessages: true }, 'owner', () => true, () => true)
+    .filter((tool) => ['read_shared_file', 'edit_whiteboard', 'send_chat_message'].includes(tool.name))
+    .map((tool) => ({ ...tool, execute: tool.name === 'read_shared_file' ? image : tool.name === 'edit_whiteboard' ? edit : post }));
+  const live = new AgentLive({ stream: vi.fn(), transcript: vi.fn(), prepared: vi.fn(), error: vi.fn(), closed: vi.fn() }, tools, false, () => true);
   const channel = live.channel as unknown as Channel;
   channel.event({ type: 'session.started' });
   const response = (event: unknown) => channel.event({ type: 'response.event', delegation_id: 'spoken-request', event });
@@ -259,7 +261,7 @@ it('rejects excess input bytes and items locally with a visible terminal error',
     expect(sent.length).toBeLessThanOrEqual(120);
     expect(sent.reduce((sum, raw) => sum + new TextEncoder().encode(raw).byteLength, 0)).toBeLessThanOrEqual(30000);
     expect(error).toHaveBeenCalledOnce();
-    expect(error.mock.calls[0]![0]).toContain('context limit');
+    expect(error.mock.calls[0]![0]).toContain('Live input budget');
   }
 });
 
