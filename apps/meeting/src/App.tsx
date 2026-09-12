@@ -946,16 +946,18 @@ function MeetingSurface(props: {
           {(props.error || props.transcription.error) && (
             <ErrorNotice message={props.error ?? props.transcription.error?.message ?? 'Something went wrong.'} />
           )}
-          <PrivateNoticeDock store={props.privateNotices} onHistory={() => props.onPanelTab('private')} />
-          <MeetingControls
-            micEnabled={props.micEnabled}
-            cameraEnabled={props.cameraEnabled}
-            sharingScreen={Boolean(props.screenStream)}
-            canShareScreen={typeof navigator.mediaDevices?.getDisplayMedia === 'function'}
-            onToggleMic={props.onToggleMic}
-            onToggleCamera={props.onToggleCamera}
-            onToggleScreen={props.onToggleScreen}
-          />
+          <div className="meeting-footer">
+            <MeetingControls
+              micEnabled={props.micEnabled}
+              cameraEnabled={props.cameraEnabled}
+              sharingScreen={Boolean(props.screenStream)}
+              canShareScreen={typeof navigator.mediaDevices?.getDisplayMedia === 'function'}
+              onToggleMic={props.onToggleMic}
+              onToggleCamera={props.onToggleCamera}
+              onToggleScreen={props.onToggleScreen}
+            />
+            <PrivateNoticeDock store={props.privateNotices} onHistory={() => props.onPanelTab('private')} />
+          </div>
           <p className="stage-caption"><LockKeyhole size={13} /> Full-mesh WebRTC · direct between browsers</p>
         </section>
         <SidePanel

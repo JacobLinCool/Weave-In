@@ -415,12 +415,14 @@ button:disabled { cursor: wait; opacity: .55; }
   .landing__footer { flex-direction: column; align-items: flex-start; padding: 18px 0; }
 }
 
-/* A reserved, quiet slot above controls: reminders never cover speech captions. */
-.private-notice-dock { flex: 0 0 144px; height: 144px; width: min(100%, 520px); align-self: flex-end; margin-top: 10px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); padding: 10px 12px; overflow: hidden; }
+/* Keep controls and private reminders together; empty reminders use only one line. */
+.meeting-footer { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; flex: 0 0 auto; margin-top: 10px; }
+.meeting-footer .meeting-controls { height: auto; min-height: 44px; flex: 1 1 auto; }
+.private-notice-dock { flex: 1 1 280px; min-width: 0; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); padding: 10px 12px; overflow: hidden; }
 .private-notice-dock__heading { display: flex; align-items: center; gap: 10px; font-size: 11px; color: var(--dim); }
 .private-notice-dock__heading > span { display: inline-flex; align-items: center; gap: 5px; flex: 1; }
 .private-notice-dock button, .private-notice-history button { display: inline-flex; align-items: center; gap: 4px; padding: 4px 2px; border: 0; background: none; color: var(--accent); cursor: pointer; font-size: 12px; }
-.private-notice-dock__body { height: 98px; overflow-y: auto; overflow-wrap: anywhere; }
+.private-notice-dock__body { max-height: 180px; overflow-y: auto; overflow-wrap: anywhere; }
 .private-notice-dock__body > p { margin: 8px 0; font-size: 14px; line-height: 1.4; }
 .private-notice-dock__body .private-notice-empty { color: var(--dim); font-size: 12px; }
 .private-notice-actions { display: flex; gap: 16px; }
@@ -432,3 +434,8 @@ button:disabled { cursor: wait; opacity: .55; }
 .private-notice-history blockquote { margin: 10px 0; padding-left: 10px; border-left: 2px solid var(--line); color: var(--muted); }
 .private-notice-history blockquote p { white-space: pre-wrap; }
 .side-panel__tabs > button { min-width: 0; }
+@media (max-width: 420px) {
+  .meeting-footer .meeting-controls { width: 100%; min-width: 0; }
+  .meeting-footer .transport-button { flex: 1; min-width: 0; padding: 0 8px; }
+  .meeting-footer .transport-button svg { flex-shrink: 0; }
+}

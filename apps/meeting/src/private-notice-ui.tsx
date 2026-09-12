@@ -13,15 +13,14 @@ export function PrivateNoticeDock({ store, onHistory }: { store: PrivateNotices;
   const active = state.notices.find((item) => item.status === 'active');
   return <section className="private-notice-dock" aria-label="Private reminders">
     <div className="private-notice-dock__heading">
-      <span><LockKeyhole size={13} /> Only you · Private reminders</span>
+      <span><LockKeyhole size={13} /> Only you · {state.hidden ? 'Hidden' : active ? 'Private reminder' : 'No reminders'}</span>
       <button type="button" aria-pressed={state.hidden} onClick={() => store.setHidden(!state.hidden)}><EyeOff size={13} />{state.hidden ? 'Show' : 'Hide'}</button>
       <button type="button" onClick={onHistory}>History</button>
     </div>
-    <div className="private-notice-dock__body">
-      {state.hidden ? <p className="private-notice-empty">Private content hidden, including history.</p>
-        : active ? <><p role="status" aria-live="polite" aria-atomic="true">{active.text}</p><div className="private-notice-actions"><button type="button" onClick={onHistory}>View evidence</button><button type="button" onClick={() => store.dismiss(active.id)}>Dismiss</button></div></>
-        : <p className="private-notice-empty">No active reminder. Your connected assistant can leave one here.</p>}
-    </div>
+    {!state.hidden && active && <div className="private-notice-dock__body">
+      <p role="status" aria-live="polite" aria-atomic="true">{active.text}</p>
+      <div className="private-notice-actions"><button type="button" onClick={onHistory}>View evidence</button><button type="button" onClick={() => store.dismiss(active.id)}>Dismiss</button></div>
+    </div>}
   </section>;
 }
 
