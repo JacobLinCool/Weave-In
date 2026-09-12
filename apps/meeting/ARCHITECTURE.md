@@ -1,139 +1,89 @@
 # Architecture
 
-How the groupthink analysis attaches to the existing meeting. `PRODUCT.md` says why, `GROUPTHINK.md` says what is measured, this file says where the code goes.
+Agents run in the browser. The Worker initializes GPT-Live; the room Durable Object coordinates identity, a single Group runner, and public speaking permission. This is the current implementation. Automated groupthink detection in `GROUPTHINK.md` remains a proposal.
 
-## The decision that shapes everything
+## Data and authority
 
-Analysis runs **server-side, in the room's Durable Object**. Finalized utterances leave the browser.
-
-This was a deliberate trade. The alternative — analysing in the host's browser — would have preserved the original "nothing touches our server" claim, but it puts the whole engine behind one participant's network, loses all state when they refresh, and gives every peer a slightly different answer. Server-side analysis gives one consistent view, survives reconnection, and makes the post-meeting report possible at all.
-
-What it costs: the privacy claim narrows from "nothing" to "no media". `PRODUCT.md` § Brand Commitments defines the exact wording, and every surface making the old claim is now carrying a false statement that must be fixed.
-
-What it does **not** cost, contrary to first assumption: **the CSP does not change.** Browsers only ever talk to the same origin for analysis — utterances go out over the signaling WebSocket that already exists, results come back over the same socket. The embedding and generation calls are made from the Durable Object, server to server. `connect-src 'self'` already covers it.
-
-## Data flow
-
-```
-speaker's browser
-  ├─ local STT (unchanged)          → interim + final text
-  ├─ voice-activity.ts (extended)   → speaking start/stop/overlap events
-  ├─ data channel  → peers          → captions, transcript, chat   [unchanged, P2P]
-  └─ signaling WS  → MeetingRoom    → utterance + activity          [NEW]
-
-MeetingRoom (Durable Object)
-  ├─ persist utterance to ctx.storage.sql
-  ├─ batch → embedding API (server-side fetch)
-  ├─ feed packages/groupthink → derived state → detectors
-  ├─ on fire + policy pass → generation API → intervention text
-  └─ broadcast `analysis` / `intervention` to every socket in the room   [NEW]
-
-every browser
-  ├─ Insights panel   (new SidePanelTab)
-  ├─ stage card       (intervention)
-  ├─ The Hand         (radar, per participant)
-  └─ The Trace        (semantic path over time)
+```mermaid
+sequenceDiagram
+    participant C as Client Agent
+    participant R as Worker / Room DO
+    participant O as OpenAI GPT-Live
+    participant P as Other clients
+    C->>R: Create Agent settings on authenticated room socket
+    R-->>C: Authoritative Agent ID, runner, epoch and state
+    C->>R: Session settings + SDP offer + room token
+    R->>O: Initialize session with server API key
+    O-->>R: Session ID + SDP answer
+    R-->>C: Session ID + SDP answer
+    C->>O: Direct WebRTC audio, context and Responses delegation
+    O-->>C: Audio, transcription and tool requests
+    C->>C: Check permissions and execute existing tools
+    C->>P: Public audio and records only, with floor ID and epoch
 ```
 
-Media, chat, and live captions never enter this path. They stay peer-to-peer exactly as they are today.
+The server receives Agent settings (including role instructions), connection descriptions and coordination events. It never receives or stores meeting records or private conversations after initialization. Context, screen captures, permitted files and personal conversation are sent directly from the Client to OpenAI. API keys remain Worker secrets. A random token bound to the live room socket authorizes initialization; it is never included in peer lists.
 
-## Why the signaling socket and not a new endpoint
+`POST /api/rooms/:room/agents/:id/live` accepts `{ epoch, request, session, sdp }`, requires `X-Room-Token`, and returns `{ session: { id }, transport: { type: "webrtc", sdp } }`. It verifies current runner, lease and Group phase, bounds the request to 64 KiB, validates the model/tool allowlist, and limits each connection to six initializations per minute. The provider request times out after 20 seconds.
 
-The Durable Object already holds an open, authenticated, origin-checked WebSocket to every participant, with hibernation handled. Utterances are a few hundred bytes. Adding message types to the existing socket costs one `switch` arm; adding an HTTP endpoint costs auth, rate limiting, and room-membership checks that the socket already solved.
+## Code ownership
 
-`MAX_SIGNAL_FRAME_BYTES` (64 KiB) is far above what an utterance needs, and `MAX_TRANSCRIPT_CHARACTERS` (4 000) already bounds the text.
+| File | Responsibility |
+| --- | --- |
+| `src/agents/contracts.ts` | Settings, wire validation, model constants, epochs and floor checks |
+| `src/agents/room.ts` | Pure room state transitions: uniqueness, approval, queue, leases and takeover |
+| `worker/index.ts`, `worker/live.ts` | Connection identity, durable coordination and authorized provider initialization |
+| `src/agents/live.ts` | Native GPT-Live WebRTC, nested Responses events and function results |
+| `src/agents/tools.ts` | Scoped adapters over the existing four meeting tools |
+| `src/agents/audio.ts`, `runtime.ts` | Client lifecycle, context, transcript routing, microphone and playback gates |
+| `src/agents/panel.tsx` | Creation settings, summary, personal conversation and Group controls |
 
-## Protocol additions
+No Agent framework or new dependency is needed. React subscribes to the Client runtime; room transitions are independently testable TypeScript.
 
-All in `src/protocol.ts`. Note that `parseClientMessage` currently hard-rejects anything whose `type` is not `'signal'` — it needs to become a switch, and every new arm needs the same defensive validation the existing one has. Untrusted input from a peer reaches this function directly.
+## Creation settings
 
-```ts
-// client → server (added to ClientMessage union)
-| { type: 'utterance'; id: string; text: string; at: string; durationMs: number }
-| { type: 'activity'; startedAt: string; endedAt: string; overlapped: string[] }
-| { type: 'agenda'; text: string }   // host only; DO must verify isHost
+The form progresses through type and role, information sources, tools and output, then a review summary.
 
-// server → client (added to ServerMessage union)
-| { type: 'analysis'; state: AnalysisSnapshot }       // throttled, ~every 5s
-| { type: 'intervention'; intervention: Intervention }
-```
+| Setting | Personal | Group |
+| --- | --- | --- |
+| Availability | One per owner | One per meeting; any ready member can create |
+| Name | My assistant | Group assistant |
+| Markdown role | Editable personal default | Editable facilitator default |
+| Answer language | Automatic or specified | Automatic or specified |
+| Public caption sources | None / owner / all; default all | All public speakers |
+| Public chat | On by default; follows source selection | Always on |
+| System signals | Off by default | Always on |
+| Screen capture / shared files | Separate permissions, both off | Separate permissions, both off |
+| Initial audience | Private by default, or public | Public; approval required |
 
-```ts
-interface AnalysisSnapshot {
-  dispersion: number;            // D(W)
-  entropy: number;               // H, airtime distribution
-  driftDistance: number;
-  hands: Record<string, number[]>;   // peerId → six axes
-  trace: Array<{ peerId: string; at: string; xyz: [number, number, number] }>;
-  active: Array<{ signal: SignalKind; severity: number; at: string }>;
-}
+Owner input is always accepted. Source permissions are immutable for the Agent lifetime: remove and recreate to change them. Role Markdown cannot grant data access, posting or speaking rights. Personal audience may change during the meeting; public mode retains earlier private context and displays a warning, but only subsequent turns are published. Transcription is always recorded with the audience frozen at turn start.
 
-interface Intervention {
-  id: string;
-  signal: 'convergence' | 'drift' | 'float' | 'echo';
-  kind: 'counterpoint' | 'refocus' | 'invite' | 'deepen';
-  text: string;
-  evidenceUtteranceIds: string[];
-  at: string;
-}
-```
+## Turn handling
 
-`PeerMessage` is **not** extended. Analysis is not peer-to-peer — it comes from the room, to everyone, identically. Keeping that boundary clean is what makes "the group sees what the room sees" true rather than aspirational.
+Personal background captions/chat/signals update context without triggering a response. An explicit owner text question or Talk to assistant starts a bounded GPT-Live session, seeded with the permitted public history and existing personal conversation. This keeps private/public routing attached to one operation even while final transcript fragments arrive after closing. Public Agent records enter the ordinary meeting record and WebMCP; private records never do.
 
-## Package layout
+During private voice input, the meeting microphone track is disabled and public captioning is stopped. A separate microphone clone feeds GPT-Live. Public voice input keeps the meeting microphone audible while GPT-Live supplies its transcript, avoiding duplicate captioning. Ending voice restores the previous meeting microphone state. A continuously running silent track drives GPT-Live for typed requests and replaces the microphone when voice input ends. Agent output uses separate Web Audio nodes and separate peer tracks; it is never connected to the human transcription input. A muted media element starts the incoming receiver; only the permission-gated Web Audio graph is audible.
 
-```
-packages/transcribe   Live transcription core                        [exists, unchanged]
-packages/groupthink   Detection engine — pure, no I/O, no network     [NEW]
-apps/meeting          UI + Worker + Durable Object
-```
+Group state is `idle → preparing → raised → speaking → idle`. A button emits a system signal. Preparation permits read-only tools and gates off all audio and public text. An invited Group starts a fresh session with the suggestion and latest public context. It never replays prepared audio. Repeated signals during preparation/raising coalesce; a signal during speaking schedules another preparation after the turn.
 
-`packages/groupthink` mirrors what `packages/transcribe` got right: a headless core with an explicit contract, no framework dependency, and tests that run without a browser or a network. It takes the event log and thresholds in, and returns derived state and fired signals out. Embedding vectors are passed *in* — the package never calls an API, which is what lets the whole detection model be tested deterministically with fixture conversations.
+Any member can invite or stop Group speech. Voice invitation matches only a complete current human caption: “團隊助理，請發言” or “Weave, go ahead”. Historical text, chat and Agent transcripts never enter this parser. The creator or original meeting host can remove the Group.
 
-This split is also the honest answer to "what did you actually build" at judging: a detection engine, with a meeting app around it.
+Only one public Agent has the floor. Personal requests queue; an approved Group preempts them and stops private Personal audio on each Client. The owner resumes explicitly afterwards. Private text may still be submitted while Group speaks and is queued for the next personal turn.
 
-## Durable Object storage
+Audio generation and playback are separate. Lines carry stable IDs, role, modality, audience and playback status. Stopped/unplayed output is not labelled finished. With GPT-Live's stream rather than per-reply audio-end events, the Client ends a bounded response after two seconds of audible-output silence; a long rhetorical pause can end a reply early. A 60-second public floor, a 55-second text/preparation timeout (180 seconds for private voice), and a 15-second session-close drain bound resource lifetime. Backend work blocks silence-based finalization; typed backend results are passed to the voice frontend through bounded commentary appends, and finalization waits for audio after the result. Longer natural-speech pauses still need listening evaluation.
 
-`new_sqlite_classes: ["MeetingRoom"]` is already in `wrangler.jsonc`, so SQLite is available and currently unused — the DO persists nothing today.
+## Takeover and cleanup
 
-```sql
-utterances (id TEXT PRIMARY KEY, peer_id, text, at INTEGER, duration_ms, embedding BLOB)
-activity   (peer_id, started_at INTEGER, ended_at INTEGER, overlapped TEXT)
-signals    (id TEXT PRIMARY KEY, signal, severity REAL, at INTEGER, evidence TEXT)
-interventions (id TEXT PRIMARY KEY, signal, kind, text, at INTEGER,
-               dispersion_before REAL, entropy_before REAL,
-               dispersion_after REAL, entropy_after REAL)
-```
+The DO stores Group settings, runner, incrementing epoch, request revision, lease, floor, signal and personal metadata. Every ready Client heartbeats each 10 seconds; a 30-second expiry or explicit disconnect assigns the oldest available ready member. Readiness follows the user's Enable assistant audio action. Initialization failure withdraws readiness so another Client can try. If none are available, the Group displays waiting status.
 
-The `_before` / `_after` columns on `interventions` are the effect measurement from `GROUPTHINK.md` § 6. They are the most persuasive number in the demo. Write them from the first commit rather than retrofitting under time pressure.
+A new runner reconstructs from its local public record and displays that earlier history may be missing. Interrupted work prepares and raises again. Senders and receivers validate current epoch and floor before tools/audio; recently closed floor IDs are retained for 15 seconds only to finalize delayed transcript fragments, never for playback. Late joiners receive authors' public Agent history and a current stream announcement. Replay carries the original runner/epoch/floor and is checked against the last 128 authoritative grants retained by the DO; older unprovable records are omitted. No interrupted audio is replayed.
 
-Everything is deleted when the room closes, per `PRODUCT.md` § Operating Context.
+Leave/remove stops input and playback immediately, closes provider sessions and discards tool work. The final participant leaving clears DO coordination storage and alarms. This feature does not add accounts, permanent conversation storage, whiteboards, automatic detectors or deployment.
 
-## Server-side AI calls
+## Verification
 
-Made from the Durable Object with `env.OPENAI_API_KEY`, which already exists for transcription tokens.
+`pnpm check` covers type checking, existing tests plus Agent reducer/privacy/session validation, builds and a Worker deployment dry-run. The three-context browser check exercises actual room sockets and peer audio with a simulated GPT-Live WebRTC endpoint. A local real-provider pass on 2026-09-12 also verified GPT-Live initialization, Responses delegation, actual audible output and transcripts, private/public routing across three independent Clients, silent Group preparation, approval with fresh context, and automatic takeover. A synthetic spoken question was also fully transcribed and answered with audible speech while the public microphone was isolated. Synthetic input and automated waveform checks do not replace human microphone/listening evaluation across supported browsers.
 
-- **Embeddings.** Batch finalized utterances rather than calling per-utterance; the detectors run on window updates, not on every word. Cache by utterance id — an utterance is embedded exactly once. Verify the current embedding model and its dimension count against the provider docs before wiring it; do not hardcode a dimension the model does not return.
-- **Generation.** Only on an intervention that has passed the full policy gate in `GROUPTHINK.md` § 6. At most five per meeting, so cost is negligible and latency is not on any hot path.
-- Both are ordinary server-to-server `fetch` calls. No ephemeral tokens, no CSP entries, no browser involvement.
+Browser results and unresolved network/speech checks are recorded in `VERIFICATION.md`. Input accounting uses UTF-8 bytes and item counts, below the observed provider ceiling of 32,768 bytes / 128 items. Background records are de-duplicated and cannot consume the foreground reserve; file pages and screen images are bounded before transmission. No undocumented provider reset/delete events are used.
 
-## Frontend additions
-
-- `SidePanelTab` becomes `'chat' | 'transcript' | 'insights'`.
-- The Trace needs **incremental PCA**, not t-SNE or UMAP. t-SNE and UMAP re-fit on every update and the points jump between frames, which destroys the one thing the visualisation is for — showing a *path*. PCA is stable, cheap, and incremental. Fit on the first window, then project.
-- No charting library is needed or wanted. The radar is an SVG polygon over six axes; the Trace is projected points and a polyline. Both are a few dozen lines and both need to obey the design system exactly, which a chart library will fight. `DESIGN.md` § The Insight Surfaces specifies them.
-
-## Build order
-
-The dependency chain is real; skipping ahead produces a demo with nothing to show.
-
-1. **Activity events.** Turn `voice-activity.ts` RMS into start/stop/overlap events. Unlocks `float`, half the Hand, and every interruption measure. Cheapest, highest leverage, no AI required.
-2. **Utterance transport + storage.** Protocol arms, DO persistence. Now the room has a corpus.
-3. **`packages/groupthink` with fixture tests.** Write the detectors against a hand-written fake conversation that is *designed* to trip each one. This is also the regression suite and the demo script.
-4. **Embeddings in the DO.** Now `convergence`, `drift`, and `echo` come alive.
-5. **Insights panel + the Hand.** First thing a judge can actually see.
-6. **Interventions.** The product thesis, and it needs everything above to exist.
-7. **The Trace.** Highest visual impact per unit of risk once 4 is done — it is a projection of data you already have.
-8. **Post-meeting report.** Reads `interventions` incl. the `_after` columns.
-
-Whiteboard is not on this list. See `PRODUCT.md` § Explicitly deferred.
+Provider contract: [WebRTC initialization](https://developers.openai.com/api/docs/guides/voice-webrtc?api=live), [Responses delegation](https://developers.openai.com/api/docs/guides/live-delegation), [conversation events](https://developers.openai.com/api/docs/guides/live-conversations).

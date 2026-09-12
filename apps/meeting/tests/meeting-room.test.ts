@@ -1,6 +1,6 @@
 import { env } from 'cloudflare:workers';
 import { evictDurableObject, SELF } from 'cloudflare:test';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import worker, { issueTranscriptionToken, resolveTranscriptionProvider, type Env, type MeetingRoom } from '../worker';
 import type { ServerMessage } from '../src/protocol';
 
@@ -102,6 +102,40 @@ describe('MeetingRoom Durable Object', () => {
       kind: 'offer',
       payload: { type: 'offer', sdp: 'v=0' },
     });
+  });
+
+  it('arbitrates concurrent Group creation, preserves its epoch across hibernation and fences session initialization', async () => {
+    const stub = room('AGENTS');
+    const host = await connect(stub, 'create', 'Host', peerId(50));
+    const guest = await connect(stub, 'join', 'Guest', peerId(51));
+    expect(JSON.stringify(guest.welcome.peers)).not.toContain(host.welcome.sessionToken);
+    const messages: ServerMessage[] = [];
+    host.socket.addEventListener('message', (event) => { messages.push(JSON.parse(String(event.data)) as ServerMessage); });
+    guest.socket.addEventListener('message', (event) => { messages.push(JSON.parse(String(event.data)) as ServerMessage); });
+    host.socket.send(JSON.stringify({ type: 'agent-ready', ready: true }));
+    guest.socket.send(JSON.stringify({ type: 'agent-ready', ready: true }));
+    await vi.waitFor(() => expect(messages.filter((m) => m.type === 'agent-state').length).toBeGreaterThanOrEqual(2));
+    const config = { kind: 'group', name: 'Group', instructions: 'Think with the room', language: 'auto', source: 'all', chat: true, system: true, screen: false, files: false, audience: 'public' };
+    host.socket.send(JSON.stringify({ type: 'agent-create', config }));
+    guest.socket.send(JSON.stringify({ type: 'agent-create', config }));
+    await vi.waitFor(() => expect(messages.some((m) => m.type === 'error')).toBe(true));
+    const states = messages.filter((m) => m.type === 'agent-state');
+    const group = states.at(-1)?.state.agents[0];
+    expect(group).toBeDefined();
+    expect(states.every((m) => m.state.agents.length <= 1)).toBe(true);
+    if (!group) throw new Error('Group missing');
+    const foreign = group.runner === host.welcome.self.peerId ? guest : host;
+    const init = (token: string) => stub.fetch(new Request(`https://room.invalid/agents/${group.id}/live`, { method: 'POST', headers: { Origin: 'https://room.invalid', 'X-Room-Token': token, 'Content-Type': 'application/json' }, body: '{}' }));
+    for (const token of ['invented-token', foreign.welcome.sessionToken]) {
+      const response = await init(token);
+      expect(response.status).toBe(403);
+      await response.text(); // Drain the request before asking the runtime to hibernate.
+    }
+    await evictDurableObject(stub);
+    messages.length = 0;
+    host.socket.send(JSON.stringify({ type: 'agent-heartbeat' }));
+    await vi.waitFor(() => expect(messages.some((m) => m.type === 'agent-state')).toBe(true));
+    expect(messages.find((m) => m.type === 'agent-state')?.state.agents[0]).toMatchObject({ id: group.id, epoch: group.epoch });
   });
 
   it('invalidates the room after the final peer disconnects', async () => {

@@ -9,23 +9,24 @@ import {
 import { TranscribeError } from './errors';
 import type { LiveTranscriber, LiveTranscriptionCallbacks } from './transcriber';
 
-const REALTIME_CALLS_ENDPOINT = 'https://api.openai.com/v1/realtime/calls';
+const REALTIME_ENDPOINT = 'wss://api.openai.com/v1/realtime?intent=transcription';
 const SETUP_TIMEOUT_MS = 15_000;
 export const OPENAI_ROTATION_INTERVAL_MS = 9 * 60 * 1_000;
 const ROTATION_FINALIZATION_MS = 750;
 const STOP_FINALIZATION_MS = 900;
 const MAX_QUEUED_CHUNKS = 100;
+// ponytail: RMS endpointing assumes ordinary microphone levels; use a VAD model if noisy-room evals require it.
+const SPEECH_RMS = 0.005;
+const END_OF_SPEECH_MS = 800;
 
 export interface OpenAiLiveDependencies {
-  createPeerConnection(): RTCPeerConnection;
-  fetch(input: string, init: RequestInit): Promise<Response>;
+  createWebSocket(url: string, protocols: string[]): WebSocket;
   setTimeout(callback: () => void, delay: number): ReturnType<typeof setTimeout>;
   clearTimeout(timer: ReturnType<typeof setTimeout>): void;
 }
 
 const DEFAULT_DEPENDENCIES: OpenAiLiveDependencies = {
-  createPeerConnection: () => new RTCPeerConnection(),
-  fetch: (input, init) => globalThis.fetch(input, init),
+  createWebSocket: (url, protocols) => new WebSocket(url, protocols),
   setTimeout: (callback, delay) => globalThis.setTimeout(callback, delay),
   clearTimeout: (timer) => globalThis.clearTimeout(timer),
 };
@@ -44,8 +45,7 @@ export class OpenAiLiveTranscriber implements LiveTranscriber {
   readonly #secrets = new Set<string>();
   readonly #items = new Map<string, TranscriptItem>();
   readonly #itemOrder: string[] = [];
-  #peer: RTCPeerConnection | null = null;
-  #channel: RTCDataChannel | null = null;
+  #socket: WebSocket | null = null;
   #ready = false;
   #stopping = false;
   #connectionCount = 0;
@@ -53,6 +53,10 @@ export class OpenAiLiveTranscriber implements LiveTranscriber {
   #rotationTimer: ReturnType<typeof setTimeout> | null = null;
   #fatalErrorReported = false;
   #sentAudioSinceCommit = false;
+  #bufferedAudioMs = 0;
+  #silentAudioMs = 0;
+  #pendingCommits = 0;
+  readonly #finalizationWaiters = new Set<() => void>();
 
   constructor(args: {
     credential: CredentialInput;
@@ -67,7 +71,7 @@ export class OpenAiLiveTranscriber implements LiveTranscriber {
   }
 
   async start(): Promise<void> {
-    if (this.#peer || this.#stopping) {
+    if (this.#socket || this.#stopping) {
       throw new TranscribeError('SESSION_ACTIVE', 'The OpenAI Realtime client has already started.');
     }
     validateOpenAiOptions(this.#options);
@@ -76,8 +80,8 @@ export class OpenAiLiveTranscriber implements LiveTranscriber {
 
   sendAudio(pcm16: ArrayBuffer): void {
     if (this.#stopping || pcm16.byteLength === 0) return;
-    if (this.#ready && this.#channel?.readyState === 'open') {
-      this.#sendAudioNow(this.#channel, pcm16);
+    if (this.#ready && this.#socket?.readyState === 1) {
+      this.#sendAudioNow(this.#socket, pcm16);
       return;
     }
     if (this.#queuedAudio.length >= MAX_QUEUED_CHUNKS) {
@@ -105,10 +109,16 @@ export class OpenAiLiveTranscriber implements LiveTranscriber {
 
   async #connect(reason: 'initial' | 'rotation'): Promise<void> {
     const credential = await this.#resolveCredential(reason);
-    const peer = this.#dependencies.createPeerConnection();
-    const channel = peer.createDataChannel('oai-events');
-    this.#peer = peer;
-    this.#channel = channel;
+    if (this.#stopping) return;
+    let socket: WebSocket;
+    try {
+      socket = this.#dependencies.createWebSocket(REALTIME_ENDPOINT, [
+        'realtime', `openai-insecure-api-key.${credential.value}`,
+      ]);
+    } catch (error) {
+      throw new TranscribeError('OPENAI_SETUP_FAILED', this.#redact(safeMessage(error, 'OpenAI Realtime connection failed.')));
+    }
+    this.#socket = socket;
     this.#ready = false;
 
     await new Promise<void>((resolve, reject) => {
@@ -142,88 +152,29 @@ export class OpenAiLiveTranscriber implements LiveTranscriber {
         reject(error);
       };
 
-      channel.addEventListener('open', () => {
-        if (channel !== this.#channel) return;
-        channel.send(JSON.stringify(this.#createSessionUpdate()));
+      socket.addEventListener('open', () => {
+        if (socket !== this.#socket) return;
+        socket.send(JSON.stringify(this.#createSessionUpdate()));
       });
-      channel.addEventListener('message', (event) => {
-        this.#handleMessage(event.data, channel, finishSetup, failSetup);
+      socket.addEventListener('message', (event) => {
+        this.#handleMessage(event.data, socket, finishSetup, failSetup);
       });
-      channel.addEventListener('error', () => {
+      socket.addEventListener('error', () => {
+        if (socket !== this.#socket) return;
         const error = new TranscribeError(
-          'OPENAI_CONNECTION_FAILED',
-          'OpenAI Realtime data channel failed.',
+          'OPENAI_CONNECTION_FAILED', 'OpenAI Realtime WebSocket failed.',
         );
         if (!this.#ready) failSetup(error);
         else this.#reportFatal(error.code, error.message);
       });
-      channel.addEventListener('close', () => {
-        if (channel !== this.#channel || this.#stopping) return;
-        if (!settled) {
-          failSetup(
-            new TranscribeError(
-              'OPENAI_CONNECTION_CLOSED',
-              'OpenAI Realtime closed during setup.',
-            ),
-          );
-        } else {
-          this.#reportFatal(
-            'OPENAI_CONNECTION_CLOSED',
-            'OpenAI Realtime closed the transcription connection.',
-          );
-        }
-      });
-      peer.addEventListener('connectionstatechange', () => {
-        if (peer !== this.#peer || peer.connectionState !== 'failed') return;
+      socket.addEventListener('close', () => {
+        if (socket !== this.#socket || this.#stopping) return;
         const error = new TranscribeError(
-          'OPENAI_CONNECTION_FAILED',
-          'OpenAI Realtime WebRTC connection failed.',
+          'OPENAI_CONNECTION_CLOSED', 'OpenAI Realtime closed the transcription connection.',
         );
-        if (!this.#ready) failSetup(error);
+        if (!settled) failSetup(error);
         else this.#reportFatal(error.code, error.message);
       });
-
-      void (async () => {
-        try {
-          const offer = await peer.createOffer();
-          if (!offer.sdp) {
-            throw new TranscribeError(
-              'OPENAI_SDP_FAILED',
-              'The browser did not create a WebRTC SDP offer.',
-            );
-          }
-          await peer.setLocalDescription(offer);
-          const response = await this.#dependencies.fetch(REALTIME_CALLS_ENDPOINT, {
-            method: 'POST',
-            headers: {
-              Authorization: `Bearer ${credential.value}`,
-              'Content-Type': 'application/sdp',
-            },
-            body: offer.sdp,
-          });
-          const responseText = await response.text();
-          if (!response.ok) {
-            throw new TranscribeError(
-              'OPENAI_SETUP_FAILED',
-              this.#redact(
-                responseText.trim()
-                  ? `OpenAI Realtime rejected the session (${response.status}): ${responseText.slice(0, 500)}`
-                  : `OpenAI Realtime rejected the session (${response.status}).`,
-              ),
-            );
-          }
-          await peer.setRemoteDescription({ type: 'answer', sdp: responseText });
-        } catch (error) {
-          const normalized =
-            error instanceof TranscribeError
-              ? error
-              : new TranscribeError(
-                  'OPENAI_SETUP_FAILED',
-                  this.#redact(safeMessage(error, 'OpenAI Realtime session setup failed.')),
-                );
-          failSetup(normalized);
-        }
-      })();
     });
   }
 
@@ -283,7 +234,7 @@ export class OpenAiLiveTranscriber implements LiveTranscriber {
           input: {
             format: { type: 'audio/pcm', rate: 24_000 },
             transcription,
-            turn_detection: { type: 'server_vad' },
+            turn_detection: null,
           },
         },
       },
@@ -292,11 +243,11 @@ export class OpenAiLiveTranscriber implements LiveTranscriber {
 
   #handleMessage(
     data: unknown,
-    channel: RTCDataChannel,
+    channel: WebSocket,
     finishSetup: () => void,
     failSetup: (error: TranscribeError) => void,
   ): void {
-    if (channel !== this.#channel || typeof data !== 'string') return;
+    if (channel !== this.#socket || typeof data !== 'string') return;
     try {
       const event = JSON.parse(data) as OpenAiServerEvent;
       if (event.type === 'error') {
@@ -315,7 +266,6 @@ export class OpenAiLiveTranscriber implements LiveTranscriber {
         return;
       }
       if (event.type === 'input_audio_buffer.committed') {
-        this.#sentAudioSinceCommit = false;
         if (event.item_id) this.#ensureItem(event.item_id);
         return;
       }
@@ -337,6 +287,10 @@ export class OpenAiLiveTranscriber implements LiveTranscriber {
         const item = this.#ensureItem(event.item_id);
         item.finalText = event.transcript;
         this.#flushCompletedItems();
+        this.#pendingCommits = Math.max(0, this.#pendingCommits - 1);
+        if (this.#pendingCommits === 0) {
+          for (const finish of this.#finalizationWaiters) finish();
+        }
       }
     } catch {
       const error = new TranscribeError(
@@ -380,19 +334,34 @@ export class OpenAiLiveTranscriber implements LiveTranscriber {
     this.#callbacks.onInterim(interim);
   }
 
-  #sendAudioNow(channel: RTCDataChannel, pcm16: ArrayBuffer): void {
-    channel.send(
-      JSON.stringify({
-        type: 'input_audio_buffer.append',
-        audio: arrayBufferToBase64(pcm16),
-      }),
-    );
+  #sendAudioNow(channel: WebSocket, pcm16: ArrayBuffer): void {
+    const samples = new Int16Array(pcm16);
+    const rms = Math.sqrt(samples.reduce((sum, sample) => sum + (sample / 32768) ** 2, 0) / samples.length);
+    const speaking = rms >= SPEECH_RMS;
+    // Do not commit empty turns or accumulate minutes of silence before speech.
+    if (!speaking && !this.#sentAudioSinceCommit) return;
+    channel.send(JSON.stringify({ type: 'input_audio_buffer.append', audio: arrayBufferToBase64(pcm16) }));
     this.#sentAudioSinceCommit = true;
+    const duration = samples.length / this.audioFormat.sampleRate * 1000;
+    this.#bufferedAudioMs += duration;
+    this.#silentAudioMs = speaking ? 0 : this.#silentAudioMs + duration;
+    if (this.#silentAudioMs >= END_OF_SPEECH_MS) this.#commitAudio(channel);
+  }
+
+  #commitAudio(channel: WebSocket): boolean {
+    // The API requires at least 100 ms in a committed buffer.
+    if (!this.#sentAudioSinceCommit || this.#bufferedAudioMs < 100) return false;
+    this.#pendingCommits += 1;
+    channel.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
+    this.#sentAudioSinceCommit = false;
+    this.#bufferedAudioMs = 0;
+    this.#silentAudioMs = 0;
+    return true;
   }
 
   #flushQueuedAudio(): void {
-    const channel = this.#channel;
-    if (!this.#ready || channel?.readyState !== 'open') return;
+    const channel = this.#socket;
+    if (!this.#ready || channel?.readyState !== 1) return;
     const queued = this.#queuedAudio;
     this.#queuedAudio = [];
     for (const chunk of queued) this.#sendAudioNow(channel, chunk);
@@ -421,22 +390,35 @@ export class OpenAiLiveTranscriber implements LiveTranscriber {
   }
 
   async #finalizeCurrentBuffer(delayMs: number): Promise<void> {
-    const channel = this.#channel;
-    if (this.#sentAudioSinceCommit && channel?.readyState === 'open') {
-      channel.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
-      this.#sentAudioSinceCommit = false;
-      await delay(delayMs, this.#dependencies);
-    }
+    const channel = this.#socket;
+    if (channel?.readyState !== 1) return;
+    this.#commitAudio(channel);
+    if (this.#pendingCommits === 0) return;
+    await new Promise<void>((resolve) => {
+      const finish = (): void => {
+        this.#dependencies.clearTimeout(timer);
+        this.#finalizationWaiters.delete(finish);
+        resolve();
+      };
+      const timer = this.#dependencies.setTimeout(finish, delayMs);
+      this.#finalizationWaiters.add(finish);
+    });
   }
 
   #closeConnection(): void {
-    const channel = this.#channel;
-    const peer = this.#peer;
-    this.#channel = null;
-    this.#peer = null;
+    const socket = this.#socket;
+    this.#socket = null;
     this.#ready = false;
-    if (channel && channel.readyState !== 'closed') channel.close();
-    if (peer && peer.connectionState !== 'closed') peer.close();
+    this.#sentAudioSinceCommit = false;
+    this.#bufferedAudioMs = 0;
+    this.#silentAudioMs = 0;
+    this.#pendingCommits = 0;
+    // A timed-out final belongs to this connection; it cannot block later connections.
+    this.#items.clear();
+    this.#itemOrder.length = 0;
+    this.#emitInterim();
+    for (const finish of this.#finalizationWaiters) finish();
+    if (socket && socket.readyState < 2) socket.close(1000, 'Transcription stopped');
   }
 
   #reportFatal(code: string, message: string): void {
@@ -493,8 +475,4 @@ function openAiLanguageHint(languageCode: string): string {
 
 function safeMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
-}
-
-function delay(milliseconds: number, dependencies: OpenAiLiveDependencies): Promise<void> {
-  return new Promise((resolve) => dependencies.setTimeout(resolve, milliseconds));
 }

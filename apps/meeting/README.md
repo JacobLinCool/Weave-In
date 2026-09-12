@@ -1,6 +1,6 @@
 # Weave In meeting
 
-Browser-native meetings that detect groupthink while it is happening. React/Vite in the browser, a Cloudflare Worker for routing and security headers, and one hibernating Durable Object per six-character room code that handles signaling, stores the room's utterance log, and runs the detection engine.
+Browser-native meetings with private Personal assistants and a shared Group facilitator. React/Vite hosts the Client Agent runtime. A Cloudflare Worker initializes GPT-Live and a hibernating Durable Object coordinates room signaling, Agent ownership, public speech and takeover. Conversation content remains on Clients and their direct AI connections.
 
 The landing page (`src/landing.tsx`) demonstrates the product as a weaver's draft: participants are warp threads, captions are weft passes, the transcript is the drawdown. Brand assets live in `src/brand.tsx` and `public/`.
 
@@ -18,6 +18,7 @@ pnpm deploy:dry-run
 | `PRODUCT.md` | What the product is, who it is for, and exactly what may be claimed |
 | `GROUPTHINK.md` | The detection model: signals, formulas, thresholds, intervention policy, reading list |
 | `ARCHITECTURE.md` | Where the code goes: data flow, protocol additions, storage, build order |
+| `VERIFICATION.md` | Local verification results, browser matrix and remaining release checks |
 | `DESIGN.md` | The design system, including § The Insight Surfaces for the analysis layer |
 
 ## The meeting
@@ -27,7 +28,7 @@ pnpm deploy:dry-run
 - Chat and live transcript travel over a per-peer WebRTC data channel. Media and chat never reach the Worker.
 - Files shared in chat (picker or drag-and-drop, up to 300 MB each) are announced by metadata only. The bytes leave the owner's browser when a participant clicks Download, over a dedicated data channel per transfer (`file:<transfer id>`, 16 KiB chunks with `bufferedAmount` back-pressure), and stay in that participant's memory for the rest of the meeting. Late joiners get the announcements when their channel opens; a file whose owner left is marked unavailable. See `src/file-share.ts`.
 - Late joiners get the past from the people who were there: when a newcomer's channel opens, each existing participant replays its **own** chat messages and finalized captions (`history` batches under 16 KiB, at most the last 400 entries) and re-announces its files. Nobody relays anyone else's words, so what a participant who already left said is gone. The newcomer merges replays by time, marks them `replayed: true` in the record, and draws a "You joined" rule in the panels. See `src/history.ts`.
-- Every browser keeps the meeting record (`src/meeting-log.ts`): finalized captions with their speaker, chat, file announcements, joins and leaves, numbered densely so a reader can resume from a cursor.
+- Every browser keeps the meeting record (`src/meeting-log.ts`): finalized captions with their speaker, chat, file announcements, joins and leaves, numbered by revision so a reader can resume from a cursor. Agent transcript fragments update a stable record ID and receive a fresh cursor.
 - Each participant transcribes only their own microphone (browser echo cancellation keeps remote voices out of the local track) and streams the finalized and interim text to everyone else. Speaker attribution is structurally correct rather than inferred by diarization, which is what makes the analysis downstream possible.
 - Captions use Gemini or OpenAI. The Worker mints short-lived ephemeral tokens from its `GEMINI_API_KEY` or `OPENAI_API_KEY` secret (Gemini is preferred when both exist; set `TRANSCRIPTION_PROVIDER=openai` to override) and the page adopts whichever provider the Worker reports. Without a key the meeting still works, but captions are reported as unavailable.
 
@@ -44,23 +45,39 @@ When the browser exposes `navigator.modelContext` (or `document.modelContext`), 
 
 Tool results are `{ content: [{ type: 'text', text: <JSON> }] }` (plus an `image` block for screen captures), with `isError: true` and `{ ok: false, error }` on invalid input. `read_meeting` also reports `screenShare.presenter` so an agent knows when a capture is worth taking.
 
-## The analysis
+## Assistants
 
-In development. See `ARCHITECTURE.md` § Build order before starting anything.
+Open the Assistants tab, enable audio on the device and create an assistant. The settings summary shows sources, tools and audience before creation. A Personal conversation starts private; persistent public mode warns that later responses may refer to previous private context. Talk to assistant isolates private microphone input from the meeting. Public Agent input/output appears in the shared transcript; private conversation is excluded from WebMCP and history replay.
 
-- Finalized utterances and speaking-activity events go from each browser to the room's Durable Object over the **existing signaling socket** — not a new endpoint, and not over the peer data channels.
-- The Durable Object persists them to its SQLite storage, embeds them server-side, runs the detectors from `packages/groupthink`, and broadcasts analysis snapshots and interventions back to every participant.
-- Embedding and generation calls are server-to-server from the Durable Object. The browser only ever talks to the same origin for analysis, so **the CSP needs no new entries**.
-- Everything stored is deleted when the room closes.
+Any member can trigger the single Group, invite it after it raises its hand, or stop it. Current public human captions also recognize “團隊助理，請發言” and “Weave, go ahead”. The Group takes speaking priority and can move to another audio-enabled Client if its runner leaves. Enable audio on at least two devices to demonstrate takeover. No automatic groupthink detector runs in this version.
+
+`OPENAI_API_KEY` is required for Agents even when meeting captions use Gemini. Model constants are in `src/agents/contracts.ts`, not the creation form. Setup, protocol and lifecycle details are in `ARCHITECTURE.md`.
+
+Agent context is bounded by GPT-Live’s session input limit. The Client seeds at most 6,000 UTF-8 bytes, sends only new background records, and reserves capacity for the current question and tool results. Agent tools read at most five records or 1,024 file bytes per call; screen images are compressed to fit. Native WebMCP keeps its existing limits. An interaction that exhausts its budget stops with a visible message; a new question starts a fresh session.
 
 ## Privacy
 
-State it exactly as `PRODUCT.md` § Brand Commitments does, and nowhere else any other way:
-
-> Camera, microphone, screen share, and chat never touch our server. Transcript text does, so the room can analyze the discussion, and it is deleted when the room closes.
-
-The earlier "nothing touches our server" claim is **false as of the analysis work** and must not survive anywhere in copy, docs, or the landing page.
+Meeting media, chat and public captions travel peer-to-peer. Caption audio goes directly to the selected AI provider. Selected Agent context, screen/file tool results and private/public Agent conversations go directly to OpenAI after initialization. The server receives Agent settings, SDP and room coordination, and stores coordination for the meeting lifetime; it does not receive or store conversation records. Public mode can quote earlier private context, but switching modes does not retroactively broadcast private records.
 
 ## Local development
 
 Copy `.dev.vars.example` to `.dev.vars` and set a key. For production, create the Worker secret with `pnpm exec wrangler secret put GEMINI_API_KEY` or `pnpm exec wrangler secret put OPENAI_API_KEY`.
+
+## Browser verification
+
+With `pnpm dev` running at `http://127.0.0.1:5173`, run `scripts/verify-agents-browser.js` through Playwright CLI's `run-code`. Launch Chromium with fake camera/microphone and autoplay enabled:
+
+```json
+{"browser":{"browserName":"chromium","launchOptions":{"args":["--use-fake-device-for-media-stream","--use-fake-ui-for-media-stream","--autoplay-policy=no-user-gesture-required"]},"contextOptions":{"permissions":["microphone","camera"],"viewport":{"width":1440,"height":1000}}}}
+```
+
+Save this as `output/playwright/cli.config.json` from the repository root, then:
+
+```bash
+mkdir -p output/playwright
+playwright-cli -s=agents open http://127.0.0.1:5173 --config=output/playwright/cli.config.json
+playwright-cli -s=agents run-code "$(cat apps/meeting/scripts/verify-agents-browser.js)"
+playwright-cli -s=agents close
+```
+
+The check creates three independent browser contexts and uses real room WebSockets and peer connections. Only GPT-Live initialization is intercepted by a local WebRTC provider simulator. Assertions cover microphone isolation/restoration, remote audible output, private/public records, late fragments, silent preparation, fresh context after approval, automatic takeover and mobile overflow. Screenshots are written beneath `output/playwright`. This deterministic check does not verify real credentials or speech understanding. A separate local real-provider pass on 2026-09-12 verified initialization, Responses delegation, audible output/transcripts, three-Client private/public routing, Group approval and automatic takeover. A synthetic spoken question also passed input transcription, audible reply and private microphone isolation. See `VERIFICATION.md` for the expanded Chromium/Firefox/WebKit evidence and failures; this is not an all-browser pass. Human microphone/listening evaluation across supported browsers remains a release check.

@@ -19,7 +19,7 @@ Detect groupthink while it is happening and intervene before the decision is mad
 
 Groupthink is the failure mode where a group suppresses dissent to preserve harmony, stops thinking critically, and converges on a low-quality decision that no individual member would have defended alone. It is invisible from inside the room: the meeting feels productive precisely because nobody is arguing.
 
-Weave In runs the meeting, transcribes every participant separately, embeds what they say into a semantic space, and watches that space for the signatures of groupthink — opinions collapsing toward a single point too early, the discussion wandering off its own agenda, one voice carrying the room, agreement that adds no information. When a signature fires, the room says so, and offers the counter-question the group is not asking.
+The current product pairs browser meetings and per-participant transcription with personal thinking partners and one shared facilitator. Owners explicitly ask their Personal assistant for help. A manual signal asks the Group to prepare; it raises its hand and waits for a participant to invite it. Automatic semantic detection remains a proposed extension.
 
 Success: a team finishes a meeting, sees the three moments where they stopped disagreeing, and can point to the intervention that reopened the discussion.
 
@@ -36,28 +36,31 @@ Name: Weave In. "Keep the thread. Weave everyone in." The tagline is the product
 - The meeting runs entirely in the browser: full-mesh WebRTC, public STUN only, up to 8 participants, six-character room codes, invite links of the form `?room=CODE`.
 - Camera, microphone, and screen share travel peer-to-peer and are never sent to, mixed by, or recorded on the operator's server. Chat travels peer-to-peer over the same data channels.
 - Audio for captions travels directly from the speaker's browser to the selected AI provider (Gemini or OpenAI) using a single-use ephemeral token minted by the Worker.
-- **Transcript text is sent to the operator's server.** Finalized utterances go from each browser to that room's Durable Object over the existing signaling socket, where they are stored for the life of the room and analyzed. This is the deliberate cost of the analysis; see Brand Commitments for exactly how it must be described.
-- A Cloudflare Worker with one Durable Object per room relays SDP/ICE signaling, mints transcription tokens, holds the room's utterance log, runs the groupthink detectors, and broadcasts analysis and interventions back to every participant.
-- Embedding and intervention-generation calls are made server-side from the Durable Object. Browsers talk only to the same origin for analysis, so the page's connect-src is unchanged.
-- The room's stored transcript, embeddings, and analysis are deleted when the room closes. There are no accounts and nothing survives the meeting unless a participant exports it.
+- Agent settings and connection descriptions go to the Worker for GPT-Live initialization. Meeting records, private conversations and permitted tools then travel directly between the Client and OpenAI.
+- The room Durable Object coordinates Agent identity, the single Group executor, leases and public speaking rights. It does not store utterances or embeddings. Coordination is deleted when the last member leaves.
+- Personal source permissions are chosen at creation. Private content never enters public replay or WebMCP. Changing to public mode retains private context and warns about possible references in future answers.
 - Display name and settings (languages spoken, caption style, captions on/off) persist in the browser's localStorage.
 
 ## Capabilities and Constraints
 
-### Shipped
+### Current implementation
 
 - Camera, microphone, screen share with live renegotiation, chat panel, per-speaker live captions on tiles, and a merged transcript panel.
 - Per-participant local transcription: each browser transcribes only its own microphone (browser echo cancellation keeps remote voices out) and streams interim and final text to everyone.
 - Up to 4 selected BCP-47 languages or automatic detection; caption style Verbatim or Smart.
 - No accounts, no recording, no media ever reaching the server.
 
+- One Personal Agent per owner, one Group per meeting; editable role/language and explicit source/tool permissions.
+- GPT-Live voice and transcription with Responses delegation, running through native Client WebRTC after authorized server initialization.
+- Group preparation, hand raising, participant approval, speaking priority and automatic takeover to an available Client.
+
 ### In development
 
-These are the product. They are not shipped and must never be described as though they were.
+These remain proposals. Do not describe them as running in the current implementation.
 
 - **Semantic space analysis.** Every finalized utterance is embedded; the room maintains a rolling window, a group centroid, and a dispersion measure.
 - **Four groupthink detectors.** Convergence (opinions collapsing too early), drift (the discussion leaving its own agenda), float (one voice running unchecked), and echo (agreement carrying no new information). Specified in `GROUPTHINK.md`.
-- **Visual intervention.** When a detector fires, every participant sees a non-intrusive card on the stage and an entry in the Insights panel, carrying the named signal and a generated counter-question. The assistant never speaks, never injects itself into chat as a participant, and never interrupts someone mid-utterance.
+- **Visual intervention.** When a detector fires, every participant sees a non-intrusive card on the stage and an entry in the Insights panel, carrying the named signal and a generated counter-question. Future detector signals must use the existing Group preparation and approval flow before public speech.
 - **The Hand.** A six-axis profile of each participant's communication style — airtime, initiative, challenge, inquiry, echo, influence — drawn as a radar in their thread colour.
 - **The Trace.** The discussion's path through semantic space over time, rendered as a dimensionally-reduced trajectory, so convergence and drift are visible as shape rather than asserted as a number.
 - **Post-meeting report.** The signal timeline, each intervention, and whether the discussion reopened after it.
@@ -65,7 +68,6 @@ These are the product. They are not shipped and must never be described as thoug
 ### Explicitly deferred
 
 - Shared whiteboard. The team decided the whiteboard is an instrument for capturing non-verbal interaction data, not a headline feature. It is not part of the first build and must not lead the pitch.
-- Voice intervention (TTS). Considered and set aside: interrupting a live meeting with synthetic speech is a larger product and ethics question than the first build should take on.
 - Host-only dashboards. Analysis is shown to everyone in the room. A group cannot correct a bias that only its most senior member can see.
 
 ## Brand Commitments
@@ -73,7 +75,7 @@ These are the product. They are not shipped and must never be described as thoug
 - Name: Weave In. Tagline: "Keep the thread. Weave everyone in." (confirmed by the user, 2026-09-12; replaces the working name On Track)
 - Landing page language: English.
 - The animated demonstration on the landing page is built in-page with React/CSS/SVG, not as a video file.
-- **The privacy claim must be stated exactly this way**: camera, microphone, screen share, and chat never touch our server; transcript text does, so the room can analyze the discussion; it is deleted when the room closes. "Media never touches our server" is true and stays true. "Nothing touches our server" is true *today* and becomes false the moment utterance transport ships (`ARCHITECTURE.md` § Build order, step 2). Rewriting the landing copy — the "Where your data goes" key in `src/landing.tsx`, its empty dashed "Our server" chip, and the STORY note in `index.html` — belongs in that same commit, not after it. Shipping the transport without the copy change is the one failure mode this product cannot afford.
+- Privacy copy must distinguish peer media, direct AI connections and server metadata. Our server handles Agent settings, SDP and coordination, not meeting or private conversation records. AI providers receive the selected audio/context/tool data. Do not claim that nothing leaves the browser or that no metadata reaches the server.
 - The assistant has no dye: it is not a participant, it is never given a thread colour, and it is never described as a member of the meeting.
 - Detector output is stated as an observation with its evidence, never as a verdict about a person. "Three speakers in a row added no new position" is allowed. "You are being a conformist" is not.
 
@@ -87,7 +89,7 @@ These are the product. They are not shipped and must never be described as thoug
 
 1. **Name the moment, not the person.** Every signal is attached to a timestamp and an utterance the group can go back and look at. The product describes what the discussion did, never what a participant is.
 2. **The group sees what the room sees.** Analysis is broadcast to every participant. A bias visible only to the chair is a new authority problem, not a fix for the old one.
-3. **AI assists thinking and never replaces it.** The assistant asks the question the group is not asking. It does not have an opinion about the decision, and it never tells the group what to conclude.
+3. **AI assists thinking and never replaces it.** The assistant asks the question the group is not asking. It may propose alternatives and recommendations, but members retain the decision and control its speaking permission.
 4. **Truth over slogans.** Privacy claims name exactly what leaves the browser and where it goes. The claim changed when the product changed; the copy changes with it.
 5. **Every voice is its own source.** Each person transcribes themselves; nothing is mixed or attributed by guesswork. Correct attribution is a precondition for every measurement downstream.
 6. **Intervene rarely and well.** An assistant that fires constantly is noise, and a group learns to ignore noise. Cooldowns, warm-up periods, and a hard cap per meeting are features, not limitations.

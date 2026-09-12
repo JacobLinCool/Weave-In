@@ -1,3 +1,4 @@
+import { parseAgentCommand, parseAgentPeerMessage, type AgentCommand, type AgentPeerMessage, type AgentRoomState } from './agents/contracts';
 export const MAX_PARTICIPANTS = 8;
 export const MAX_SIGNAL_FRAME_BYTES = 65_536;
 export const MAX_PEER_MESSAGE_BYTES = 16_384;
@@ -35,10 +36,11 @@ export interface ClientSignalMessage {
   payload: RTCSessionDescriptionInit | RTCIceCandidateInit;
 }
 
-export type ClientMessage = ClientSignalMessage;
+export type ClientMessage = ClientSignalMessage | AgentCommand;
 
 export type ServerMessage =
-  | { type: 'welcome'; self: PeerIdentity; peers: PeerIdentity[] }
+  | { type: 'welcome'; self: PeerIdentity; peers: PeerIdentity[]; sessionToken: string }
+  | { type: 'agent-state'; state: AgentRoomState; serverNow: number }
   | { type: 'peer-joined'; peer: PeerIdentity }
   | { type: 'peer-left'; peerId: string }
   | {
@@ -81,6 +83,7 @@ export type HistoryEntry =
  * later; `more: false` marks the last batch.
  */
 export type PeerMessage =
+  | AgentPeerMessage
   | ({ type: 'state' } & PeerMediaState)
   | { type: 'chat'; id: string; text: string; at: string; agent: string | null }
   | { type: 'transcript'; id: string; text: string; at: string; final: boolean }
@@ -97,7 +100,8 @@ export function normalizeDisplayName(value: string): string | null {
 }
 
 export function parseClientMessage(value: unknown): ClientMessage | null {
-  if (!isRecord(value) || value['type'] !== 'signal') return null;
+  if (!isRecord(value)) return null;
+  if (value['type'] !== 'signal') return parseAgentCommand(value);
   const target = value['target'];
   const kind = value['kind'];
   const payload = value['payload'];
@@ -117,6 +121,7 @@ export function parseClientMessage(value: unknown): ClientMessage | null {
 export function parsePeerMessage(value: unknown): PeerMessage | null {
   if (!isRecord(value)) return null;
   switch (value['type']) {
+    case 'agent-line': case 'agent-stream': case 'agent-history': return parseAgentPeerMessage(value);
     case 'state': {
       const cameraStreamId = optionalStreamId(value['cameraStreamId']);
       const screenStreamId = optionalStreamId(value['screenStreamId']);

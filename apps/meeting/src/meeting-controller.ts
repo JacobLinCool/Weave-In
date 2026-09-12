@@ -1,3 +1,4 @@
+import type { AgentCommand, AgentRoomState } from './agents/contracts';
 import {
   MAX_PEER_MESSAGE_BYTES,
   parsePeerMessage,
@@ -12,6 +13,7 @@ const ICE_SERVERS: RTCIceServer[] = [{ urls: 'stun:stun.l.google.com:19302' }];
 const DATA_CHANNEL_LABEL = 'weave-in';
 
 export interface MeetingControllerEvents {
+  onAgentState?(state: AgentRoomState, serverNow: number): void;
   onConnected(self: PeerIdentity, peers: PeerIdentity[]): void;
   onPeerJoined(peer: PeerIdentity): void;
   onPeerLeft(peerId: string): void;
@@ -48,6 +50,10 @@ export class MeetingController {
   #socket: WebSocket | null = null;
   #self: PeerIdentity | null = null;
   #closing = false;
+  sessionToken = '';
+  sendAgent(command: AgentCommand): void {
+    if (this.#socket?.readyState === WebSocket.OPEN) this.#socket.send(JSON.stringify(command));
+  }
 
   constructor(localStreams: MediaStream[], events: MeetingControllerEvents) {
     for (const stream of localStreams) this.#localStreams.set(stream.id, stream);
@@ -172,7 +178,11 @@ export class MeetingController {
     }
 
     switch (message.type) {
+      case 'agent-state':
+        this.#events.onAgentState?.(message.state, message.serverNow);
+        return false;
       case 'welcome':
+        this.sessionToken = message.sessionToken;
         this.#self = message.self;
         this.#events.onConnected(message.self, message.peers);
         for (const peer of message.peers) this.#ensurePeer(peer.peerId);

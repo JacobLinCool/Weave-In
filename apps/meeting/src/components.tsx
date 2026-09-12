@@ -65,6 +65,9 @@ export interface TranscriptLine {
   text: string;
   at: string;
   own: boolean;
+  agent?: string;
+  agentRole?: 'user' | 'assistant';
+  playback?: string;
 }
 
 export interface LiveInterim {
@@ -78,7 +81,7 @@ export interface TranscriptionView {
   error: { code: string; message: string } | null;
 }
 
-export type SidePanelTab = 'chat' | 'transcript';
+export type SidePanelTab = 'chat' | 'transcript' | 'agents';
 
 export function VideoTile({
   name,
@@ -272,6 +275,7 @@ export function MeetingControls({
 }
 
 export function SidePanel({
+  agentPanel,
   tab,
   onTabChange,
   messages,
@@ -283,6 +287,7 @@ export function SidePanel({
   onShareFiles,
   onDownloadFile,
 }: {
+  agentPanel?: ReactNode;
   tab: SidePanelTab;
   onTabChange(tab: SidePanelTab): void;
   messages: ChatMessage[];
@@ -303,8 +308,9 @@ export function SidePanel({
         <button role="tab" type="button" aria-selected={tab === 'transcript'} className={tab === 'transcript' ? 'is-active' : ''} onClick={() => onTabChange('transcript')}>
           <Captions size={15} /> Transcript{transcript.length > 0 && <em>{transcript.length}</em>}
         </button>
+        <button role="tab" type="button" aria-selected={tab === 'agents'} className={tab === 'agents' ? 'is-active' : ''} onClick={() => onTabChange('agents')}><Bot size={15} /> Assistants</button>
       </div>
-      {tab === 'chat'
+      {tab === 'agents' ? agentPanel : tab === 'chat'
         ? <ChatPanel messages={messages} files={files} joinedAt={joinedAt} onSend={onSendChat} onShareFiles={onShareFiles} onDownloadFile={onDownloadFile} />
         : <TranscriptPanel transcript={transcript} interims={interims} joinedAt={joinedAt} />}
     </aside>
@@ -619,7 +625,7 @@ function TranscriptPanel({
   joinedAt: string | null;
 }): ReactNode {
   const live = Object.entries(interims).filter(([, interim]) => interim.text);
-  const list = useAutoScroll([transcript.length, live.map(([, interim]) => interim.text).join('\n')]);
+  const list = useAutoScroll([transcript.map((line) => line.text).join('\n'), live.map(([, interim]) => interim.text).join('\n')]);
   const divider = joinDividerIndex(transcript, joinedAt);
   return (
     <ol ref={list} className="panel-list" data-testid="transcript-list">
@@ -634,6 +640,7 @@ function TranscriptPanel({
           data-before-join={divider !== null && index < divider ? 'true' : undefined}
         >
           <header><strong style={{ color: line.color }}>{line.own ? 'You' : line.name}</strong><time dateTime={line.at}>{formatTime(line.at)}</time></header>
+          {line.agent && <span className="data-label">{line.agentRole === 'assistant' ? 'AI assistant' : 'To assistant'} · {line.playback}</span>}
           <p>{line.text}</p>
         </li>
       ))}
@@ -678,7 +685,7 @@ function useAutoScroll(dependencies: unknown[]): React.RefObject<HTMLOListElemen
   const ref = useRef<HTMLOListElement>(null);
   useEffect(() => {
     const element = ref.current;
-    if (element) element.scrollTop = element.scrollHeight;
+    if (element && element.scrollHeight - element.scrollTop - element.clientHeight < 160) element.scrollTop = element.scrollHeight;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, dependencies);
   return ref;

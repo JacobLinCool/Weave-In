@@ -1,3 +1,6 @@
+import { AgentRuntime } from './agents/runtime';
+import { AgentPanel } from './agents/panel';
+import type { AgentRoomState, AgentLine } from './agents/contracts';
 import {
   createTranscription,
   type Credential,
@@ -44,6 +47,7 @@ import {
   type MeetingSettings,
 } from './settings';
 import { captureVideoFrame } from './screen-capture';
+import { drainCaptionSession } from './caption-session';
 import { registerMeetingTools, type MeetingSnapshot, type ScreenCapture } from './webmcp';
 
 type AppPhase = 'lobby' | 'connecting' | 'room' | 'leaving';
@@ -72,6 +76,13 @@ const ROOM_QUERY_PARAM = 'room';
 const IDLE_TRANSCRIPTION: TranscriptionView = { status: 'idle', error: null };
 
 export function App(): ReactNode {
+  const [agentRuntime, setAgentRuntime] = useState<AgentRuntime | null>(null);
+  const agentRef = useRef<AgentRuntime | null>(null);
+  const agentStateRef = useRef<{ state: AgentRoomState; now: number } | null>(null);
+  const agentVoiceRef = useRef(false);
+  const agentVoiceOwnerRef = useRef('');
+  const agentVoiceTrackRef = useRef<MediaStreamTrack | null>(null);
+  const agentVoiceAudienceRef = useRef<'private' | 'public'>('private');
   const [phase, setPhase] = useState<AppPhase>('lobby');
   const [displayName, setDisplayName] = useState(readStoredDisplayName);
   const [roomInput, setRoomInput] = useState(readRoomCodeFromUrl);
@@ -96,6 +107,7 @@ export function App(): ReactNode {
 
   const transcriptionRef = useRef<Transcription | null>(null);
   const unsubscribeRef = useRef<(() => void) | null>(null);
+  const transcriptionStopRef = useRef<Promise<void> | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
   const screenStreamRef = useRef<MediaStream | null>(null);
   const controllerRef = useRef<MeetingController | null>(null);
@@ -168,7 +180,7 @@ export function App(): ReactNode {
       ...messagesRef.current.flatMap((message): HistoryEntry[] =>
         message.own && message.kind === 'text' ? [{ kind: 'chat', id: message.id, text: message.text, at: message.at, agent: message.agent }] : []),
       ...transcriptRef.current.flatMap((line): HistoryEntry[] =>
-        line.own && line.text ? [{ kind: 'transcript', id: line.id, text: line.text, at: line.at }] : []),
+        line.own && !line.agent && line.text ? [{ kind: 'transcript', id: line.id, text: line.text, at: line.at }] : []),
     ];
     for (const batch of batchHistory(selectHistory(entries))) controller.send(peerId, batch);
   };
@@ -183,7 +195,7 @@ export function App(): ReactNode {
   const currentMediaState = (): PeerMediaState => ({
     cameraStreamId: localStreamRef.current?.id ?? null,
     screenStreamId: screenStreamRef.current?.id ?? null,
-    micOn: micRef.current,
+    micOn: agentVoiceRef.current ? agentVoiceAudienceRef.current === 'public' : micRef.current,
     cameraOn: cameraRef.current,
   });
 
@@ -191,8 +203,9 @@ export function App(): ReactNode {
     controllerRef.current?.broadcast({ type: 'state', ...currentMediaState() });
   };
 
-  const handleTranscriptionState = useCallback((state: TranscriptState): void => {
-    setTranscription({
+  const handleTranscriptionState = useCallback((state: TranscriptState, drainedPublic = false): void => {
+    if (agentVoiceRef.current && !drainedPublic) return;
+    if (!drainedPublic) setTranscription({
       status: state.status,
       error: state.error ? { code: state.error.code, message: state.error.message } : null,
     });
@@ -218,10 +231,12 @@ export function App(): ReactNode {
       for (const line of lines) {
         controllerRef.current?.broadcast({ type: 'transcript', id: line.id, text: line.text, at: line.at, final: true });
         logRef.current.append({ kind: 'transcript', at: line.at, speaker: logParticipant(SELF), text: line.text });
+        agentRef.current?.humanSpeech(line.text);
       }
       const latest = lines[lines.length - 1];
       if (latest) setCaptions((current) => ({ ...current, [SELF]: { text: clipCaption(latest.text), final: true, at: Date.now() } }));
     }
+    if (drainedPublic) return;
     const interim = clipCaption(state.interim);
     if (interim !== interimRef.current) {
       interimRef.current = interim;
@@ -241,6 +256,7 @@ export function App(): ReactNode {
 
   const handlePeerMessage = (peerId: string, message: PeerMessage): void => {
     switch (message.type) {
+      case 'agent-stream': case 'agent-line': case 'agent-history': agentRef.current?.receive(peerId, message); return;
       case 'state':
         setParticipants((current) => {
           const participant = current[peerId];
@@ -337,21 +353,23 @@ export function App(): ReactNode {
     setLocalStream(null);
   };
 
-  const stopTranscription = async (): Promise<void> => {
+  const stopTranscription = (): Promise<void> => {
     const transcription = transcriptionRef.current;
+    if (!transcription) return transcriptionStopRef.current ?? Promise.resolve();
+    const unsubscribe = unsubscribeRef.current;
     transcriptionRef.current = null;
-    unsubscribeRef.current?.();
     unsubscribeRef.current = null;
-    if (transcription) {
-      await transcription.stop();
-      await transcription.destroy();
-    }
+    const stopping = drainCaptionSession(transcription, unsubscribe, (state) => handleTranscriptionState(state, true))
+      .finally(() => { if (transcriptionStopRef.current === stopping) transcriptionStopRef.current = null; });
+    transcriptionStopRef.current = stopping;
+    return stopping;
   };
 
   useEffect(() => {
     return () => {
       const transcription = transcriptionRef.current;
       const controller = controllerRef.current;
+      agentRef.current?.close();
       const finish = (): void => {
         controller?.close();
         for (const track of screenStreamRef.current?.getTracks() ?? []) track.stop();
@@ -364,6 +382,7 @@ export function App(): ReactNode {
 
   useEffect(() => {
     const onUnload = (): void => {
+      agentRef.current?.close();
       const transcription = transcriptionRef.current;
       const finish = (): void => {
         controllerRef.current?.close();
@@ -400,7 +419,8 @@ export function App(): ReactNode {
   }, []);
 
   const startTranscription = async (stream: MediaStream): Promise<void> => {
-    if (!settingsRef.current.captionsEnabled) return;
+    await transcriptionStopRef.current;
+    if (!settingsRef.current.captionsEnabled || agentVoiceRef.current) return;
     const microphone = stream.getAudioTracks()[0];
     if (!microphone) {
       setTranscription({ status: 'error', error: { code: 'NO_MICROPHONE', message: 'No microphone track is available for captions.' } });
@@ -417,7 +437,7 @@ export function App(): ReactNode {
       });
       return;
     }
-    if (localStreamRef.current !== stream) return;
+    if (localStreamRef.current !== stream || agentVoiceRef.current || !settingsRef.current.captionsEnabled) return;
     let pending: Credential | null = { type: 'ephemeral-token', value: issued.token };
     const transcription = createTranscription({
       credential: async () => {
@@ -426,7 +446,7 @@ export function App(): ReactNode {
         if (credential) return credential;
         return { type: 'ephemeral-token', value: (await requestTranscriptionToken()).token };
       },
-      options: { provider: issued.provider },
+      options: { provider: issued.provider, customVocabulary: ['Weave', '團隊助理'] },
     });
     transcriptionRef.current = transcription;
     sessionIdRef.current = null;
@@ -498,6 +518,7 @@ export function App(): ReactNode {
     try {
       const stream = await prepareMedia();
       const controller = new MeetingController([stream], {
+        onAgentState: (state, serverNow) => { agentStateRef.current = { state, now: serverNow }; agentRef.current?.update(state, serverNow); },
         onConnected: (self, initialPeers) => {
           selfRef.current = self;
           const next = Object.fromEntries(initialPeers.map((peer) => [peer.peerId, { identity: peer, seat: seatFor(peer.peerId), streams: {}, media: null }]));
@@ -523,6 +544,7 @@ export function App(): ReactNode {
           newcomersRef.current.add(peer.peerId);
         },
         onPeerLeft: (peerId) => {
+          agentRef.current?.peerLeft(peerId);
           logRef.current.append({ kind: 'presence', at: new Date().toISOString(), participant: logParticipant(peerId), event: 'left' });
           fileShareRef.current?.peerLeft(peerId);
           newcomersRef.current.delete(peerId);
@@ -536,6 +558,7 @@ export function App(): ReactNode {
           setCaptions((current) => omitKey(current, peerId));
         },
         onRemoteStream: (peerId, stream) => {
+          agentRef.current?.remoteStream(peerId, stream);
           setParticipants((current) => {
             const participant = current[peerId];
             if (!participant) return current;
@@ -545,6 +568,7 @@ export function App(): ReactNode {
           });
         },
         onRemoteStreamEnded: (peerId, streamId) => {
+          agentRef.current?.remoteStreamEnded(peerId, streamId);
           setParticipants((current) => {
             const participant = current[peerId];
             if (!participant) return current;
@@ -554,6 +578,7 @@ export function App(): ReactNode {
           });
         },
         onPeerChannelOpen: (peerId) => {
+          agentRef.current?.replayTo(peerId);
           controllerRef.current?.send(peerId, { type: 'state', ...currentMediaState() });
           fileShareRef.current?.announceTo(peerId);
           if (newcomersRef.current.has(peerId)) replayHistoryTo(peerId);
@@ -595,8 +620,11 @@ export function App(): ReactNode {
 
   const leaveMeeting = useCallback(async (): Promise<void> => {
     if (phase === 'leaving') return;
+    phaseRef.current = 'leaving';
     setPhase('leaving');
     setError(null);
+    agentRef.current?.close();
+    agentRef.current = null; setAgentRuntime(null); agentStateRef.current = null;
     await stopTranscription();
     controllerRef.current?.close();
     controllerRef.current = null;
@@ -627,6 +655,7 @@ export function App(): ReactNode {
   }, [phase]);
 
   const toggleMic = (): void => {
+    if (agentVoiceRef.current) return;
     const next = !micRef.current;
     micRef.current = next;
     for (const track of localStreamRef.current?.getAudioTracks() ?? []) track.enabled = next;
@@ -779,6 +808,54 @@ export function App(): ReactNode {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase]);
 
+  useEffect(() => {
+    if (phase !== 'room' || !selfRef.current || !controllerRef.current) return;
+    const runtime = new AgentRuntime({
+      peerId: selfRef.current.peerId, room: roomCodeRef.current, controller: controllerRef.current,
+      tools: {
+        snapshot: meetingSnapshot, log: () => logRef.current,
+        download: async (fileId) => {
+          const share = fileShareRef.current;
+          if (!share) throw new Error('Meeting ended.');
+          const blob = await share.download(fileId); const file = share.get(fileId);
+          if (!file) throw new Error('File no longer available.');
+          return { file, blob };
+        }, captureScreen, sendAgentMessage: (text, agent) => sendChat(text, agent ?? 'Assistant'),
+      },
+      beginVoice: async (audience, owner) => {
+        const source = localStreamRef.current?.getAudioTracks()[0];
+        if (!source) throw new Error('No microphone is available.');
+        const clone = source.clone(); clone.enabled = true;
+        agentVoiceOwnerRef.current = owner; agentVoiceTrackRef.current = clone;
+        agentVoiceRef.current = true; agentVoiceAudienceRef.current = audience; source.enabled = audience === 'public'; setMicEnabled(audience === 'public'); broadcastMediaState();
+        await stopTranscription();
+        if (agentVoiceOwnerRef.current !== owner) { clone.stop(); return clone; }
+        setInterims((current) => omitKey(current, SELF)); setCaption(SELF, null);
+        controllerRef.current?.broadcast({ type: 'transcript', id: 'agent-private', text: '', at: new Date().toISOString(), final: false });
+        return clone;
+      },
+      endVoice: (owner) => {
+        if (!agentVoiceRef.current || agentVoiceOwnerRef.current !== owner) return;
+        agentVoiceOwnerRef.current = '';
+        agentVoiceTrackRef.current?.stop(); agentVoiceTrackRef.current = null;
+        agentVoiceRef.current = false;
+        for (const track of localStreamRef.current?.getAudioTracks() ?? []) track.enabled = micRef.current;
+        setMicEnabled(micRef.current); broadcastMediaState();
+        if (phaseRef.current === 'room' && localStreamRef.current) void startTranscription(localStreamRef.current);
+      },
+      publicLine: (line, peerId, replayed) => {
+        logRef.current.upsertAgent(line, peerId, replayed);
+        const entry: TranscriptLine = { id: line.id, from: line.agentId, name: line.name, color: '#c9c4b8', text: line.text, at: line.at, own: false, agent: line.agentId, agentRole: line.role, playback: line.playback };
+        setTranscript((current) => { const index = current.findIndex((row) => row.id === line.id); return index < 0 ? [...current, entry] : current.map((row, i) => i === index ? entry : row); });
+      },
+    });
+    agentRef.current = runtime; setAgentRuntime(runtime);
+    if (agentStateRef.current) runtime.update(agentStateRef.current.state, agentStateRef.current.now);
+    for (const [peer, participant] of Object.entries(participantsRef.current)) for (const stream of Object.values(participant.streams)) runtime.remoteStream(peer, stream);
+    return () => { runtime.close(); if (agentRef.current === runtime) agentRef.current = null; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase]);
+
   const settingsDialog = (
     <SettingsDialog open={settingsOpen} settings={settings} onChange={updateSettings} onClose={closeSettings} />
   );
@@ -787,6 +864,7 @@ export function App(): ReactNode {
     return (
       <>
       <MeetingSurface
+        agentPanel={agentRuntime ? <AgentPanel runtime={agentRuntime} isHost={selfRef.current?.isHost ?? false} /> : null}
         roomCode={roomCode}
         displayName={nameRef.current}
         localStream={localStream}
@@ -848,6 +926,7 @@ export function App(): ReactNode {
 }
 
 function MeetingSurface(props: {
+  agentPanel: ReactNode;
   roomCode: string;
   displayName: string;
   localStream: MediaStream | null;
@@ -944,6 +1023,7 @@ function MeetingSurface(props: {
           <p className="stage-caption"><LockKeyhole size={13} /> Full-mesh WebRTC · direct between browsers</p>
         </section>
         <SidePanel
+          agentPanel={props.agentPanel}
           tab={props.panelTab}
           onTabChange={props.onPanelTab}
           messages={props.messages}
@@ -978,7 +1058,7 @@ function findPresentation(
 function cameraStreamFor(participant: RemoteParticipant): MediaStream | null {
   const cameraId = participant.media?.cameraStreamId;
   if (cameraId) return participant.streams[cameraId] ?? null;
-  return Object.values(participant.streams).find((stream) => stream.getAudioTracks().length > 0) ?? null;
+  return Object.values(participant.streams).find((stream) => stream.getVideoTracks().length > 0) ?? null;
 }
 
 function omitKey<T>(record: Record<string, T>, key: string): Record<string, T> {

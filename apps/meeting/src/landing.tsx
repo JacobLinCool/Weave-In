@@ -99,12 +99,12 @@ export function LandingSurface(props: LandingProps): ReactNode {
             <dd>Video, voice, screen share, chat, and every caption line travel browser to browser over encrypted WebRTC connections, each browser linked directly to every other.</dd>
           </div>
           <div className="key__row">
-            <dt><WovenChip colors={[THREAD_COLORS[0]!.hex, '#F3EEE3']} /> To the caption model</dt>
-            <dd>Your own microphone audio goes from your browser straight to the caption model, carrying a single-use key issued for that session. The text returns to you, and you pass it to the room.</dd>
+            <dt><WovenChip colors={[THREAD_COLORS[0]!.hex, '#F3EEE3']} /> To AI providers</dt>
+            <dd>Your microphone goes directly to your caption provider. Assistants receive their permitted context, conversation and tool results directly through OpenAI; private assistant conversations stay out of the public room.</dd>
           </div>
           <div className="key__row">
             <dt><WovenChip colors={['#303A6B', '#303A6B']} empty /> Our server</dt>
-            <dd>A small worker introduces browsers to each other and issues that key. What it handles is a room code and a display name; everything else stays in the room.</dd>
+            <dd>Our server connects the room, initializes assistants and coordinates their speaking turns. It handles Agent settings and connection metadata, but does not store meeting transcripts or private conversations.</dd>
           </div>
         </dl>
       </section>
@@ -130,7 +130,7 @@ export function LandingSurface(props: LandingProps): ReactNode {
             </li>
             <li>
               <h3>AI that keeps you thinking</h3>
-              <p>The captions are the AI in the room: a faithful record of what was said and who said it, there for you to read, quote, and argue with.</p>
+              <p>Discuss a question privately with your assistant, or trigger the shared facilitator. It prepares a perspective, raises its hand and waits for someone to invite it to speak.</p>
             </li>
           </ul>
           <WeaveSwatch />
