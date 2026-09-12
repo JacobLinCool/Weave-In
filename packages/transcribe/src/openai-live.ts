@@ -15,6 +15,9 @@ export const OPENAI_ROTATION_INTERVAL_MS = 9 * 60 * 1_000;
 const ROTATION_FINALIZATION_MS = 750;
 const STOP_FINALIZATION_MS = 900;
 const MAX_QUEUED_CHUNKS = 100;
+const COMMIT_AUDIO_BYTES = 24_000 * 2 * 2;
+const PAUSE_AUDIO_BYTES = 24_000 * 2 * 0.4;
+const SPEECH_RMS = 0.01;
 
 export interface OpenAiLiveDependencies {
   createPeerConnection(): RTCPeerConnection;
@@ -53,6 +56,9 @@ export class OpenAiLiveTranscriber implements LiveTranscriber {
   #rotationTimer: ReturnType<typeof setTimeout> | null = null;
   #fatalErrorReported = false;
   #sentAudioSinceCommit = false;
+  #uncommittedAudioBytes = 0;
+  #quietAudioBytes = 0;
+  #hasSpeech = false;
 
   constructor(args: {
     credential: CredentialInput;
@@ -185,6 +191,10 @@ export class OpenAiLiveTranscriber implements LiveTranscriber {
 
       void (async () => {
         try {
+          // Realtime requires an audio media section even when input PCM is
+          // supplied over the data channel. Do not attach the microphone here:
+          // the shared audio mixer already sends that audio via sendAudio().
+          peer.addTransceiver('audio', { direction: 'recvonly' });
           const offer = await peer.createOffer();
           if (!offer.sdp) {
             throw new TranscribeError(
@@ -268,7 +278,7 @@ export class OpenAiLiveTranscriber implements LiveTranscriber {
         this.#options.mode === 'VERBATIM'
           ? 'Transcribe verbatim. Preserve filler words, repetitions, and false starts.'
           : 'Produce a readable transcript with punctuation while preserving the speaker’s meaning.',
-      delay: 'low',
+      delay: 'minimal',
     };
     const languages = [...new Set(this.#options.languageCodes.map(openAiLanguageHint).filter(Boolean))];
     if (languages.length > 0) transcription.languages = languages;
@@ -283,7 +293,8 @@ export class OpenAiLiveTranscriber implements LiveTranscriber {
           input: {
             format: { type: 'audio/pcm', rate: 24_000 },
             transcription,
-            turn_detection: { type: 'server_vad' },
+            // This model requires client commits instead of server VAD.
+            turn_detection: null,
           },
         },
       },
@@ -315,7 +326,6 @@ export class OpenAiLiveTranscriber implements LiveTranscriber {
         return;
       }
       if (event.type === 'input_audio_buffer.committed') {
-        this.#sentAudioSinceCommit = false;
         if (event.item_id) this.#ensureItem(event.item_id);
         return;
       }
@@ -388,6 +398,30 @@ export class OpenAiLiveTranscriber implements LiveTranscriber {
       }),
     );
     this.#sentAudioSinceCommit = true;
+    this.#uncommittedAudioBytes += pcm16.byteLength;
+    const view = new DataView(pcm16);
+    const samples = Math.floor(view.byteLength / 2);
+    let energy = 0;
+    for (let index = 0; index < samples; index += 1) {
+      const sample = view.getInt16(index * 2, true) / 32768;
+      energy += sample * sample;
+    }
+    if (samples > 0 && Math.sqrt(energy / samples) >= SPEECH_RMS) {
+      this.#hasSpeech = true;
+      this.#quietAudioBytes = 0;
+    } else {
+      this.#quietAudioBytes += pcm16.byteLength;
+    }
+    // Prefer a natural pause, with a short maximum for continuous/quiet speech.
+    // Never discard low-volume audio based on this boundary detector.
+    if (this.#uncommittedAudioBytes >= COMMIT_AUDIO_BYTES ||
+        (this.#hasSpeech && this.#quietAudioBytes >= PAUSE_AUDIO_BYTES)) {
+      channel.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
+      this.#uncommittedAudioBytes = 0;
+      this.#quietAudioBytes = 0;
+      this.#hasSpeech = false;
+      this.#sentAudioSinceCommit = false;
+    }
   }
 
   #flushQueuedAudio(): void {
@@ -425,6 +459,9 @@ export class OpenAiLiveTranscriber implements LiveTranscriber {
     if (this.#sentAudioSinceCommit && channel?.readyState === 'open') {
       channel.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
       this.#sentAudioSinceCommit = false;
+      this.#uncommittedAudioBytes = 0;
+      this.#quietAudioBytes = 0;
+      this.#hasSpeech = false;
       await delay(delayMs, this.#dependencies);
     }
   }

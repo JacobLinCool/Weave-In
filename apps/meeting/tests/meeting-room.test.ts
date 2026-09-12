@@ -190,7 +190,7 @@ describe('transcription token endpoint', () => {
     expect(String(requests[0]?.input)).toBe('https://api.openai.com/v1/realtime/client_secrets');
     expect(new Headers(requests[0]?.init?.headers).get('Authorization')).toBe('Bearer openai-server-key');
     expect(JSON.parse(String(requests[0]?.init?.body))).toMatchObject({
-      session: { type: 'transcription', audio: { input: { transcription: { model: 'gpt-live-transcribe' } } } },
+      session: { type: 'transcription', audio: { input: { transcription: { model: 'gpt-live-transcribe', delay: 'minimal' }, turn_detection: null } } },
     });
   });
 

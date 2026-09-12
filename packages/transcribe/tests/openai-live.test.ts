@@ -36,13 +36,19 @@ class MockPeerConnection extends EventTarget {
   readonly channel = new MockDataChannel();
   readonly localDescriptions: RTCSessionDescriptionInit[] = [];
   readonly remoteDescriptions: RTCSessionDescriptionInit[] = [];
+  readonly transceivers: { kind: string; direction: RTCRtpTransceiverDirection | undefined }[] = [];
+
+  addTransceiver(kind: string, init: RTCRtpTransceiverInit): void {
+    this.transceivers.push({ kind, direction: init.direction });
+  }
 
   createDataChannel(): RTCDataChannel {
     return this.channel as unknown as RTCDataChannel;
   }
 
   async createOffer(): Promise<RTCSessionDescriptionInit> {
-    return { type: 'offer', sdp: 'test-offer' };
+    const audio = this.transceivers.some((entry) => entry.kind === 'audio');
+    return { type: 'offer', sdp: `v=0\r\n${audio ? 'm=audio 9 UDP/TLS/RTP/SAVPF 111\r\n' : ''}m=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\n` };
   }
 
   async setLocalDescription(description: RTCSessionDescriptionInit): Promise<void> {
@@ -118,6 +124,8 @@ describe('OpenAiLiveTranscriber', () => {
     expect(client.audioFormat).toEqual({ sampleRate: 24_000, framesPerChunk: 2_400 });
     const starting = client.start();
     await vi.waitFor(() => expect(observedRequests).toHaveLength(1));
+    expect(observedRequests[0]?.body).toMatch(/^m=audio /mu);
+    expect(peer.transceivers).toEqual([{ kind: 'audio', direction: 'recvonly' }]);
     expect(observedRequests[0]?.headers).toEqual({
       Authorization: 'Bearer ephemeral-token',
       'Content-Type': 'application/sdp',
@@ -135,13 +143,13 @@ describe('OpenAiLiveTranscriber', () => {
               model: 'gpt-live-transcribe',
               languages: ['zh-tw', 'en'],
               keywords: ['WebMCP'],
-              delay: 'low',
+              delay: 'minimal',
             },
-            turn_detection: { type: 'server_vad' },
           },
         },
       },
     });
+    expect(update.session.audio.input.turn_detection).toBeNull();
     peer.channel.message({ type: 'session.updated' });
     await starting;
 
@@ -150,6 +158,15 @@ describe('OpenAiLiveTranscriber', () => {
       type: 'input_audio_buffer.append',
       audio: 'AAH/',
     });
+    for (let index = 0; index < 19; index += 1) client.sendAudio(new ArrayBuffer(4_800));
+    expect(JSON.parse(peer.channel.sent.at(-1) ?? '{}').type).toBe('input_audio_buffer.append');
+    client.sendAudio(new ArrayBuffer(4_800));
+    expect(JSON.parse(peer.channel.sent.at(-1) ?? '{}')).toEqual({ type: 'input_audio_buffer.commit' });
+    client.sendAudio(new Int16Array(2_400).fill(4_000).buffer);
+    for (let index = 0; index < 3; index += 1) client.sendAudio(new ArrayBuffer(4_800));
+    expect(JSON.parse(peer.channel.sent.at(-1) ?? '{}').type).toBe('input_audio_buffer.append');
+    client.sendAudio(new ArrayBuffer(4_800));
+    expect(JSON.parse(peer.channel.sent.at(-1) ?? '{}')).toEqual({ type: 'input_audio_buffer.commit' });
 
     peer.channel.message({ type: 'conversation.item.created', item: { id: 'first' } });
     peer.channel.message({ type: 'conversation.item.created', item: { id: 'second' } });
@@ -218,6 +235,9 @@ describe('OpenAiLiveTranscriber', () => {
     );
     rotation?.callback();
     await vi.waitFor(() => expect(tokens).toHaveLength(2));
+    for (const peer of peers) {
+      expect(peer.localDescriptions[0]?.sdp).toMatch(/^m=audio /mu);
+    }
     peers[1]?.channel.open();
     peers[1]?.channel.message({ type: 'session.updated' });
     await vi.waitFor(() => expect(credential).toHaveBeenCalledTimes(2));

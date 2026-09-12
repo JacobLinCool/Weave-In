@@ -167,7 +167,8 @@ function openAiTokenRequest(apiKey: string): { url: string; init: RequestInit } 
           audio: {
             input: {
               format: { type: 'audio/pcm', rate: 24_000 },
-              transcription: { model: OPENAI_MODEL },
+              transcription: { model: OPENAI_MODEL, delay: 'minimal' },
+              turn_detection: null,
             },
           },
         },
