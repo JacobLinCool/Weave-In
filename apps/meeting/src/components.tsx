@@ -1,5 +1,5 @@
 import type { AutoReminders } from './auto-reminders';
-import { PrivateNoticeHistory } from './private-notice-ui';
+import { PrivateNoticeHistory, type NoticeActions } from './private-notice-ui';
 import type { PrivateNotices } from './private-notices';
 import type { TranscriptionStatus } from '@weave-in/transcribe';
 import {
@@ -9,20 +9,12 @@ import {
   CameraOff,
   Captions,
   Check,
-  Download,
-  File,
-  FileArchive,
-  FileText,
-  Film,
-  Image,
   Link,
   MessageSquare,
   Mic,
   MicOff,
-  Music,
   Paperclip,
   PhoneOff,
-  RefreshCw,
   Presentation,
   ScreenShare,
   ScreenShareOff,
@@ -32,9 +24,11 @@ import {
   X,
 } from 'lucide-react';
 import { useEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type DragEvent, type FormEvent, type ReactNode } from 'react';
-import { MAX_CHAT_CHARACTERS, MAX_FILE_BYTES, MAX_PARTICIPANTS } from './protocol';
+import { MAX_CHAT_CHARACTERS, MAX_FILE_BYTES, MAX_PARTICIPANTS, normalizeChatText } from './protocol';
 import { Brand } from './brand';
 import { formatBytes, type SharedFile } from './file-share';
+import { FileCard } from './file-card';
+import { Markdown } from './markdown';
 import { compareTime } from './history';
 import { LANGUAGE_OPTIONS, MAX_SELECTED_LANGUAGES, type MeetingSettings } from './settings';
 import { observeVoiceActivity } from './voice-activity';
@@ -70,6 +64,9 @@ export interface TranscriptLine {
   text: string;
   at: string;
   own: boolean;
+  agent?: string;
+  agentRole?: 'user' | 'assistant';
+  playback?: string;
 }
 
 export interface LiveInterim {
@@ -289,6 +286,9 @@ export function MeetingControls({
 }
 
 export function SidePanel({
+  agentPanel,
+  groupPanel,
+  noticeActions,
   autoReminders,
   privateNotices,
   tab,
@@ -302,6 +302,9 @@ export function SidePanel({
   onShareFiles,
   onDownloadFile,
 }: {
+  agentPanel?: ReactNode;
+  groupPanel?: ReactNode;
+  noticeActions: NoticeActions;
   autoReminders: AutoReminders;
   privateNotices: PrivateNotices;
   tab: SidePanelTab;
@@ -321,15 +324,15 @@ export function SidePanel({
     <aside className="side-panel" aria-label="Meeting panel">
       <div className="side-panel__tabs" role="tablist">
         <button role="tab" type="button" aria-selected={tab === 'chat'} className={tab === 'chat' ? 'is-active' : ''} onClick={() => onTabChange('chat')}>
-          <MessageSquare size={15} /> Chat{messages.length > 0 && <em>{messages.length}</em>}
+          <MessageSquare size={15} /> Room{messages.length > 0 && <em>{messages.length}</em>}
         </button>
         <button role="tab" type="button" aria-selected={tab === 'transcript'} className={tab === 'transcript' ? 'is-active' : ''} onClick={() => onTabChange('transcript')}>
           <Captions size={15} /> Transcript{transcript.length > 0 && <em>{transcript.length}</em>}
         </button>
-        <button data-private-tab role="tab" type="button" aria-selected={tab === 'private'} className={tab === 'private' ? 'is-active' : ''} onClick={() => onTabChange('private')}>Private{unread && <span className="private-unread" aria-label="Unread reminders" />}</button>
+        <button data-private-tab role="tab" type="button" aria-selected={tab === 'private'} className={tab === 'private' ? 'is-active' : ''} onClick={() => onTabChange('private')}>Chat{unread && <span className="private-unread" aria-label="Unread reminders" />}</button>
       </div>
-      {tab === 'private' ? <PrivateNoticeHistory store={privateNotices} monitor={autoReminders} /> : tab === 'chat'
-        ? <ChatPanel messages={messages} files={files} joinedAt={joinedAt} onSend={onSendChat} onShareFiles={onShareFiles} onDownloadFile={onDownloadFile} />
+      {tab === 'private'  ? <div className="personal-chat-panel"><PrivateNoticeHistory store={privateNotices} monitor={autoReminders} {...noticeActions} />{!noticeState.hidden && agentPanel}</div> : tab === 'chat'
+        ? <div className="room-chat-panel">{groupPanel}<ChatPanel messages={messages} files={files} joinedAt={joinedAt} onSend={onSendChat} onShareFiles={onShareFiles} onDownloadFile={onDownloadFile} /></div>
         : <TranscriptPanel transcript={transcript} interims={interims} joinedAt={joinedAt} />}
     </aside>
   );
@@ -464,8 +467,8 @@ function ChatPanel({
   const divider = joinDividerIndex(messages, joinedAt);
   const submit = (event: FormEvent): void => {
     event.preventDefault();
-    const text = draft.trim();
-    if (!text) return;
+    const text = normalizeChatText(draft);
+    if (!text.trim()) return;
     onSend(text);
     setDraft('');
   };
@@ -513,14 +516,14 @@ function ChatPanel({
             <header>
               <strong style={{ color: message.color }}>
                 {message.kind === 'text' && message.agent !== null
-                  ? <><Bot size={12} aria-hidden="true" /> {message.own ? 'Your agent' : `${message.name}'s agent`}</>
+                  ? <><Bot size={12} aria-hidden="true" /> {message.agent === 'Omni' && message.name === 'Omni' ? 'Omni' : message.own ? 'Your agent' : `${message.name}'s agent`}</>
                   : message.own ? 'You' : message.name}
               </strong>
               {message.kind === 'text' && message.agent && <span className="chat-agent-tag">{message.agent}</span>}
               <time dateTime={message.at}>{formatTime(message.at)}</time>
             </header>
             {message.kind === 'text'
-              ? <p>{message.text}</p>
+              ? <Markdown text={message.text} />
               : <FileCard file={files[message.fileId]} onDownload={onDownloadFile} />}
           </li>
         ))}
@@ -548,14 +551,23 @@ function ChatPanel({
         >
           <Paperclip size={16} />
         </button>
-        <input
+        <textarea
           aria-label="Message"
-          placeholder="Send a message"
+          aria-describedby="chat-compose-hint"
+          placeholder="Send a message…"
+          rows={2}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+              event.preventDefault();
+              event.currentTarget.form?.requestSubmit();
+            }
+          }}
           value={draft}
           maxLength={MAX_CHAT_CHARACTERS}
           onChange={(event) => setDraft(event.target.value)}
         />
         <button type="submit" aria-label="Send" disabled={!draft.trim()}><Send size={16} /></button>
+        <span id="chat-compose-hint" className="chat-composer__hint">Markdown supported · Shift+Enter for a new line</span>
       </form>
       {dropping && (
         <div className="drop-overlay" aria-hidden="true">
@@ -568,71 +580,6 @@ function ChatPanel({
   );
 }
 
-function FileCard({ file, onDownload }: { file: SharedFile | undefined; onDownload(id: string): void }): ReactNode {
-  if (!file) return <div className="file-card is-missing"><File size={18} /><div className="file-card__body"><span className="file-card__meta">This file is no longer listed.</span></div></div>;
-  const Icon = fileIcon(file.mime);
-  const percent = file.size > 0 ? Math.min(100, Math.floor((file.received / file.size) * 100)) : 0;
-  let meta: ReactNode = formatBytes(file.size);
-  let action: ReactNode = null;
-  switch (file.status) {
-    case 'available':
-      action = <button type="button" className="file-card__action" onClick={() => onDownload(file.id)}><Download size={14} /> Download</button>;
-      break;
-    case 'downloading':
-      meta = <>{formatBytes(file.received)} of {formatBytes(file.size)} · {percent}%</>;
-      break;
-    case 'ready':
-      if (!file.own && file.blob) {
-        const blob = file.blob;
-        action = <button type="button" className="file-card__action" onClick={() => saveBlob(blob, file.name)}><Download size={14} /> Save</button>;
-      }
-      break;
-    case 'unavailable':
-      meta = <>{formatBytes(file.size)} · {file.error ?? 'Unavailable'}</>;
-      break;
-    case 'error':
-      meta = <>{formatBytes(file.size)} · {file.error ?? 'The transfer failed.'}</>;
-      action = <button type="button" className="file-card__action" onClick={() => onDownload(file.id)}><RefreshCw size={14} /> Retry</button>;
-      break;
-  }
-  return (
-    <div className={`file-card is-${file.status}`} data-testid="file-card" data-status={file.status}>
-      <Icon size={18} className="file-card__icon" aria-hidden="true" />
-      <div className="file-card__body">
-        <span className="file-card__name" title={file.name}>{file.name}</span>
-        <span className="file-card__meta">{meta}</span>
-        {file.status === 'downloading' && (
-          <span className="file-card__progress" role="progressbar" aria-label={`Downloading ${file.name}`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent}>
-            <i style={{ width: `${percent}%` }} />
-          </span>
-        )}
-      </div>
-      {action}
-    </div>
-  );
-}
-
-function fileIcon(mime: string): typeof File {
-  if (mime.startsWith('image/')) return Image;
-  if (mime.startsWith('video/')) return Film;
-  if (mime.startsWith('audio/')) return Music;
-  if (mime.startsWith('text/') || /(?:json|xml|pdf|document|sheet|presentation)/u.test(mime)) return FileText;
-  if (/(?:zip|tar|gzip|compressed|7z|rar)/u.test(mime)) return FileArchive;
-  return File;
-}
-
-function saveBlob(blob: Blob, name: string): void {
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = name;
-  anchor.rel = 'noopener';
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-  window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
-}
-
 function TranscriptPanel({
   transcript,
   interims,
@@ -643,7 +590,7 @@ function TranscriptPanel({
   joinedAt: string | null;
 }): ReactNode {
   const live = Object.entries(interims).filter(([, interim]) => interim.text);
-  const list = useAutoScroll([transcript.length, live.map(([, interim]) => interim.text).join('\n')]);
+  const list = useAutoScroll([transcript.map((line) => line.text).join('\n'), live.map(([, interim]) => interim.text).join('\n')]);
   const divider = joinDividerIndex(transcript, joinedAt);
   return (
     <ol ref={list} className="panel-list" data-testid="transcript-list">
@@ -658,6 +605,7 @@ function TranscriptPanel({
           data-before-join={divider !== null && index < divider ? 'true' : undefined}
         >
           <header><strong style={{ color: line.color }}>{line.own ? 'You' : line.name}</strong><time dateTime={line.at}>{formatTime(line.at)}</time></header>
+          {line.agent && <span className="data-label">{line.agentRole === 'assistant' ? 'AI assistant' : 'To assistant'} · {line.playback}</span>}
           <p>{line.text}</p>
         </li>
       ))}
@@ -702,7 +650,7 @@ function useAutoScroll(dependencies: unknown[]): React.RefObject<HTMLOListElemen
   const ref = useRef<HTMLOListElement>(null);
   useEffect(() => {
     const element = ref.current;
-    if (element) element.scrollTop = element.scrollHeight;
+    if (element && element.scrollHeight - element.scrollTop - element.clientHeight < 160) element.scrollTop = element.scrollHeight;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, dependencies);
   return ref;

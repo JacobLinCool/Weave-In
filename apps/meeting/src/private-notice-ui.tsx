@@ -17,27 +17,29 @@ function Evidence({ notice }: { notice: PrivateNotice }) {
   );
 }
 
-function Monitoring({ monitor }: { monitor: AutoReminders }) {
+function Monitoring({ monitor, hidden, onToggleHidden }: {
+  monitor: AutoReminders;
+  hidden: boolean;
+  onToggleHidden(): void;
+}) {
   const monitoring = useSyncExternalStore(monitor.subscribe, monitor.getSnapshot);
   return (
-    <div className="private-monitor" aria-label="Automatic reminders">
-      <span role="status">
-        {monitoring.status === 'checking'
-          ? 'Checking discussion…'
-          : monitoring.status === 'unavailable'
-            ? 'Auto reminders unavailable · retrying'
-            : monitoring.status === 'paused'
-              ? 'Auto reminders paused'
-              : 'Auto reminders on'}
-      </span>
-      <button type="button" onClick={() => monitor.setEnabled(!monitoring.enabled)}>
-        {monitoring.enabled ? 'Pause' : 'Resume'}
-      </button>
-    </div>
+    <>
+      <div className="private-monitor" aria-label="Private reminder controls">
+        <button type="button" onClick={() => monitor.setEnabled(!monitoring.enabled)}>
+          {monitoring.enabled ? 'Pause reminders' : 'Resume reminders'}
+        </button>
+        <button type="button" aria-pressed={hidden} onClick={onToggleHidden}>
+          {hidden ? 'Show private content' : 'Hide private content'}
+        </button>
+      </div>
+      {monitoring.status === 'unavailable' && <p role="status">Reminders unavailable · retrying</p>}
+    </>
   );
 }
 
-export function PrivateNoticeToast({ store, onHistory }: { store: PrivateNotices; onHistory(): void }) {
+export interface NoticeActions { onSpeak?: ((text: string) => Promise<void>) | undefined; onDiscuss?: ((text: string) => Promise<void>) | undefined }
+export function PrivateNoticeToast({ store, onHistory, ...actions }: { store: PrivateNotices; onHistory(): void } & NoticeActions) {
   const state = useSyncExternalStore(store.subscribe, store.getSnapshot);
   const [selected, setSelected] = useState<string | null>(null);
   const notice = state.notices.find((n) => n.id === selected && !n.collapsed && !n.read && n.status !== 'dismissed');
@@ -46,18 +48,20 @@ export function PrivateNoticeToast({ store, onHistory }: { store: PrivateNotices
     setSelected(state.notices.find((n) => n.status === 'active' && !n.collapsed && !n.read)?.id ?? null);
   }, [notice, state.notices]);
   if (state.hidden || !notice) return null;
-  return <TimedNotice key={notice.id} notice={notice} store={store} onHistory={onHistory} />;
+  return <TimedNotice key={notice.id} notice={notice} store={store} onHistory={onHistory} {...actions} />;
 }
 
 function TimedNotice({
   notice,
   store,
   onHistory,
+  onSpeak,
+  onDiscuss,
 }: {
   notice: PrivateNotice;
   store: PrivateNotices;
   onHistory(): void;
-}) {
+} & NoticeActions) {
   const card = useRef<HTMLElement>(null);
   const remaining = useRef(15000);
   const [hovered, setHovered] = useState(false);
@@ -114,7 +118,7 @@ function TimedNotice({
     <section
       ref={card}
       className="private-notice-toast"
-      aria-label="Private reminder from Omni"
+      aria-label="Private reminder from Chat"
       style={{ bottom: position.bottom, visibility: position.fits ? 'visible' : 'hidden' }}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
@@ -125,7 +129,7 @@ function TimedNotice({
     >
       <div className="private-notice-dock__heading">
         <span>
-          <LockKeyhole size={13} /> Omni · Only you
+          <LockKeyhole size={13} /> Chat · Only you
         </span>
         <button
           type="button"
@@ -143,6 +147,7 @@ function TimedNotice({
           {notice.text}
         </p>
       </div>
+      <ReminderActions notice={notice} onSpeak={onSpeak} onDiscuss={onDiscuss} />
       <div className="private-notice-actions">
         <button
           type="button"
@@ -168,36 +173,36 @@ function TimedNotice({
   );
 }
 
-export function PrivateNoticeHistory({ store, monitor }: { store: PrivateNotices; monitor: AutoReminders }) {
+function ReminderActions({ notice, onSpeak, onDiscuss }: { notice: PrivateNotice } & NoticeActions) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const run = async (action: (text: string) => Promise<void>) => {
+    setBusy(true); setError('');
+    try { await action(notice.text); } catch (cause) { setError(cause instanceof Error ? cause.message : 'Please try again.'); }
+    finally { setBusy(false); }
+  };
+  return <>
+    <div className="private-notice-actions">
+      {onSpeak && <button type="button" disabled={busy} onClick={() => void run(onSpeak)}>Speak for me</button>}
+      {onDiscuss && <button type="button" disabled={busy} onClick={() => void run(onDiscuss)}>Discuss privately</button>}
+    </div>
+    {error && <p role="alert">{error}</p>}
+  </>;
+}
+
+export function PrivateNoticeHistory({ store, monitor, ...actions }: { store: PrivateNotices; monitor: AutoReminders } & NoticeActions) {
   const state = useSyncExternalStore(store.subscribe, store.getSnapshot);
   useEffect(() => {
     if (!state.hidden) store.markRead(state.notices.filter((n) => !n.read).map((n) => n.id));
   }, [state, store]);
   return (
     <div className="private-notice-history" role="tabpanel" aria-label="Private reminders">
-      <Monitoring monitor={monitor} />
-      <p>
-        Saved in this tab for room recovery for up to 12 hours since the last save. Screen sharing can reveal this
-        content.
-      </p>
-      <button type="button" aria-pressed={state.hidden} onClick={() => store.setHidden(!state.hidden)}>
-        {state.hidden ? 'Show private content' : 'Hide private content'}
-      </button>
+      <Monitoring monitor={monitor} hidden={state.hidden} onToggleHidden={() => store.setHidden(!state.hidden)} />
       {state.hidden ? (
         <p>Private content hidden.</p>
       ) : (
         <>
-          <p>
-            Automatic detection sends recent transcript text and previous automatic reminders to Gemini through our
-            server. Our server does not store them. Reminders are delivered only to the person who raised the concern.
-            Pause stops analysis; Hide only hides private content. No assistant connection is required.
-          </p>
-          {!state.notices.length && (
-            <p>
-              No reminders yet. Automatic reminders appear when an unresolved concern you raised is bypassed during a
-              decision.
-            </p>
-          )}
+          {!state.notices.length && <p>No reminders yet.</p>}
           {state.notices.map((notice) => (
             <article key={notice.id}>
               <header>
@@ -208,6 +213,7 @@ export function PrivateNoticeHistory({ store, monitor }: { store: PrivateNotices
               </header>
               <p>{notice.text}</p>
               <Evidence notice={notice} />
+              <ReminderActions notice={notice} {...actions} />
               {notice.status === 'active' && (
                 <button type="button" onClick={() => store.dismiss(notice.id)}>
                   Dismiss

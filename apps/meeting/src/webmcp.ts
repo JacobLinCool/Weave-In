@@ -2,7 +2,7 @@ import type { PrivateNotices } from './private-notices';
 import type { TranscriptionStatus } from '@weave-in/transcribe';
 import type { SharedFile, SharedFileStatus } from './file-share';
 import { DEFAULT_LOG_PAGE, MAX_LOG_PAGE, type LogParticipant, type MeetingLog } from './meeting-log';
-import { MAX_AGENT_LABEL_CHARACTERS, MAX_CHAT_CHARACTERS } from './protocol';
+import { MAX_AGENT_LABEL_CHARACTERS, MAX_CHAT_CHARACTERS, normalizeChatText } from './protocol';
 import type { CaptureOptions, CapturedFrame } from './screen-capture';
 import { WHITEBOARD_EDIT_SCHEMA, type WhiteboardEditResult } from './whiteboard-webmcp';
 
@@ -239,10 +239,9 @@ export function createMeetingTools(context: MeetingToolsContext): ToolDefinition
           format: { type: 'string', enum: ['jpeg', 'png'], default: 'jpeg', description: 'jpeg is smaller; png keeps small text crisp.' },
           quality: {
             type: 'number',
-            minimum: 0.1,
+            // GPT-Live currently rejects fractional literals in tool schemas. Execution still validates the range.
             maximum: 1,
-            default: DEFAULT_CAPTURE_QUALITY,
-            description: 'JPEG quality from 0.1 to 1.',
+            description: 'JPEG quality from 0.1 to 1; defaults to 0.8.',
           },
         },
         additionalProperties: false,
@@ -367,8 +366,8 @@ export function createMeetingTools(context: MeetingToolsContext): ToolDefinition
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
       execute: async (input) => {
         const args = asRecord(input);
-        const text = typeof args['text'] === 'string' ? args['text'].replace(/\s+/gu, ' ').trim() : '';
-        if (!text) return failure('`text` must be a non-empty string.');
+        const text = typeof args['text'] === 'string' ? normalizeChatText(args['text']) : '';
+        if (!text.trim()) return failure('`text` must be a non-empty string.');
         if (text.length > MAX_CHAT_CHARACTERS) return failure(`\`text\` must be at most ${MAX_CHAT_CHARACTERS} characters.`);
         const rawAgent = args['agent'];
         if (rawAgent !== undefined && rawAgent !== null && typeof rawAgent !== 'string') return failure('`agent` must be a string.');

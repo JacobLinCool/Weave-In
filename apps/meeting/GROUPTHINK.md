@@ -1,6 +1,6 @@
 # Groupthink: detection model
 
-The specification for what Weave In measures, what counts as a signal, and what the room does about it. `PRODUCT.md` says why; this file says how. Implementation lives in `packages/groupthink`; the data path is in `ARCHITECTURE.md`.
+The specification for what Weave In measures, what counts as a signal, and what the room does about it. `PRODUCT.md` says why; this file says how. This is a future detection proposal; `packages/groupthink` does not exist in the current build. Today a manual system signal triggers the Client Group Agent described in `ARCHITECTURE.md`.
 
 ## 1. What we are claiming
 

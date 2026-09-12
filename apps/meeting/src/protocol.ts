@@ -1,3 +1,4 @@
+import { parseAgentCommand, parseAgentPeerMessage, type AgentCommand, type AgentPeerMessage, type AgentRoomState } from './agents/contracts';
 import { parseBoardElement, type BoardElement } from './whiteboard-model';
 import { parseExcalidrawElement } from './excalidraw-store';
 import type { ExcalidrawElement } from '@excalidraw/excalidraw/element/types';
@@ -39,10 +40,11 @@ export interface ClientSignalMessage {
   payload: RTCSessionDescriptionInit | RTCIceCandidateInit;
 }
 
-export type ClientMessage = ClientSignalMessage;
+export type ClientMessage = ClientSignalMessage | AgentCommand;
 
 export type ServerMessage =
-  | { type: 'welcome'; self: PeerIdentity; peers: PeerIdentity[]; startedAt: number; serverTime: number }
+  | { type: 'welcome'; self: PeerIdentity; peers: PeerIdentity[]; startedAt: number; serverTime: number; sessionToken: string }
+  | { type: 'agent-state'; state: AgentRoomState; serverNow: number }
   | { type: 'peer-joined'; peer: PeerIdentity }
   | { type: 'peer-left'; peerId: string }
   | {
@@ -85,6 +87,7 @@ export type HistoryEntry =
  * later; `more: false` marks the last batch.
  */
 export type PeerMessage =
+  | AgentPeerMessage
   | { type: 'excalidraw'; element: ExcalidrawElement }
   | { type: 'whiteboard'; element: BoardElement }
   | ({ type: 'state' } & PeerMediaState)
@@ -103,7 +106,8 @@ export function normalizeDisplayName(value: string): string | null {
 }
 
 export function parseClientMessage(value: unknown): ClientMessage | null {
-  if (!isRecord(value) || value['type'] !== 'signal') return null;
+  if (!isRecord(value)) return null;
+  if (value['type'] !== 'signal') return parseAgentCommand(value);
   const target = value['target'];
   const kind = value['kind'];
   const payload = value['payload'];
@@ -123,6 +127,7 @@ export function parseClientMessage(value: unknown): ClientMessage | null {
 export function parsePeerMessage(value: unknown): PeerMessage | null {
   if (!isRecord(value)) return null;
   switch (value['type']) {
+    case 'agent-line': case 'agent-stream': case 'agent-history': return parseAgentPeerMessage(value);
     case 'excalidraw': {
       const element = parseExcalidrawElement(value['element']);
       return element ? { type: 'excalidraw', element } : null;
@@ -145,10 +150,10 @@ export function parsePeerMessage(value: unknown): PeerMessage | null {
       };
     }
     case 'chat': {
-      const text = boundedText(value['text'], MAX_CHAT_CHARACTERS);
+      const text = typeof value['text'] === 'string' ? normalizeChatText(value['text']).slice(0, MAX_CHAT_CHARACTERS) : '';
       const id = value['id'];
       const at = value['at'];
-      if (!text || typeof id !== 'string' || !MESSAGE_ID_PATTERN.test(id) || !isTimestamp(at)) return null;
+      if (!text.trim() || typeof id !== 'string' || !MESSAGE_ID_PATTERN.test(id) || !isTimestamp(at)) return null;
       const agent = value['agent'];
       if (agent !== undefined && agent !== null && typeof agent !== 'string') return null;
       return { type: 'chat', id, text, at, agent: agent ? boundedText(agent, MAX_AGENT_LABEL_CHARACTERS) : null };
@@ -203,9 +208,9 @@ function parseHistoryEntry(value: unknown): HistoryEntry | null {
   const at = value['at'];
   if (typeof id !== 'string' || !MESSAGE_ID_PATTERN.test(id) || !isTimestamp(at)) return null;
   if (value['kind'] === 'chat') {
-    const text = boundedText(value['text'], MAX_CHAT_CHARACTERS);
+    const text = typeof value['text'] === 'string' ? normalizeChatText(value['text']).slice(0, MAX_CHAT_CHARACTERS) : '';
     const agent = value['agent'];
-    if (!text || (agent !== undefined && agent !== null && typeof agent !== 'string')) return null;
+    if (!text.trim() || (agent !== undefined && agent !== null && typeof agent !== 'string')) return null;
     return { kind: 'chat', id, text, at, agent: agent ? boundedText(agent, MAX_AGENT_LABEL_CHARACTERS) : null };
   }
   if (value['kind'] === 'transcript') {
@@ -220,6 +225,12 @@ function optionalStreamId(value: unknown): string | null | undefined {
   if (value === null) return null;
   if (typeof value === 'string' && STREAM_ID_PATTERN.test(value)) return value;
   return undefined;
+}
+
+/** Preserve Markdown line breaks, indentation, and hard-break spaces across every sender. */
+export function normalizeChatText(text: string): string {
+  return text.replace(/\r\n?/gu, '\n').replace(/\p{Cc}/gu, (character) =>
+    character === '\n' || character === '\t' ? character : '');
 }
 
 function boundedText(value: unknown, maxLength: number, allowEmpty = false): string | null {

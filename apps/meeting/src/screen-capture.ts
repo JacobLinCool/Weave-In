@@ -28,8 +28,7 @@ export async function captureVideoFrame(stream: MediaStream, options: CaptureOpt
   video.srcObject = stream;
   try {
     const firstFrame = waitForFrame(video);
-    await video.play();
-    await firstFrame;
+    await Promise.all([video.play(), firstFrame]);
     const sourceWidth = video.videoWidth;
     const sourceHeight = video.videoHeight;
     if (!sourceWidth || !sourceHeight) throw new Error('The shared screen has not produced a frame yet.');

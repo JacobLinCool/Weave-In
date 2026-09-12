@@ -109,7 +109,16 @@ export class FileShare {
   handleMessage(peerId: string, message: PeerMessage): SharedFile | null {
     switch (message.type) {
       case 'file': {
-        if (this.#files.has(message.id)) return null;
+        const existing = this.#files.get(message.id);
+        if (existing) {
+          if (existing.owner === peerId && (existing.status === 'unavailable' || existing.status === 'error')) {
+            existing.status = 'available';
+            existing.received = 0;
+            existing.error = null;
+            this.#emit();
+          }
+          return null;
+        }
         const shared: SharedFile = {
           id: message.id,
           name: message.name,
