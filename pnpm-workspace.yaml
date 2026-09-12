@@ -12,3 +12,6 @@ minimumReleaseAgeExclude:
   - '@cloudflare/workers-types@5.20260827.1'
   - miniflare@5.20260826.0-alpha
   - wrangler@4.127.0
+
+patchedDependencies:
+  '@excalidraw/mermaid-to-excalidraw@2.2.2': patches/@excalidraw__mermaid-to-excalidraw@2.2.2.patch

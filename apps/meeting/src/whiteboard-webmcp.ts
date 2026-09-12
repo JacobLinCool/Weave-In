@@ -84,7 +84,6 @@ function validateMermaidInput(args: Record<string, unknown>): { source: string; 
   const definition = source.replace(/^\s*%%[^\n]*$/gmu, '').trimStart();
   if (!/^(?:flowchart|graph)\s+(?:TB|TD|BT|RL|LR)(?:\s|;|$)/u.test(definition)) throw new Error('Only Mermaid flowchart or graph diagrams are supported. Start with, for example, `flowchart TD`.');
   if (/%%\s*\{/u.test(source)) throw new Error('Mermaid initialization directives are not supported.');
-  if (/(?:^|[;\n])\s*subgraph\b/u.test(definition)) throw new Error('Mermaid subgraph groups are not supported by the current converter. Use flowchart nodes, branches and loops without subgraph blocks. Nothing was changed.');
   if (/<\s*(?:img|image|iframe|object|embed|script|link)\b/iu.test(source) || /@\s*\{[^}]*\b(?:img|image|icon)\s*:/iu.test(source)) throw new Error('Mermaid images and embedded content are not supported; use text and native shapes.');
   const position: { source: string; x?: number; y?: number } = { source };
   for (const axis of ['x', 'y'] as const) {

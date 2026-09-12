@@ -506,7 +506,7 @@ function ChatPanel({
       data-testid="chat-panel"
     >
       <ol ref={list} className="panel-list" data-testid="chat-list">
-        {messages.length === 0 && <li className="panel-empty">Messages and files go directly to everyone in the room.</li>}
+        {messages.length === 0 && <li className="panel-empty">Messages and files are shared with everyone in the room.</li>}
         {messages.map((message, index) => (
           <li
             key={`${message.from}:${message.id}`}

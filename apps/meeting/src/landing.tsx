@@ -81,7 +81,7 @@ export function LandingSurface(props: LandingProps): ReactNode {
           <h1 id="hero-title">Keep the thread. <br />Weave everyone in.</h1>
           <p className="hero__lede">
             Meetings in the browser where every voice is transcribed on its own device and woven into one shared thread.
-            Video, screen, chat, and captions travel straight between the people in the room.
+            Video, screen, chat, and captions connect the people in the room over encrypted WebRTC.
           </p>
         </div>
         <WeaveDraft />
@@ -96,7 +96,7 @@ export function LandingSurface(props: LandingProps): ReactNode {
         <dl className="key">
           <div className="key__row">
             <dt><WovenChip colors={[THREAD_COLORS[1]!.hex, THREAD_COLORS[3]!.hex]} /> Between participants</dt>
-            <dd>Video, voice, screen share, chat, and every caption line travel browser to browser over encrypted WebRTC connections, each browser linked directly to every other.</dd>
+            <dd>Video, voice, screen share, chat, files, whiteboard edits, and captions travel over encrypted WebRTC connections between participants. Connections use a direct path when possible; Cloudflare TURN can relay encrypted packets when the network requires it. The relay handles connection metadata such as IP addresses and timing, but cannot read the encrypted content.</dd>
           </div>
           <div className="key__row">
             <dt><WovenChip colors={[THREAD_COLORS[0]!.hex, '#F3EEE3']} /> To AI providers</dt>
@@ -104,7 +104,7 @@ export function LandingSurface(props: LandingProps): ReactNode {
           </div>
           <div className="key__row">
             <dt><WovenChip colors={['#303A6B', '#F3EEE3']} /> Our server</dt>
-            <dd>Our server connects the room, initializes assistants and coordinates their turns. Automatic reminders send recent transcript text and previous reminders through our server to Gemini. We do not store this analysis or private conversations. You can pause automatic reminders in Chat.</dd>
+            <dd>Our signaling Worker connects browsers, issues short-lived caption and TURN credentials, and initializes and coordinates assistants. It does not carry meeting media, chat, files, or whiteboard content. Cloudflare's TURN relay is a separate data path. Automatic reminders send recent transcript text and previous reminders through the Worker to Gemini. We do not store this analysis or private conversations. You can pause automatic reminders in Muse.</dd>
           </div>
         </dl>
       </section>
@@ -145,7 +145,7 @@ export function LandingSurface(props: LandingProps): ReactNode {
         <table className="spec">
           <tbody>
             <tr><th scope="row">Warp</th><td>Up to eight people, each in their own browser, joining with just a name.</td></tr>
-            <tr><th scope="row">Sett</th><td>Full mesh: every browser holds a direct connection to every other.</td></tr>
+            <tr><th scope="row">Sett</th><td>Full mesh: each browser connects to every other, directly or through an encrypted TURN relay.</td></tr>
             <tr><th scope="row">Weft</th><td>Camera, microphone, screen share, chat, live captions on every tile, and a merged transcript panel.</td></tr>
             <tr><th scope="row">Dye</th><td>Captions from your own microphone, in up to four languages, verbatim or smart.</td></tr>
             <tr><th scope="row">Finishing</th><td>The meeting lives as long as the tab. Your name and settings stay in your browser for next time.</td></tr>

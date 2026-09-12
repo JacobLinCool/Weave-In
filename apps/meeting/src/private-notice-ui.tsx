@@ -171,14 +171,17 @@ function ReminderActions({ notice, onSpeak, onDiscuss }: { notice: PrivateNotice
 
 export function PrivateNoticeHistory({ store, monitor, ...actions }: { store: PrivateNotices; monitor: AutoReminders } & NoticeActions) {
   const state = useSyncExternalStore(store.subscribe, store.getSnapshot);
+  const [expanded, setExpanded] = useState(() => state.notices.some((notice) => !notice.read));
   const monitoring = useSyncExternalStore(monitor.subscribe, monitor.getSnapshot);
   useEffect(() => {
-    store.markRead(state.notices.filter((n) => !n.read).map((n) => n.id));
-  }, [state, store]);
+    if (expanded) store.markRead(state.notices.filter((n) => !n.read).map((n) => n.id));
+  }, [state, store, expanded]);
   if (!state.notices.length && monitoring.status !== 'unavailable') return null;
   return (
     <div className="private-notice-history" role="tabpanel" aria-label="Private reminders">
       {monitoring.status === 'unavailable' && <p role="status">Reminders unavailable · retrying</p>}
+      <details className="private-reminder-list" open={expanded} onToggle={(event) => setExpanded(event.currentTarget.open)}>
+        <summary>Private reminders · {state.notices.length}{state.notices.some((notice) => !notice.read) ? ' · New' : ''}</summary>
       {state.notices.map((notice) => (
         <article key={notice.id}>
           <header>
@@ -197,6 +200,7 @@ export function PrivateNoticeHistory({ store, monitor, ...actions }: { store: Pr
           )}
         </article>
       ))}
+      </details>
     </div>
   );
 }

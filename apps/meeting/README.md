@@ -1,6 +1,6 @@
 # Weave In meeting
 
-Browser-native meetings with a personal **Muse** and a shared **Omni**. Chat gives silent private reminders, supports private discussion, and can speak for its owner once they approve a specific reminder. Omni publishes brief public text suggestions without audio or an approval step. React/Vite runs the assistants; a Cloudflare Worker initializes GPT-Live and a Durable Object coordinates room signaling and assistant ownership. Automatic reminder analysis sends bounded transcript context through the Worker to Gemini.
+Browser-native meetings with a personal **Muse** and a shared **Omni**. Muse gives silent private reminders, supports private discussion, and can speak for its owner once they approve a specific reminder. Omni publishes brief public text suggestions without audio or an approval step. React/Vite runs the assistants; a Cloudflare Worker initializes GPT-Live and a Durable Object coordinates room signaling and assistant ownership. Automatic reminder analysis sends bounded transcript context through the Worker to Gemini.
 
 The **Muse** tab opens the personal assistant conversation directly, with a settings button beside its name. Muse is configured automatically on join; its owner can edit instructions, language, sources and tool permissions without losing conversation history. The **Room** tab contains a persistent Omni status card above shared messages. The plus button to the right of the Omni heading adds Omni immediately with default settings. Its settings button opens a full Room-panel settings page with Back to Room at the top. Personal settings similarly provide Back to Muse. Back discards unsaved edits. Any participant can change Group settings; the creator or host can remove it. The card border glows while preparing or publishing a suggestion and returns to normal when idle, stopped or waiting. Settings save only after room confirmation and stop work using old permissions.
 
@@ -25,10 +25,12 @@ pnpm deploy:dry-run
 
 ## The meeting
 
+- If a duplicated tab inherits an identity that is still connected, its initial join retries once as a new participant. Copied local history is cleared so the new identity cannot replay the original participant's words. Automatic reconnections keep the existing identity. Rejected joins show the server's reason, such as a full room.
+- The room removes connections that have sent no valid message for 90 seconds, checked on admission and by a 10-second cleanup alarm. The existing meeting heartbeat keeps quiet participants present. An expired connection no longer occupies a seat or blocks rejoining with the same identity.
 - Invite links can reopen a room: if no host is connected, the next person joining becomes host under the same room code. A fully empty room starts a new meeting timer; if guests remain, the existing timer is preserved. Joining an active hosted room still makes you a guest. The server does not archive prior chat or captions; a returning browser can restore its own same-tab checkpoint, and connected peers replay their own history.
 
 - The header shows time since the room was created (`mm:ss`, then `h:mm:ss`). The signaling server supplies the shared start time and its current time, so late joiners see the room's duration without depending on their device clock matching the server. Socket attachments retain the timestamp through Durable Object hibernation. A new room starts a new clock.
-- Up to eight participants in a full-mesh WebRTC room with public STUN only.
+- Up to eight participants in a full-mesh WebRTC room. Each controller obtains short-lived Cloudflare STUN/TURN configuration before joining; browsers use direct connections when possible and relay encrypted packets when necessary.
 - Camera, microphone, and screen sharing; tracks are added and removed with perfect negotiation.
 - Chat and live transcript are shared over a per-peer WebRTC data channel. Chat renders Markdown, including headings, lists, links, task lists, tables, and fenced code blocks. Enter sends; Shift+Enter adds a line. Raw HTML is disabled, and remote Markdown images appear as links.
 - Files shared in chat (picker or drag-and-drop, up to 300 MB each) are announced by metadata. Chat keeps compact file cards; all files, including images, are fetched only when a participant clicks Preview or Download. Preview opens a viewport-sized modal with transfer progress, retry on failure, a reload action when the sharing participant reconnects, a close button, and Escape dismissal. Transfers use a dedicated peer-to-peer data channel (`file:<transfer id>`, 64 KiB chunks with `bufferedAmount` back-pressure) and are cached in memory for preview and saving. Late joiners get the announcements when their channel opens; files already received remain viewable after their owner leaves. See `src/file-share.ts`.
@@ -55,9 +57,9 @@ When the browser exposes `navigator.modelContext` (or `document.modelContext`), 
 
 Private reminders float at the lower left of the video stage, above the meeting controls, without resizing the video or footer. No empty reminder card is shown. A popup collapses after 15 seconds of unattended display; pointer hover, keyboard focus, or insufficient space to avoid captions pauses the countdown. Placement avoids visible captions and error messages. A newer reminder does not replace the popup currently being read; the latest eligible reminder can appear after it closes. Expired/dismissed reminders are not newly surfaced.
 
-**Later**, the close button, and timeout only collapse the popup: they do not dismiss it or mark it read. The **Muse** tab shows an unread dot and combines private reminders, evidence, and personal assistant discussion. Viewing history marks reminders read. Collapsed/read states survive same-tab room recovery. The underlying active-reminder TTL remains 120 seconds by default (15–300 configurable), independently of popup display time. Screen sharing can reveal visible private content.
+**Later**, the close button, and timeout only collapse the popup: they do not dismiss it or mark it read. The **Muse** tab shows an unread dot and combines private reminders, evidence, and personal assistant discussion. Expanding history marks reminders read. Collapsed/read states survive same-tab room recovery. The underlying active-reminder TTL remains 120 seconds by default (15–300 configurable), independently of popup display time. Screen sharing can reveal visible private content.
 
-Reminder state is private to this tab and checkpointed in sessionStorage for same-room recovery. It is never added to the shared meeting log, peer messages, server storage, or localStorage. Automatic monitoring runs in ordinary browsers while the meeting page is open; no MCP or assistant interaction is required. Existing WebMCP tools remain available as an optional manual delivery path. Use **Discuss privately** to bring a reminder into Chat, or **Speak for me** to approve one public spoken explanation of that reminder. Neither action requires an external assistant or a Codex browser.
+Reminder state is private to this tab and checkpointed in sessionStorage for same-room recovery. It is never added to the shared meeting log, peer messages, server storage, or localStorage. Automatic monitoring runs in ordinary browsers while the meeting page is open; no MCP or assistant interaction is required. Existing WebMCP tools remain available as an optional manual delivery path. Use **Discuss privately** to bring a reminder into Muse, or **Speak for me** to approve one public spoken explanation of that reminder. Neither action requires an external assistant or a Codex browser.
 
 Example, after reading sequence 42 from the current meeting:
 
@@ -89,11 +91,48 @@ This is a bounded prototype, not the full room-wide design in `ARCHITECTURE.md`:
 
 ## Privacy
 
-Meeting media, chat and public captions travel peer-to-peer. Caption audio goes directly to the selected provider. Selected assistant context, allowed screen/file tool results, and private assistant conversations go directly to OpenAI after initialization. The Worker receives assistant settings and connection setup, but does not store assistant conversation records. Automatic analysis sends recent transcript text and previous automatic reminders through the Worker to Gemini. The Worker does not persist this data or embeddings. Reminder history is checkpointed in the receiving tab's sessionStorage for same-room recovery. Google processes the supplied text under the configured Gemini service's terms; this implementation makes no claim about provider retention. Private reminder evidence and personal conversations are not published to the room. Only the specifically approved reminder enters a speak-for-me session; Omni receives public context only.
+Camera, microphone, screen share, chat, files, whiteboard edits, and captions use encrypted WebRTC connections between participants. A connection may be direct or pass through Cloudflare TURN. TURN forwards encrypted packets and processes connection metadata (such as IP addresses, ports, and session timing); it cannot decrypt the WebRTC content. The signaling Worker has a separate role: it exchanges SDP/ICE connection metadata and issues short-lived credentials. Meeting media and data-channel payloads do not pass through that Worker. See [Cloudflare's TURN privacy explanation](https://developers.cloudflare.com/realtime/turn/faq/#what-data-can-cloudflare-access-when-turn-is-used-with-webrtc).
+
+Caption audio goes directly to the selected provider. Selected assistant context, allowed screen/file tool results, and private assistant conversations go directly to OpenAI after initialization. The Worker receives assistant settings and connection setup, but does not store assistant conversation records. Private reminder evidence and personal conversations are not published to the room. Only the specifically approved reminder enters a speak-for-me session; Omni receives public context only.
+
+Automatic analysis separately sends recent transcript text and previous automatic reminders through the Worker to Gemini. The Worker does not persist this data or embeddings. Reminder history is checkpointed in the receiving tab's sessionStorage for same-room recovery. Google processes the supplied text under the configured Gemini service's terms; this implementation makes no claim about provider retention. The landing page discloses this data flow.
 
 ## Local development
 
-Copy `.dev.vars.example` to `.dev.vars` and set a key.
+Copy `.dev.vars.example` to `.dev.vars`, configure `TURN_KEY_ID` and `TURN_KEY_SECRET`, and optionally set a caption provider key. TURN configuration is required to enter a room. Missing or unavailable credentials produce a join error so a room cannot silently appear connected without relay support. Ordinary CI uses mocked credential responses and does not need live secrets.
+
+### Cloudflare TURN setup
+
+The `weave-in-meeting` Worker and its TURN service use the **JacobLinCool** Cloudflare account. TURN usage is billed to the account that owns the TURN key. See the [current TURN pricing](https://developers.cloudflare.com/realtime/turn/faq/#how-much-does-cloudflare-realtime-turn-cost) before provisioning another account.
+
+1. Open the [Cloudflare Realtime dashboard](https://dash.cloudflare.com/?to=%2F%3Aaccount%2Fcalls) and select the account.
+2. In **TURN Server**, choose **Create** and name the key `weave-in-meeting`.
+3. Save **Turn Token ID** as `TURN_KEY_ID` and **API Token** as `TURN_KEY_SECRET` in `.dev.vars`. Keep both values out of source control, browser code, and logs. These are separate from the GitHub Actions deployment token. Cloudflare's [TURN setup example](https://github.com/cloudflare/speedtest/blob/main/example/turn-worker/README.md#creating-a-new-realtime-turn-app) shows these fields.
+4. Before merging code that requires TURN, set both values as secrets on the existing Worker. The following commands prompt for each value; run from the repository root with the account that owns the Worker selected:
+
+   ```bash
+   pnpm --filter @weave-in/meeting exec wrangler secret put TURN_KEY_ID --name weave-in-meeting
+   pnpm --filter @weave-in/meeting exec wrangler secret put TURN_KEY_SECRET --name weave-in-meeting
+   pnpm --filter @weave-in/meeting exec wrangler secret list --name weave-in-meeting
+   ```
+
+Creating a TURN key through the Cloudflare account API requires **Calls Write** permission. Managing Worker secrets requires Worker write permission. Provisioning secrets does not replace the GitHub Actions deployment process below.
+
+The browser posts `{}` to same-origin `/api/ice-servers`. The Worker generates credentials with a 24-hour TTL, validates the provider response, removes port 53 URLs, and returns only ICE configuration and its expiry with `Cache-Control: no-store`. UDP, TCP, and TLS options (including ports 5349 and 443) remain available. The endpoint has an independent limit of 20 requests per IP per minute and an eight-second upstream deadline. Each meeting controller shares one credential request across its peers and signaling retries, so an eight-person room sharing one public IP ordinarily needs eight initial requests.
+
+The controller renews credentials before expiry, updates existing peer connections with `setConfiguration()`, and requests ICE restarts to replace allocations using the old credentials. It rechecks expiry before creating a peer, negotiating, or restarting ICE. Failed renewal has three attempts with backoff and jitter, then reports an error and makes one final attempt at expiry; entering the room again also retries provisioning. Successful renewal clears the corresponding error. Peer recovery waits five seconds for a transient disconnect and allows at most three ICE restart attempts per outage. Leaving a room aborts pending provisioning and cancels renewal and recovery timers. Production retains the browser's default ICE policy so direct connectivity remains available.
+
+### Verifying TURN
+
+`scripts/verify-turn-relay.js` is an opt-in Playwright CLI `run-code` script for a running local preview or deployed site with TURN configured. It makes real Cloudflare calls and transfers synthetic audio, video, and data. Open the site in an isolated test browser and click the page once to enable Web Audio, then run:
+
+```bash
+playwright-cli run-code --filename /absolute/path/to/Weave-In/apps/meeting/scripts/verify-turn-relay.js
+```
+
+The script creates two peers for each of three configurations: all supported TURN transports, TCP only, and TLS on port 443 only. Every peer uses `iceTransportPolicy: 'relay'`. It verifies both directions of data transfer and received media, and checks both peers' selected candidate pairs via `getStats()` for relay candidates. The TCP and TLS cases also require the matching `relayProtocol`. Output omits credentials, addresses, and candidate URLs. Restricting candidates tests the specified transport without changing the machine's firewall; repeat on the target restricted network before a demo.
+
+Also exercise a normal room with camera, microphone, screen share, chat, file download, and whiteboard edits; include a late participant, signaling reconnect, and downloading a file after its owner reconnects. A successful credential API response or direct same-network connection alone does not prove relay connectivity. Do not merge until Worker secrets and live relay checks are ready. After merge, record the GitHub Actions deployment result and a production relay smoke test before closing the rollout issue.
 
 ## Deployment
 
@@ -149,7 +188,7 @@ playwright-cli -s=agents run-code "$(cat apps/meeting/scripts/verify-agents-brow
 playwright-cli -s=agents close
 ```
 
-The browser harness creates two independent browser contexts with real room WebSockets and peer connections, using a local WebRTC provider simulator for GPT-Live initialization. It verifies automatic Chat setup without a Live connection, private isolation, approved-only public speech with owner attribution, an open owner microphone and interruption without resume, silent Omni messages in Room, private conversation recovery, signaling reconnection, public replay/deduplication, and mobile layout. `VERIFICATION.md` also contains historical results from the original PR #6. Provider simulation does not verify real credentials or speech understanding; real-provider connection and human listening checks complement it.
+The browser harness creates two independent browser contexts with real room WebSockets and peer connections, using a local WebRTC provider simulator for GPT-Live initialization and mocked TURN provisioning for local peer connectivity. It verifies automatic Muse setup without a Live connection, private isolation, approved-only public speech with owner attribution, an open owner microphone and interruption without resume, silent Omni messages in Room, private conversation recovery, signaling reconnection, public replay/deduplication, and mobile layout. `VERIFICATION.md` also contains historical results from the original PR #6. Provider simulation does not verify real credentials or speech understanding; real-provider connection and human listening checks complement it.
 
 ### Stable local preview behind Tailscale
 

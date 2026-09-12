@@ -2,6 +2,8 @@ async (page, origin = 'http://127.0.0.1:8788') => {
   const browser = page.context().browser();
   const setup = async (context) => {
     context.setDefaultTimeout(15_000);
+    // This UI harness uses local peer connectivity, not the external TURN service.
+    await context.route('**/api/ice-servers', (route) => route.fulfill({ json: { ok: true, expiresAt: Date.now() + 86_400_000, iceServers: [{ urls: 'turn:127.0.0.1:9', username: 'test', credential: 'test' }] } }));
     await context.grantPermissions(['microphone', 'camera']);
     await context.addInitScript(() => {
       localStorage.setItem('weave-in:settings', JSON.stringify({ captionsEnabled: false, languageCodes: [], mode: 'VERBATIM' }));
@@ -258,7 +260,7 @@ async (page, origin = 'http://127.0.0.1:8788') => {
     await page.getByRole('button', { name: 'Add Omni', exact: true }).waitFor();
     await tab(guest, 'Room').click();
     await guest.getByRole('button', { name: 'Add Omni', exact: true }).waitFor();
-    return { oneClickGroupAdd: true, rightAlignedAdd: true, fullPanelSettings: true, backWithoutSaving: true, reminderControlsRemoved: true, groupRemoval: true, clients: 2, directMuseTab: true, groupInRoom: true, allMembersConfigureGroup: true, groupBorderGlow: true, injectedSystemSignal: true, automaticSystemSignal: false, editSettings: true, automaticChat: true, noLiveOnJoin: true, privateIsolation: true, privateRecovery: true, signalingRecovery: true, oneShotPublicSpeech: true, ownerAttribution: true, ownerMicOpen, omniRoomText: true, omniSilent: true, omniReplayDedup: true, mobileOverflow: false, provider: 'simulated GPT-Live WebRTC (no real provider call)' };
+    return { oneClickGroupAdd: true, rightAlignedAdd: true, fullPanelSettings: true, backWithoutSaving: true, reminderControlsRemoved: true, groupRemoval: true, clients: 2, directMuseTab: true, groupInRoom: true, allMembersConfigureGroup: true, groupBorderGlow: true, injectedSystemSignal: true, automaticSystemSignal: false, editSettings: true, automaticChat: true, noLiveOnJoin: true, privateIsolation: true, privateRecovery: true, signalingRecovery: true, oneShotPublicSpeech: true, ownerAttribution: true, ownerMicOpen, omniRoomText: true, omniSilent: true, omniReplayDedup: true, mobileOverflow: false, provider: 'simulated GPT-Live WebRTC (no real provider call)', relay: 'mocked provisioning; local peer connectivity' };
   } finally {
     await Promise.all([ownerContext, guestContext].map(context => context.close()));
   }

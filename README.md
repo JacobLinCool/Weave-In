@@ -30,9 +30,13 @@ pnpm check            # typecheck + tests + build + deploy dry run
 
 ## Privacy
 
-Meeting media, chat and public transcripts travel peer-to-peer. Caption audio goes directly to the selected AI provider. Agent context, selected files/screens and conversations go directly to OpenAI after initialization. Our server handles connection information, Agent settings and room coordination; it does not store meeting transcripts or private conversations.
+Camera, microphone, screen share, chat, files, whiteboard edits, and captions use encrypted WebRTC connections between participants. Browsers prefer direct connections and can use Cloudflare TURN to relay encrypted packets on restricted networks. The relay can process connection metadata, including IP addresses and timing, but cannot read the encrypted meeting content. The signaling Worker issues short-lived TURN credentials and routes connection setup messages; meeting media and data do not pass through that Worker.
 
-See `apps/meeting/README.md` for room limits, captions, and the `GEMINI_API_KEY` / `OPENAI_API_KEY` Worker secrets.
+Caption audio goes directly to the selected AI provider. Agent context, selected files/screens and conversations go directly to OpenAI after initialization. The Worker handles Agent settings and room coordination; it does not store meeting transcripts or private conversations.
+
+Automatic private analysis separately sends recent transcript text and previous automatic reminders through the Worker to Gemini. The Worker does not persist this analysis data. Participants can pause automatic analysis in the meeting.
+
+See `apps/meeting/README.md` for room limits, TURN setup (`TURN_KEY_ID` / `TURN_KEY_SECRET`), and caption provider secrets (`GEMINI_API_KEY` / `OPENAI_API_KEY`).
 
 ### Shared whiteboard
 
@@ -66,10 +70,10 @@ Two WebMCP tools are available while in a meeting:
   per new label and 256 points per stroke. Edit a label through its container's id.
   Use `action: "mermaid"` with a `source` string to import a Mermaid `flowchart`
   or `graph` as editable nodes, bound labels and arrows. Branches, edge labels
-  and loops are supported. Existing content is preserved; one import is one
+  loops and nested `subgraph` groups are supported. Existing content is preserved; one import is one
   undo step. Imports accept up to 12,000 characters and 300 native elements
-  including labels. `subgraph` blocks, other diagram types and image fallbacks
-  are rejected; the current upstream converter fails on subgraph group IDs.
+  including labels. Other diagram types and image fallbacks are rejected.
+  A pinned converter patch handles Mermaid 11’s diagram-prefixed group IDs.
 - `capture_whiteboard`: capture the actual visible drawing canvas without
   toolbars. Open the board and finish any active text edit before capturing.
 

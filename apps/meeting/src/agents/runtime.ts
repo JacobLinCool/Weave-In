@@ -116,6 +116,7 @@ export class AgentRuntime {
       this.#attachRemote(); this.#emit();
     } catch (error) { this.#error = error instanceof Error ? error.message : 'Unable to enable audio.'; this.#emit(); throw error; }
   }
+  #pendingSaves = new Set<() => void>();
   async create(config: AgentConfig): Promise<void> {
     if (config.kind === 'group') await this.enable();
     await this.#saveConfig({ type: 'agent-create', config });
@@ -125,16 +126,25 @@ export class AgentRuntime {
   }
   #saveConfig(command: Extract<AgentCommand, { type: 'agent-create' | 'agent-configure' }>): Promise<void> {
     if (this.#closed || this.#connectionLost) return Promise.reject(new Error('Reconnect to the meeting before saving agent settings.'));
+    if (command.type === 'agent-create' && this.#state.agents.some((agent) => agent.config.kind === command.config.kind && (agent.config.kind === 'group' || agent.owner === this.ctx.peerId))) return Promise.reject(new Error('This agent already exists. Open settings to edit it.'));
     return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => { unsubscribe(); reject(new Error('Settings were not confirmed. Reconnect and try again.')); }, 10_000);
+      const finish = (error?: Error): void => {
+        clearTimeout(timeout); unsubscribe(); this.#pendingSaves.delete(cancel);
+        if (error) reject(error); else resolve();
+      };
+      const cancel = () => finish(new Error('The meeting closed before settings were saved.'));
       const unsubscribe = this.subscribe(() => {
+        if (this.#connectionLost) { finish(new Error('The meeting disconnected. Please retry.')); return; }
         const agent = this.#state.agents.find((entry) => command.type === 'agent-configure' ? entry.id === command.id : entry.config.kind === command.config.kind && (entry.config.kind === 'group' || entry.owner === this.ctx.peerId));
-        if (agent && JSON.stringify(agent.config) === JSON.stringify(command.config)) { clearTimeout(timeout); unsubscribe(); resolve(); }
-        else if (this.#connectionLost) { clearTimeout(timeout); unsubscribe(); reject(new Error('The meeting disconnected. Please retry.')); }
+        if (agent && command.type === 'agent-create' && agent.owner !== this.ctx.peerId) finish(new Error('Another participant has already added Omni. Open settings to edit it.'));
+        else if (agent && JSON.stringify(agent.config) === JSON.stringify(command.config)) finish();
       });
-      this.command(command);
+      const timeout = setTimeout(() => finish(new Error('The room did not confirm settings. Please retry.')), 10_000);
+      this.#pendingSaves.add(cancel);
+      try { this.command(command); } catch (error) { finish(error instanceof Error ? error : new Error('Unable to save settings.')); }
     });
   }
+
   remove(id: string): void {
     for (const [kind, op] of this.#operations) if (op.agent.id === id) this.#stop(kind, 'interrupted');
     if (id === this.#personalId) { this.#queue = []; this.#lines = []; }
@@ -261,6 +271,7 @@ export class AgentRuntime {
       this.#stop('personal', 'interrupted'); if (!this.#restorePrivateHistory) this.#lines = []; this.#queue = [];
       if (personal) this.#restorePrivateHistory = false;
       this.#personalId = personal?.id ?? ''; this.#audience = 'private';
+      this.#status = personal ? 'Ready for your question.' : 'Add Muse to start a conversation.';
     }
     for (const [kind, op] of this.#operations) if (!this.#valid(op)) this.#stop(kind, 'interrupted');
     const group = this.#viewGroup();
@@ -479,6 +490,7 @@ export class AgentRuntime {
   }
   close(): void {
     if (this.#closed) return;
+    for (const cancel of this.#pendingSaves) cancel();
     this.#stop('personal', 'interrupted'); this.#stop('group', 'interrupted');
     this.command({ type: 'agent-ready', ready: false }); this.#closed = true;
     clearInterval(this.#heartbeat); this.#audio?.close(); this.#listeners.clear(); this.#lines = []; this.#queue = [];

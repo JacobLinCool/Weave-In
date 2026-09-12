@@ -16,6 +16,60 @@ afterEach(() => {
 });
 
 describe('MeetingRoom Durable Object', () => {
+  it('retires a stale socket before rejoining with the same identity and room start time', async () => {
+    const stub = room('STALE1');
+    const host = await connect(stub, 'create', 'Sky', peerId(80));
+    const guest = await connect(stub, 'join', 'Guest', peerId(81));
+    const messages: ServerMessage[] = [];
+    guest.socket.addEventListener('message', (event) => { messages.push(JSON.parse(String(event.data)) as ServerMessage); });
+    const closed = new Promise<CloseEvent>((resolve) => host.socket.addEventListener('close', resolve, { once: true }));
+    await expirePeer(stub, peerId(80));
+    await evictDurableObject(stub);
+    const returned = await connect(stub, 'join', 'Sky', peerId(80));
+    expect(returned.welcome.self).toEqual(host.welcome.self);
+    expect(returned.welcome.startedAt).toBe(host.welcome.startedAt);
+    expect(returned.welcome.peers).toEqual([guest.welcome.self]);
+    expect(returned.welcome.sessionToken).not.toBe(host.welcome.sessionToken);
+    expect((await closed).code).toBe(4000);
+    const signal = nextMessage(guest.socket);
+    returned.socket.send(JSON.stringify({ type: 'signal', target: peerId(81), kind: 'ice', payload: { candidate: 'candidate:test' } }));
+    await expect(signal).resolves.toMatchObject({ type: 'signal', from: peerId(80) });
+    expect(messages.filter((message) => message.type === 'peer-left')).toEqual([{ type: 'peer-left', peerId: peerId(80) }]);
+    expect(messages.findIndex((message) => message.type === 'peer-left')).toBeLessThan(messages.findIndex((message) => message.type === 'peer-joined'));
+  });
+
+  it('cleans up abandoned rooms by alarm even when no agents were created', async () => {
+    const stub = room('STALE2');
+    const host = await connect(stub, 'create', 'Sky', peerId(82));
+    const closed = new Promise<CloseEvent>((resolve) => host.socket.addEventListener('close', resolve, { once: true }));
+    await runInDurableObject(stub, async (_instance, state) => {
+      expect(await state.storage.getAlarm()).not.toBeNull();
+    });
+    await expirePeer(stub, peerId(82));
+    await runInDurableObject(stub, async (instance, state) => {
+      await instance.alarm();
+      expect(await state.storage.getAlarm()).toBeNull();
+      expect((await state.storage.list()).size).toBe(0);
+    });
+    expect((await closed).code).toBe(4000);
+  });
+
+  it('keeps a quiet participant alive while its heartbeat is arriving', async () => {
+    const stub = room('STALE3');
+    const host = await connect(stub, 'create', 'Sky', peerId(83));
+    await expirePeer(stub, peerId(83));
+    host.socket.send(JSON.stringify({ type: 'agent-heartbeat' }));
+    await vi.waitFor(async () => {
+      await runInDurableObject(stub, (_instance, state) => {
+        const socket = state.getWebSockets()[0]!;
+        expect(Date.now() - socket.deserializeAttachment().heartbeat).toBeLessThan(10_000);
+      });
+    });
+    const guest = await connect(stub, 'join', 'Guest', peerId(84));
+    expect(guest.welcome.peers).toEqual([host.welcome.self]);
+    expect(guest.welcome.self.isHost).toBe(false);
+  });
+
   it.each([1004, 1005, 1006, 1015, 1000, 4001])('handles close status %i and still notifies peers', async (code) => {
     const stub = room(`CL${code}`);
     const host = await connect(stub, 'create', 'Host', peerId(60));
@@ -46,6 +100,7 @@ describe('MeetingRoom Durable Object', () => {
         GEMINI_API_KEY: 'test-server-key',
         TOKEN_RATE_LIMITER: allowingRateLimiter(),
         ANALYSIS_RATE_LIMITER: allowingRateLimiter(),
+        ICE_RATE_LIMITER: allowingRateLimiter(),
       } satisfies Env,
     );
     expect(response.headers.get('Permissions-Policy')).toContain('display-capture=(self)');
@@ -54,6 +109,25 @@ describe('MeetingRoom Durable Object', () => {
     expect(policy).toContain("img-src 'self' data: blob:");
     expect(policy).toContain("object-src 'none'");
     expect(policy).not.toContain("'unsafe-eval'");
+  });
+
+  it.each([
+    ['action=invalid', 'INVALID_ACTION'],
+    ['name=', 'INVALID_NAME'],
+    ['peerId=short', 'INVALID_PEER'],
+    ['action=create', 'ROOM_EXISTS'],
+    [`peerId=${peerId(70)}`, 'DUPLICATE_PEER'],
+  ])('delivers %s as a readable admission error without adding a participant', async (override, code) => {
+    const roomCode = crypto.randomUUID().slice(0, 6).toUpperCase();
+    const host = await connect(room(roomCode), 'create', 'Host', peerId(70));
+    const url = new URL(`https://demo.example/api/rooms/${roomCode}/connect?action=join&name=Guest&peerId=${peerId(71)}`);
+    for (const [key, value] of new URLSearchParams(override)) url.searchParams.set(key, value);
+    const response = await SELF.fetch(new Request(url, {
+      headers: { Upgrade: 'websocket', Origin: url.origin },
+    }));
+    await expectAdmissionError(response, code);
+    const guest = await connect(room(roomCode), 'join', 'Guest', peerId(71));
+    expect(guest.welcome.peers).toEqual([host.welcome.self]);
   });
 
   it('rejects malformed room routes and cross-origin WebSocket upgrades', async () => {
@@ -119,6 +193,11 @@ describe('MeetingRoom Durable Object', () => {
     const rejected = await connectResponse(stub, 'join', 'Ninth', peerId(19));
     expect(rejected.status).toBe(409);
     expect(await rejected.json()).toEqual({ ok: false, code: 'ROOM_FULL' });
+    const response = await SELF.fetch(new Request(
+      `https://demo.example/api/rooms/LIMIT5/connect?action=join&name=Ninth&peerId=${peerId(19)}`,
+      { headers: { Upgrade: 'websocket', Origin: 'https://demo.example' } },
+    ));
+    await expectAdmissionError(response, 'ROOM_FULL');
   });
 
   it('shares the room start time with late joiners after hibernation', async () => {
@@ -363,6 +442,25 @@ function connectResponse(
   return stub.fetch(new Request(url, { headers: { Upgrade: 'websocket' } }));
 }
 
+async function expirePeer(stub: DurableObjectStub<MeetingRoom>, id: string): Promise<void> {
+  await runInDurableObject(stub, (_instance, state) => {
+    const socket = state.getWebSockets().find((candidate) => candidate.deserializeAttachment()?.peerId === id)!;
+    const attachment = socket.deserializeAttachment();
+    socket.serializeAttachment({ ...attachment, heartbeat: Date.now() - 90_001 });
+  });
+}
+
+async function expectAdmissionError(response: Response, code: string): Promise<void> {
+  expect(response.status).toBe(101);
+  const socket = response.webSocket!;
+  sockets.push(socket);
+  const message = nextMessage(socket);
+  const closed = new Promise<CloseEvent>((resolve) => socket.addEventListener('close', resolve, { once: true }));
+  socket.accept();
+  await expect(message).resolves.toMatchObject({ type: 'error', code, message: expect.any(String) });
+  expect((await closed).code).toBe(1008);
+}
+
 function nextMessage(socket: WebSocket): Promise<ServerMessage> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('Timed out waiting for WebSocket message.')), 2_000);
@@ -407,6 +505,7 @@ function tokenEnv(
     GEMINI_API_KEY: 'test-server-key',
     TOKEN_RATE_LIMITER: rateLimiter,
     ANALYSIS_RATE_LIMITER: rateLimiter,
+    ICE_RATE_LIMITER: rateLimiter,
     ...overrides,
   };
   for (const key of Object.keys(merged)) if (merged[key] === undefined) delete merged[key];

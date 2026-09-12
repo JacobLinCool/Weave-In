@@ -56,6 +56,43 @@ it('reports personal activity through queued work and clears it on stop', async 
   runtime.stopPersonal();
   expect(runtime.snapshot()).toMatchObject({ personalActive: false, queued: 0, voice: false });
 });
+it.each(['personal', 'group'] as const)('waits for acknowledgement before completing %s assistant creation', async (kind) => {
+  vi.useFakeTimers();
+  const { runtime, sendAgent } = setup();
+  const agent = structuredClone(runtime.snapshot().room.agents[0]!);
+  agent.id = 'created'; agent.config.kind = kind;
+  runtime.update(emptyAgentRoom(), Date.now());
+  let completed = false;
+  const creating = runtime.create(agent.config).then(() => { completed = true; });
+  await vi.advanceTimersByTimeAsync(0);
+  expect(sendAgent).toHaveBeenCalledWith({ type: 'agent-create', config: agent.config });
+  expect(completed).toBe(false);
+  runtime.update({ ...emptyAgentRoom(), agents: [agent] }, Date.now());
+  await creating;
+  expect(completed).toBe(true);
+});
+it('shows a ready status when Muse exists and setup guidance only after it is removed', () => {
+  const { runtime } = setup();
+  expect(runtime.snapshot().status).toBe('Ready for your question.');
+  expect(runtime.snapshot().personalActive).toBe(false);
+  runtime.update(emptyAgentRoom(), Date.now());
+  expect(runtime.snapshot().status).toBe('Add Muse to start a conversation.');
+});
+it.each(['timeout', 'disconnect', 'close'] as const)('rejects unconfirmed creation on %s', async (failure) => {
+  vi.useFakeTimers();
+  const { runtime } = setup();
+  const config = structuredClone(runtime.snapshot().room.agents[0]!.config);
+  runtime.update(emptyAgentRoom(), Date.now());
+  const pending = runtime.create(config);
+  const rejected = expect(pending).rejects.toThrow(failure === 'timeout' ? 'did not confirm' : failure === 'disconnect' ? 'disconnected' : 'closed');
+  await vi.advanceTimersByTimeAsync(0);
+  if (failure === 'timeout') await vi.advanceTimersByTimeAsync(10_000);
+  else if (failure === 'disconnect') runtime.connectionLost();
+  else runtime.close();
+  await rejected;
+  runtime.close();
+  expect(vi.getTimerCount()).toBe(0);
+});
 it('ignores legacy persistent public mode and keeps personal transcripts private', async () => {
   const { runtime, publicLine, broadcast, sendAgent } = setup();
   await runtime.ask('private question');
