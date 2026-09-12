@@ -517,3 +517,7 @@ New dots arrive with a 300ms fade and a 1px→4px scale; the polyline extends ov
 - **Don't** rotate, orbit, parallax, or fog the Trace, and don't pulse, tick, or loop any analysis surface; the instrument is read, not admired.
 - **Don't** render a Hand, a meter, or a Trace before the data supports it, and don't stack intervention cards — if a stack is needed the intervention policy is wrong, not the layout.
 - **Don't** state a measure as a verdict about a person; the Hand describes one meeting and must be labelled as doing so.
+
+## Private reminders
+
+Private reminders use a reserved 144px-high slot at the lower right of the stage, above controls, without overlaying captions or resizing video when content changes. Cotton text and a lock label identify private content; no participant dye, sound, autofocus, or entrance animation is used. A polite screen-reader status announces the current reminder. The Private side-panel tab holds evidence and history. Hide removes content from both surfaces; it is available even when there are no reminders. Follow-up discussion belongs in the existing assistant session.

@@ -1,3 +1,5 @@
+import { PrivateNotices } from './private-notices';
+import { PrivateNoticeDock } from './private-notice-ui';
 import {
   createTranscription,
   type Credential,
@@ -72,6 +74,7 @@ const ROOM_QUERY_PARAM = 'room';
 const IDLE_TRANSCRIPTION: TranscriptionView = { status: 'idle', error: null };
 
 export function App(): ReactNode {
+  const [privateNotices] = useState(() => new PrivateNotices());
   const [phase, setPhase] = useState<AppPhase>('lobby');
   const [displayName, setDisplayName] = useState(readStoredDisplayName);
   const [roomInput, setRoomInput] = useState(readRoomCodeFromUrl);
@@ -617,6 +620,7 @@ export function App(): ReactNode {
     seatsRef.current.clear();
     nextSeatRef.current = 1;
     setParticipants({});
+    privateNotices.clear();
     setMessages([]);
     setFiles({});
     setTranscript([]);
@@ -764,7 +768,9 @@ export function App(): ReactNode {
 
   useEffect(() => {
     if (phase !== 'room') return;
+    const timer = window.setInterval(() => privateNotices.expire(), 1000);
     const unregister = registerMeetingTools({
+      privateNotices,
       snapshot: meetingSnapshot,
       log: () => logRef.current,
       download: async (fileId) => {
@@ -778,7 +784,7 @@ export function App(): ReactNode {
       captureScreen,
       sendAgentMessage: (text, agent) => sendChat(text, agent ?? 'Assistant'),
     });
-    return () => unregister?.();
+    return () => { window.clearInterval(timer); unregister?.(); privateNotices.clear(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase]);
 
@@ -805,6 +811,7 @@ export function App(): ReactNode {
         interims={interims}
         joinedAt={joinedAt}
         roomStartedAt={roomStartedAt}
+        privateNotices={privateNotices}
         panelTab={panelTab}
         error={error}
         leaving={phase === 'leaving'}
@@ -852,6 +859,7 @@ export function App(): ReactNode {
 }
 
 function MeetingSurface(props: {
+  privateNotices: PrivateNotices;
   roomCode: string;
   displayName: string;
   localStream: MediaStream | null;
@@ -938,6 +946,7 @@ function MeetingSurface(props: {
           {(props.error || props.transcription.error) && (
             <ErrorNotice message={props.error ?? props.transcription.error?.message ?? 'Something went wrong.'} />
           )}
+          <PrivateNoticeDock store={props.privateNotices} onHistory={() => props.onPanelTab('private')} />
           <MeetingControls
             micEnabled={props.micEnabled}
             cameraEnabled={props.cameraEnabled}
@@ -950,6 +959,7 @@ function MeetingSurface(props: {
           <p className="stage-caption"><LockKeyhole size={13} /> Full-mesh WebRTC · direct between browsers</p>
         </section>
         <SidePanel
+          privateNotices={props.privateNotices}
           tab={props.panelTab}
           onTabChange={props.onPanelTab}
           messages={props.messages}

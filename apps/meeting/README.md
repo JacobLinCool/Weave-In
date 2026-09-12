@@ -34,7 +34,7 @@ pnpm deploy:dry-run
 
 ## WebMCP
 
-When the browser exposes `navigator.modelContext` (or `document.modelContext`), the room registers four tools while a meeting is open and removes them on leave (`src/webmcp.ts`). Everything they return is this browser's own copy of the room; the Worker is not involved.
+When the browser exposes `navigator.modelContext` (or `document.modelContext`), the room registers six tools while a meeting is open and removes them on leave (`src/webmcp.ts`). Everything they return is this browser's own copy of the room; the Worker is not involved.
 
 | Tool | Input | What it does |
 | --- | --- | --- |
@@ -42,6 +42,20 @@ When the browser exposes `navigator.modelContext` (or `document.modelContext`), 
 | `download_file` | `fileId`, `offset?`, `length?` | Fetches the file from the participant who shared it (peer-to-peer, cached afterwards) and returns a slice: UTF-8 text for text files, base64 otherwise. Continue from `nextOffset` until `eof`. Default slice 1 MiB, maximum 8 MiB. |
 | `capture_screen_share` | `maxWidth?`, `format?`, `quality?` | A still image of the screen currently being shared (yours or another participant's), as the room sees it, returned as an MCP `image` content block next to a text block naming the presenter and the dimensions. When nobody is sharing, the text block says so. |
 | `send_chat_message` | `text`, `agent?` | Posts to chat on behalf of the participant using this browser. Every screen labels it "<name>'s agent" (with the `agent` name as a tag) rather than as something they typed. |
+| `show_private_notice` | `id`, `text`, `evidenceSeqs`, `ttlSeconds?` | Places a contextual reminder in this browser's private dock. Cite 1–5 speech/chat sequence numbers from `read_meeting`; text is limited to 240 characters. Stable ids make retries safe within the retained history. |
+| `read_private_notices` | none | Reads private history, lifecycle statuses, and whether display is hidden. Does not publish anything to the room. |
+
+### Private reminders
+
+A reserved slot above the meeting controls shows one reminder at a time. New reminders replace the current reminder; dismissing does not surface older ones. The **Private** tab holds up to 50 reminders with copied evidence. Reminders expire after 120 seconds by default (15–300 configurable), and remain in history. **Hide** hides content in both surfaces, including future reminders. It does not stop the assistant from reading the private history. Screen sharing can reveal any visible private content.
+
+Reminder state exists only in this tab's memory, is cleared on leaving, and is never added to the meeting log, peer messages, server storage, or localStorage. A connected agent must explicitly call the tool: this feature does not implement Groupthink detection, background monitoring, or waking an idle Codex session. Ordinary browsers can render the same UI but need a future producer integration to receive reminders. Follow-up conversation stays in the user's existing assistant session; there is no automatic conversation handoff.
+
+Example, after reading sequence 42 from the current meeting:
+
+```json
+{"id":"maintenance-cost","text":"Your maintenance-cost question is still unanswered, and the group is preparing to decide.","evidenceSeqs":[42],"ttlSeconds":120}
+```
 
 Tool results are `{ content: [{ type: 'text', text: <JSON> }] }` (plus an `image` block for screen captures), with `isError: true` and `{ ok: false, error }` on invalid input. `read_meeting` also reports `screenShare.presenter` so an agent knows when a capture is worth taking.
 

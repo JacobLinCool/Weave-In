@@ -1,3 +1,5 @@
+import { PrivateNoticeHistory } from './private-notice-ui';
+import type { PrivateNotices } from './private-notices';
 import type { TranscriptionStatus } from '@weave-in/transcribe';
 import {
   AlertCircle,
@@ -79,7 +81,7 @@ export interface TranscriptionView {
   error: { code: string; message: string } | null;
 }
 
-export type SidePanelTab = 'chat' | 'transcript';
+export type SidePanelTab = 'chat' | 'transcript' | 'private';
 
 export function VideoTile({
   name,
@@ -278,6 +280,7 @@ export function MeetingControls({
 }
 
 export function SidePanel({
+  privateNotices,
   tab,
   onTabChange,
   messages,
@@ -289,6 +292,7 @@ export function SidePanel({
   onShareFiles,
   onDownloadFile,
 }: {
+  privateNotices: PrivateNotices;
   tab: SidePanelTab;
   onTabChange(tab: SidePanelTab): void;
   messages: ChatMessage[];
@@ -309,8 +313,9 @@ export function SidePanel({
         <button role="tab" type="button" aria-selected={tab === 'transcript'} className={tab === 'transcript' ? 'is-active' : ''} onClick={() => onTabChange('transcript')}>
           <Captions size={15} /> Transcript{transcript.length > 0 && <em>{transcript.length}</em>}
         </button>
+        <button role="tab" type="button" aria-selected={tab === 'private'} className={tab === 'private' ? 'is-active' : ''} onClick={() => onTabChange('private')}>Private</button>
       </div>
-      {tab === 'chat'
+      {tab === 'private' ? <PrivateNoticeHistory store={privateNotices} /> : tab === 'chat'
         ? <ChatPanel messages={messages} files={files} joinedAt={joinedAt} onSend={onSendChat} onShareFiles={onShareFiles} onDownloadFile={onDownloadFile} />
         : <TranscriptPanel transcript={transcript} interims={interims} joinedAt={joinedAt} />}
     </aside>

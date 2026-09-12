@@ -1,3 +1,4 @@
+import type { PrivateNotices } from './private-notices';
 import type { TranscriptionStatus } from '@weave-in/transcribe';
 import type { SharedFile, SharedFileStatus } from './file-share';
 import { DEFAULT_LOG_PAGE, MAX_LOG_PAGE, type LogParticipant, type MeetingLog } from './meeting-log';
@@ -5,7 +6,7 @@ import { MAX_AGENT_LABEL_CHARACTERS, MAX_CHAT_CHARACTERS } from './protocol';
 import type { CaptureOptions, CapturedFrame } from './screen-capture';
 
 /**
- * WebMCP exposes four tools to an agent running in the participant's browser: read the
+ * WebMCP exposes meeting and private reminder tools to an agent running in the participant's browser: read the
  * meeting record, fetch a shared file, look at the screen being shared, and post to chat
  * as that participant's agent. Everything the tools return comes from this browser's own
  * copy of the room.
@@ -16,6 +17,8 @@ export const MEETING_TOOL_NAMES = Object.freeze({
   download: 'download_file',
   capture: 'capture_screen_share',
   send: 'send_chat_message',
+  notice: 'show_private_notice',
+  notices: 'read_private_notices',
 });
 
 export const MIN_CAPTURE_WIDTH = 320;
@@ -51,6 +54,7 @@ export interface ScreenCapture extends CapturedFrame {
 }
 
 export interface MeetingToolsContext {
+  privateNotices: PrivateNotices;
   snapshot(): MeetingSnapshot;
   log(): MeetingLog;
   download(fileId: string): Promise<{ file: SharedFile; blob: Blob }>;
@@ -296,6 +300,36 @@ export function createMeetingTools(context: MeetingToolsContext): ToolDefinition
         return success({ ok: true, id: posted.id, at: posted.at, shownAs: `${you.name}'s agent${agent ? ` · ${agent}` : ''}` });
       },
     },
+    {
+      name: MEETING_TOOL_NAMES.notice,
+      description: 'Leave one private, contextual reminder in this participant’s Weave In page. Never sent to room chat or peers. Reference speech or chat sequence numbers from read_meeting. State a concrete overlooked concern and useful action, in the participant’s language, without judging people. Use a stable id for retries; dismissed or expired ids are not resurfaced while retained. A new reminder replaces the active one. Do not repeatedly nudge someone who ignores it. Does not start background monitoring or send a message to the assistant conversation.',
+      inputSchema: {
+        type: 'object', additionalProperties: false,
+        properties: {
+          id: { type: 'string', pattern: '^[a-zA-Z0-9_-]{1,80}$' },
+          text: { type: 'string', minLength: 1, maxLength: 240 },
+          evidenceSeqs: { type: 'array', minItems: 1, maxItems: 5, items: { type: 'integer', minimum: 1 } },
+          ttlSeconds: { type: 'integer', minimum: 15, maximum: 300, default: 120 },
+        }, required: ['id', 'text', 'evidenceSeqs'],
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      execute: async (input) => {
+        try {
+          const notice = context.privateNotices.show(input, context.log());
+          return success({ ok: true, notice, hidden: context.privateNotices.getSnapshot().hidden });
+        } catch (error) { return failure(error instanceof Error ? error.message : 'Cannot show reminder.'); }
+      },
+    },
+    {
+      name: MEETING_TOOL_NAMES.notices,
+      description: 'Read this browser’s private reminder history and whether its display is hidden. Check dismissed, expired and replaced reminders before deciding whether another reminder is useful. These records never appear in read_meeting or shared chat.',
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      execute: async () => {
+        context.privateNotices.expire();
+        return success(context.privateNotices.getSnapshot());
+      },
+    },
   ];
 }
 
@@ -317,7 +351,10 @@ export function registerMeetingTools(
   modelContext: ModelContextLike | null = findModelContext(),
 ): (() => void) | null {
   if (!modelContext) return null;
-  const tools = createMeetingTools(context);
+  let active = true;
+  const tools = createMeetingTools(context).map((tool) => ({ ...tool,
+    execute: (...args: Parameters<ToolDefinition['execute']>) => active ? tool.execute(...args) : Promise.resolve(failure('The meeting has ended.')),
+  }));
   const controller = new AbortController();
   if (typeof modelContext.registerTool === 'function') {
     const registered: string[] = [];
@@ -331,6 +368,7 @@ export function registerMeetingTools(
       }
     }
     return () => {
+      active = false;
       controller.abort();
       for (const name of registered) {
         try {
@@ -350,6 +388,7 @@ export function registerMeetingTools(
     }
     return () => {
       try {
+        active = false;
         if (typeof modelContext.clearContext === 'function') modelContext.clearContext();
         else modelContext.provideContext?.({ tools: [] });
       } catch {

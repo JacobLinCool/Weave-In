@@ -46,6 +46,8 @@ Name: Weave In. "Keep the thread. Weave everyone in." The tagline is the product
 
 ### Shipped
 
+- Private, agent-authored reminders in a reserved page dock and a Private history tab. Evidence comes from this browser's meeting record. Reminders remain local, can be hidden or dismissed, expire, and are cleared on leaving. Follow-up stays in the existing assistant conversation. This is a delivery surface, not an implemented Groupthink detector or autonomous monitoring service.
+
 - Camera, microphone, screen share with live renegotiation, chat panel, per-speaker live captions on tiles, and a merged transcript panel.
 - Per-participant local transcription: each browser transcribes only its own microphone (browser echo cancellation keeps remote voices out) and streams interim and final text to everyone.
 - Up to 4 selected BCP-47 languages or automatic detection; caption style Verbatim or Smart.

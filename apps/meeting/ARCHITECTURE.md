@@ -137,3 +137,9 @@ The dependency chain is real; skipping ahead produces a demo with nothing to sho
 8. **Post-meeting report.** Reads `interventions` incl. the `_after` columns.
 
 Whiteboard is not on this list. See `PRODUCT.md` § Explicitly deferred.
+
+## Private reminder delivery (implemented)
+
+`private-notices.ts` holds one per-tab, in-memory store independent of `MeetingLog` and all transports. `show_private_notice` validates and copies evidence from the local log; `read_private_notices` exposes delivery status to the connected agent. `private-notice-ui.tsx` subscribes to this store for the reserved dock and history panel. A local timer expires active reminders; room cleanup clears the store and invalidates registered tool handles.
+
+No new Worker, signaling, peer protocol, or API calls are involved. The page cannot assume a WebMCP tool can wake an idle agent. Detection and continuous monitoring remain separate, unimplemented work. The group-wide analysis and intervention design above remains a proposal; private reminder delivery does not implement it.
