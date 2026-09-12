@@ -58,9 +58,17 @@ export class MeetingLog {
     const start = Math.max(0, Math.min(Math.floor(after), this.head));
     const size = Math.max(1, Math.min(Math.floor(limit), MAX_LOG_PAGE));
     // Sequence numbers are dense and start at 1, so the index of the first entry after the cursor is the cursor itself.
-    const entries = this.#entries.slice(start, start + size);
+    const offset = Math.max(0, start - (this.#entries[0]?.seq ?? 1) + 1);
+    const entries = this.#entries.slice(offset, offset + size);
     const last = entries[entries.length - 1];
-    return { entries, nextCursor: last ? last.seq : Math.max(0, Math.floor(after)), hasMore: start + size < this.#entries.length };
+    return { entries, nextCursor: last ? last.seq : Math.max(0, Math.floor(after)), hasMore: offset + size < this.#entries.length };
+  }
+
+  snapshot(limit = 2000): MeetingLogEntry[] { return this.#entries.slice(-limit); }
+
+  restore(entries: MeetingLogEntry[]): void {
+    this.#entries = structuredClone(entries);
+    this.#next = (entries.at(-1)?.seq ?? 0) + 1;
   }
 
   clear(): void {

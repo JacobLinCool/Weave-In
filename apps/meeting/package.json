@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit",
     "test": "WRANGLER_LOG_PATH=./wrangler.log vitest run",
     "deploy": "pnpm build && WRANGLER_LOG_PATH=./wrangler.log wrangler deploy",
-    "deploy:dry-run": "pnpm build && WRANGLER_LOG_PATH=./wrangler.log wrangler deploy --dry-run"
+    "deploy:dry-run": "pnpm build && WRANGLER_LOG_PATH=./wrangler.log wrangler deploy --dry-run",
+    "serve:local": "node scripts/serve-local.mjs"
   },
   "dependencies": {
     "@fontsource-variable/azeret-mono": "5.2.8",
@@ -33,6 +34,7 @@
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.5",
     "@vitejs/plugin-react": "6.1.0",
+    "miniflare": "5.20260826.0-alpha",
     "vite": "8.2.2",
     "vite-plugin-static-copy": "^4.1.1",
     "wrangler": "4.127.0"

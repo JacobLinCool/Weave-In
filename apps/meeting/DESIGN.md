@@ -362,7 +362,7 @@ This is a flat, tonal system. Depth is three steps of indigo (base, panel, raise
 
 Corners are soft and stepped by role. Threads and their crossings are 3px; speaker tags and woven chips 4px; the segmented control's inner buttons 8px; inputs, icon buttons, language cards, message rows, and tile captions 10px; buttons, transport controls, draft sheets, the preview frame, and live captions 12px; the room panel and video tiles 14px; the dialog 16px. Status pills, tab count badges, and the switch are full pills (999px). The weave mark rounds at 22% of its size (14 on a 64 grid).
 
-Borders are 1px, Line on interactive and framed surfaces, Line Soft on rules. Two dashed borders carry meaning: the "Our server" chip (dashed Cotton Dim) for a path that carries nothing, and the interim transcript row (dashed Line) for text not yet final. The draft's caption is separated by a dashed Line rule.
+Borders are 1px, Line on interactive and framed surfaces, Line Soft on rules. The interim transcript row uses a dashed Line border for text not yet final. The "Our server" chip is filled because automatic analysis sends transcript text through the server. The draft's caption is separated by a dashed Line rule.
 
 The recurring silhouette is the plain weave: vertical warps, horizontal wefts, and the warp rising over the weft on alternate crossings (`(row + column) % 2 === 0`). It appears at four scales: the favicon and mark (4×4 on a 64 grid), the woven chip (4px stripes), the swatch (3 warps × 8 wefts), and the live draft (5 warps × 7 picks). The selvedge is eight equal columns of thread colour, 6px tall, flush to the top edge of the room panel. Warps fade in from transparent over their first 30px and out over their last 4px.
 
@@ -517,3 +517,7 @@ New dots arrive with a 300ms fade and a 1px→4px scale; the polyline extends ov
 - **Don't** rotate, orbit, parallax, or fog the Trace, and don't pulse, tick, or loop any analysis surface; the instrument is read, not admired.
 - **Don't** render a Hand, a meter, or a Trace before the data supports it, and don't stack intervention cards — if a stack is needed the intervention policy is wrong, not the layout.
 - **Don't** state a measure as a verdict about a person; the Hand describes one meeting and must be labelled as doing so.
+
+## Private reminders
+
+Private reminders use an absolutely positioned card at the lower left of the video stage, above controls. No empty reminder card appears and no stage space is reserved. The card avoids caption/error rectangles; if it cannot fit it remains in Private rather than covering them. One card appears at a time, remains stable while being read, and collapses after 15 seconds excluding hover/focus time. Collapse is distinct from dismissal and read status. The Private tab shows an unread dot and holds history, evidence, visibility and monitoring controls. Cotton text, a lock, and “Omni · Only you” identify the card; no sound, autofocus, or entrance animation. Keyboard activation returns focus to the Private tab when closing or viewing evidence.
