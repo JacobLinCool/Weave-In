@@ -510,7 +510,6 @@ button:disabled { cursor: wait; opacity: .55; }
 .private-notice-toast button { min-height: 28px; }
 
 .personal-chat-panel { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
-.personal-chat-panel .private-notice-history { overflow: visible; flex: none; }
 .side-panel__tabs > button { min-width: 0; padding-inline: 8px; }
 
 .room-chat-panel { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: auto; }
