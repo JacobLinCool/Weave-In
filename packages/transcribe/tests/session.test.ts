@@ -81,6 +81,15 @@ describe('TranscriptionSession', () => {
     expect((await session.start()).code).toBe('ALREADY_RUNNING');
     callbacks?.onFinal('A retained thought.', 1);
     expect(session.getTranscript().data?.segments[0]?.text).toBe('A retained thought.');
+    callbacks?.onReconnecting?.();
+    expect(session.getState().status).toBe('starting');
+    expect(mixer.started).toBe(true);
+    expect(transport.stop).not.toHaveBeenCalled();
+    expect(session.getTranscript().data?.segments[0]?.text).toBe('A retained thought.');
+    callbacks?.onConnectionReady(2);
+    expect(session.getState().status).toBe('transcribing');
+    expect(session.getState().sessionId).toBe('session-1');
+    expect(session.getState().connectionCount).toBe(2);
     expect((await session.stop()).code).toBe('TRANSCRIPTION_STOPPED');
     expect(session.getTranscript().data?.segments).toHaveLength(1);
     expect(mixer.sourceCount).toBe(1);

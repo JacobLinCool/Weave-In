@@ -261,6 +261,10 @@ export class TranscriptionSession {
             this.#store.markTranscribing(connection);
             this.#emit();
           },
+          onReconnecting: () => {
+            this.#store.markReconnecting();
+            this.#emit();
+          },
           onFatalError: (code, message) => void this.#failActiveSession(code, message),
         },
       });
