@@ -164,7 +164,7 @@ export function App(): ReactNode {
   checkpointRef.current = () => {
     const self = selfRef.current;
     if (phaseRef.current !== 'room' || !self || !roomCodeRef.current || !roomStartedAt || !joinedAt) return;
-    const saved = saveMeetingSession({version:1,monitoringEnabled:autoReminders.getSnapshot().enabled,savedAt:Date.now(),roomCode:roomCodeRef.current,peerId:self.peerId,name:nameRef.current,startedAt:roomStartedAt,joinedAt,
+    const saved = saveMeetingSession({version:1,savedAt:Date.now(),roomCode:roomCodeRef.current,peerId:self.peerId,name:nameRef.current,startedAt:roomStartedAt,joinedAt,
       log:logRef.current.snapshot(), personalChat: agentRef.current?.snapshot().lines ?? personalChatRef.current,
       messages:messagesRef.current,transcript:transcriptRef.current,notices:privateNotices.getSnapshot()});
     setRecoveryWarning(!saved);
@@ -561,7 +561,6 @@ export function App(): ReactNode {
         setRoomStartedAt(saved?.startedAt ?? null); setJoinedAt(saved?.joinedAt ?? null);
         seenRef.current = new Set([...messagesRef.current, ...transcriptRef.current].filter(r=>!r.own).map(r=>`${r.from}:${r.id}`));
         if (saved) privateNotices.restore(saved.notices); else privateNotices.clear();
-        autoReminders.setEnabled(saved?.monitoringEnabled ?? true);
       };
       if (roomCodeRef.current !== code) restoreSession();
       const stream = await prepareMedia();
@@ -902,7 +901,7 @@ export function App(): ReactNode {
         }
         return result;
       },
-      sendAgentMessage: (text, agent) => sendChat(text, agent ?? 'Assistant'),
+      sendAgentMessage: (text, agent) => sendChat(text, agent ?? 'Muse'),
     });
     return () => { autoReminders.stop(); window.clearInterval(timer); unregister?.(); privateNotices.clear(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -939,7 +938,7 @@ export function App(): ReactNode {
           }
           return result;
         },
-        sendAgentMessage: (text, agent) => sendChat(text, agent ?? 'Assistant'),
+        sendAgentMessage: (text, agent) => sendChat(text, agent ?? 'Muse'),
       },
       beginVoice: async (audience, owner) => {
         const source = localStreamRef.current?.getAudioTracks()[0];
@@ -989,11 +988,10 @@ export function App(): ReactNode {
   useEffect(() => { checkpointRef.current(); }, [messages, transcript, phase, roomStartedAt, joinedAt]);
   useEffect(() => {
     const unsubscribe = privateNotices.subscribe(() => checkpointRef.current());
-    const unsubscribeMonitor = autoReminders.subscribe(() => checkpointRef.current());
     const save = () => checkpointRef.current();
     window.addEventListener('pagehide', save);
-    return () => { unsubscribe(); unsubscribeMonitor(); window.removeEventListener('pagehide', save); };
-  }, [privateNotices, autoReminders]);
+    return () => { unsubscribe(); window.removeEventListener('pagehide', save); };
+  }, [privateNotices]);
 
   useEffect(() => {
     const track = localStream?.getAudioTracks()[0];
@@ -1008,7 +1006,7 @@ export function App(): ReactNode {
             activeSince ??= performance.now();
             if (performance.now() - activeSince >= 100) agentRuntime.ownerStartedSpeaking();
           });
-        } catch { setError('Speech interruption is unavailable. Use Stop in Muse to interrupt your assistant.'); }
+        } catch { setError('Speech interruption is unavailable. Use Stop in Muse to interrupt the response.'); }
       } else if (!agentRuntime.snapshot().publicPersonalSpeaking && stop) {
         const cleanup = stop; stop = undefined; cleanup(); activeSince = null;
       }
@@ -1029,9 +1027,9 @@ export function App(): ReactNode {
         groupPanel={agentRuntime ? <AgentPanel runtime={agentRuntime} mode="group" isHost={selfRef.current?.isHost ?? false} /> : null}
         noticeActions={{
           onSpeak: async (text) => { if (!agentRuntime) throw new Error('Muse is reconnecting. Please try again.'); await agentRuntime.speakForMe(text); },
-          onDiscuss: async (text) => { if (!agentRuntime) throw new Error('Muse is reconnecting. Please try again.'); await agentRuntime.discussReminder(text); setPanelTab('private'); },
+          onDiscuss: async (text) => { if (!agentRuntime) throw new Error('Muse is reconnecting. Please try again.'); await agentRuntime.discussReminder(text); setPanelTab('assistant'); },
         }}
-        agentPanel={agentRuntime ? (reminders) => <AgentPanel runtime={agentRuntime} mode="personal" reminders={reminders} isHost={selfRef.current?.isHost ?? false} /> : undefined}
+        agentPanel={agentRuntime ? <AgentPanel runtime={agentRuntime} mode="personal" isHost={selfRef.current?.isHost ?? false} /> : null}
         whiteboard={whiteboard}
         whiteboardOpen={whiteboardOpen}
         onToggleWhiteboard={() => setWhiteboardOpen(open => !open)}
@@ -1100,7 +1098,7 @@ export function App(): ReactNode {
 }
 
 function MeetingSurface(props: {
-  agentPanel: ((reminders: ReactNode) => ReactNode) | undefined;
+  agentPanel: ReactNode;
   groupPanel: ReactNode;
   noticeActions: NoticeActions;
   whiteboard: ExcalidrawStore;
@@ -1210,7 +1208,7 @@ function MeetingSurface(props: {
               onToggleScreen={props.onToggleScreen}
             />
           </div>
-          <PrivateNoticeToast store={props.privateNotices} onHistory={() => props.onPanelTab('private')} {...props.noticeActions} />
+          <PrivateNoticeToast store={props.privateNotices} onHistory={() => props.onPanelTab('assistant')} {...props.noticeActions} />
         </section>
         <SidePanel
           agentPanel={props.agentPanel}

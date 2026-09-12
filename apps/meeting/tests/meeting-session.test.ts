@@ -26,10 +26,8 @@ function fixture(): MeetingSession {
   const notices = new PrivateNotices();
   notices.show({ id: 'auto-1', text: 'Check the concern', evidenceSeqs: [1] }, log, 1000);
   notices.dismiss('auto-1');
-  notices.setHidden(true);
   return {
     version: 1,
-    monitoringEnabled: false,
     savedAt: 1000,
     roomCode: 'ABCDEF',
     peerId: 'a'.repeat(32),
@@ -49,7 +47,7 @@ function chatLine(id = 'line_1'): AgentLine {
     text: 'We still need to address your concern.', at: '2026-09-12T00:00:00Z', playback: 'not-played' };
 }
 describe('same-tab room recovery', () => {
-  it('restores identity, text, evidence and dismissed/hidden state only for the same room', () => {
+  it('restores identity, text, evidence and dismissed state only for the same room', () => {
     const s = storage();
     const value = fixture();
     expect(saveMeetingSession(value, s)).toBe(true);

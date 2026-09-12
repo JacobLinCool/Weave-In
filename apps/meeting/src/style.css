@@ -200,7 +200,7 @@ button:disabled { cursor: wait; opacity: .55; }
 .transport-button.is-active { color: var(--mint); border-color: rgba(151,233,198,.35); background: rgba(151,233,198,.08); }
 .transport-button:disabled { cursor: not-allowed; }
 
-.side-panel { width: 340px; flex: 0 0 340px; min-height: 0; display: flex; flex-direction: column; border-left: 1px solid var(--line); background: var(--panel); }
+.side-panel { width: clamp(360px, 34vw, 560px); flex: 0 0 clamp(360px, 34vw, 560px); min-height: 0; display: flex; flex-direction: column; border-left: 1px solid var(--line); background: var(--panel); }
 .side-panel__tabs { flex: none; display: flex; border-bottom: 1px solid var(--line-soft); }
 .side-panel__tabs button { flex: 1; min-height: 46px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; cursor: pointer; }
 .side-panel__tabs button.is-active { color: var(--ink); border-bottom-color: var(--accent); }
@@ -504,12 +504,12 @@ button:disabled { cursor: wait; opacity: .55; }
   .meeting-footer .transport-button svg { flex-shrink: 0; }
 }
 
-.private-monitor { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--dim); font-size: 11px; }
 
 .private-unread { width: 6px; height: 6px; flex-shrink: 0; border-radius: 50%; background: var(--accent); }
 .private-notice-toast button { min-height: 28px; }
 
 .personal-chat-panel { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
+.personal-chat-panel .private-notice-history { overflow-y: auto; flex: none; max-height: 30%; }
 .side-panel__tabs > button { min-width: 0; padding-inline: 8px; }
 
 .room-chat-panel { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: auto; }

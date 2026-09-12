@@ -59,6 +59,16 @@ export function applyAgentCommand(state: AgentRoomState, member: AgentMember, co
   const group = agent.config.kind === 'group';
   if (!group && agent.owner !== member.peerId) throw new Error('Only the owner can control this personal agent.');
   switch (command.type) {
+    case 'agent-configure':
+      if (command.config.kind !== agent.config.kind) throw new Error('Agent type cannot be changed.');
+      agent.config = command.config;
+      agent.epoch++;
+      agent.request++;
+      agent.pending = false;
+      agent.phase = agent.runner ? 'idle' : 'waiting';
+      state.queue = state.queue.filter((id) => id !== agent.id);
+      if (state.floor?.agentId === agent.id) state.floor = null;
+      return;
     case 'agent-remove':
       if (agent.owner !== member.peerId && !member.isHost) throw new Error('Only the creator or host can remove this agent.');
       state.agents = state.agents.filter((entry) => entry !== agent);

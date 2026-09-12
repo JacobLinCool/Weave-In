@@ -393,7 +393,7 @@ export function createMeetingTools(context: MeetingToolsContext): ToolDefinition
       execute: async (input) => {
         try {
           const notice = context.privateNotices.show(input, context.log());
-          return success({ ok: true, notice, hidden: context.privateNotices.getSnapshot().hidden });
+          return success({ ok: true, notice });
         } catch (error) { return failure(error instanceof Error ? error.message : 'Cannot show reminder.'); }
       },
     },

@@ -2,6 +2,8 @@ async (page, origin = 'http://127.0.0.1:8788') => {
   const browser = page.context().browser();
   const setup = async (context) => {
     context.setDefaultTimeout(20_000);
+    // UI integration uses local peers; TURN behavior has a separate relay harness.
+    await context.route('**/api/ice-servers', (route) => route.fulfill({ json: { ok: true, expiresAt: Date.now() + 86_400_000, iceServers: [{ urls: 'turn:127.0.0.1:9', username: 'test', credential: 'test' }] } }));
     await context.grantPermissions(['microphone', 'camera']);
     await context.addInitScript(() => {
       if (location.origin === 'null') return;
@@ -161,19 +163,22 @@ async (page, origin = 'http://127.0.0.1:8788') => {
       ctx.fillStyle = '#171c35'; ctx.font = '22px sans-serif'; ctx.fillText('Review intake', 28, 92); ctx.fillText('Ship release', 312, 92);
       return canvas.toDataURL('image/png').split(',')[1];
     });
-    await guest.getByTestId('file-picker').setInputFiles([
-      { name: 'workflow-notes.txt', mimeType: 'text/plain', buffer: Buffer.from('Review intake, approve the plan, and ship release. If rejected, return to intake.\n') },
-      { name: 'workflow-reference.png', mimeType: 'image/png', buffer: Buffer.from(image, 'base64') },
-    ]);
+    await guest.getByTestId('file-picker').evaluate((input, image) => {
+      const files = new DataTransfer();
+      files.items.add(new File(['Review intake, approve the plan, and ship release. If rejected, return to intake.'], 'workflow-notes.txt', { type: 'text/plain' }));
+      files.items.add(new File([Uint8Array.from(atob(image), char => char.charCodeAt(0))], 'workflow-reference.png', { type: 'image/png' }));
+      input.files = files.files;
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    }, image);
     await page.getByTestId('file-card').getByText('workflow-notes.txt', { exact: true }).waitFor();
     await page.getByTestId('file-card').getByText('workflow-reference.png', { exact: true }).waitFor();
     if (await page.getByRole('region', { name: 'Shared whiteboard', exact: true }).count()) throw new Error('Whiteboard should start closed');
     await tab(page, 'Muse').click();
-    await page.getByRole('button', { name: 'Talk', exact: true }).click();
+    await page.getByRole('button', { name: 'Talk to Muse', exact: true }).click();
     await page.waitForFunction(() => window.__chatToolsTest.complete || window.__chatToolsTest.errors.length, null, { timeout: 60_000 });
     const errors = await page.evaluate(() => window.__chatToolsTest.errors);
     if (errors.length) throw new Error(errors.join('\n'));
-    await page.getByRole('log', { name: 'Personal assistant transcript' }).getByText(/private-reply-only/).waitFor();
+    await page.getByRole('log', { name: 'Muse transcript' }).getByText(/private-reply-only/).waitFor();
     await page.getByRole('region', { name: 'Shared whiteboard', exact: true }).waitFor();
     const zoom = await page.evaluate(() => {
       const value = Array.from(document.querySelectorAll('.whiteboard button')).map(button => button.textContent?.trim()).find(text => /^\d+(?:\.\d+)?%$/.test(text ?? ''));
@@ -222,7 +227,7 @@ async (page, origin = 'http://127.0.0.1:8788') => {
     await tab(guest, 'Transcript').click();
     if (/private-voice-only|private-reply-only/.test(await guest.locator('body').innerText())) throw new Error('Guest saw private voice conversation');
     await page.getByRole('button', { name: 'Finish speaking', exact: true }).click();
-    await page.getByRole('button', { name: 'Talk', exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Talk to Muse', exact: true }).waitFor();
     return { clients: 2, calls: provider.calls, guestFileTransfer: true, sharedImageAsProviderVision: true, guestBoardSync: true, boardAutoOpen: true, renderedBoardAsProviderVision: true, diagramInViewport: true, boardZoom: zoom, renderedDiagram, attributedRoomPost: true, privateVoiceIsolation: true, allParticipantContextDefault: true, screenOptInPreserved: true, provider: 'simulated GPT-Live WebRTC with real room and tool execution (no real provider call)' };
   } finally {
     await Promise.all([ownerContext, guestContext].map(context => context.close()));

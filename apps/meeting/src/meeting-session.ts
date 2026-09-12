@@ -10,7 +10,6 @@ const MAX_PERSONAL_CHAT = 200;
 export const SESSION_TTL = 12 * 60 * 60 * 1000;
 export interface MeetingSession {
   version: 1;
-  monitoringEnabled: boolean;
   savedAt: number;
   roomCode: string;
   peerId: string;
@@ -86,7 +85,6 @@ export function loadMeetingSession(roomCode: string, source = storage(), now = D
     if (
       !record(v) ||
       v.version !== 1 ||
-      typeof v.monitoringEnabled !== 'boolean' ||
       v.roomCode !== roomCode ||
       !ROOM_CODE_PATTERN.test(roomCode) ||
       !text(v.peerId) ||
@@ -110,7 +108,6 @@ export function loadMeetingSession(roomCode: string, source = storage(), now = D
       (v.personalChat !== undefined && (!Array.isArray(v.personalChat) ||
         v.personalChat.length > MAX_PERSONAL_CHAT || !v.personalChat.every(privateChatLine))) ||
       !record(v.notices) ||
-      typeof v.notices.hidden !== 'boolean' ||
       !Array.isArray(v.notices.notices) ||
       v.notices.notices.length > 50
     )
