@@ -53,6 +53,75 @@ class FakeMixer implements SessionAudioMixer {
 }
 
 describe('TranscriptionSession', () => {
+  it('preserves a finalization error reported while stopping instead of reporting success', async () => {
+    const session = new TranscriptionSession({
+      workletUrl: 'worklet.js',
+      credential: { type: 'api-key', value: 'key' },
+      mixer: new FakeMixer(),
+      dependencies: {
+        randomUUID: () => 'finalization-error',
+        createTranscriber: ({ callbacks }) => ({
+          audioFormat: { sampleRate: 24_000, framesPerChunk: 2_400 },
+          async start() {
+            callbacks.onConnectionReady(1);
+            callbacks.onFinal('Retained final.', 1);
+          },
+          sendAudio() {},
+          async stop() {
+            callbacks.onFatalError('OPENAI_FINALIZATION_TIMEOUT', 'The transcript may be incomplete.');
+          },
+        }),
+      },
+    });
+    session.addAudioSource(fakeTrack());
+    await session.start({ provider: 'openai' });
+    const stopped = await session.stop();
+    expect(stopped).toMatchObject({ ok: false, code: 'OPENAI_FINALIZATION_TIMEOUT' });
+    expect(session.getState()).toMatchObject({
+      status: 'error',
+      error: { code: 'OPENAI_FINALIZATION_TIMEOUT' },
+      segments: [{ text: 'Retained final.' }],
+    });
+    await session.destroy();
+  });
+
+  it.each(['gemini', 'openai'] as const)('normalizes %s output before notifying subscribers', async (provider) => {
+    let callbacks: LiveTranscriptionCallbacks | undefined;
+    const session = new TranscriptionSession({
+      workletUrl: 'worklet.js',
+      credential: { type: 'api-key', value: 'key' },
+      options: { provider, languageCodes: ['cmn-Hant-TW', 'en-US'] },
+      mixer: new FakeMixer(),
+      dependencies: {
+        randomUUID: () => 'traditional',
+        createTranscriber: (args) => {
+          expect(args.provider).toBe(provider);
+          callbacks = args.callbacks;
+          return {
+            audioFormat: { sampleRate: 16_000, framesPerChunk: 1_600 },
+            async start() { args.callbacks.onConnectionReady(1); },
+            sendAudio() {},
+            async stop() {},
+          };
+        },
+      },
+    });
+    const listener = vi.fn();
+    session.subscribe(listener);
+    session.addAudioSource(fakeTrack());
+    expect((await session.start()).ok).toBe(true);
+    callbacks!.onInterim('这个软件');
+    expect(listener).toHaveBeenLastCalledWith(expect.objectContaining({ interim: '這個軟件' }));
+    const pending = session.waitForTranscript({ waitMs: 1_000 });
+    callbacks!.onFinal('这个软件', 1);
+    expect(listener).toHaveBeenLastCalledWith(expect.objectContaining({
+      interim: '', segments: [expect.objectContaining({ text: '這個軟件' })],
+    }));
+    await expect(pending).resolves.toMatchObject({ data: { segments: [{ text: '這個軟件' }] } });
+    expect(session.getTranscript().data?.segments[0]?.text).toBe('這個軟件');
+    await session.destroy();
+  });
+
   it('shares idempotent state between start, transcript reads, and stop', async () => {
     const mixer = new FakeMixer();
     let callbacks: LiveTranscriptionCallbacks | undefined;
@@ -81,6 +150,15 @@ describe('TranscriptionSession', () => {
     expect((await session.start()).code).toBe('ALREADY_RUNNING');
     callbacks?.onFinal('A retained thought.', 1);
     expect(session.getTranscript().data?.segments[0]?.text).toBe('A retained thought.');
+    callbacks?.onReconnecting?.();
+    expect(session.getState().status).toBe('starting');
+    expect(mixer.started).toBe(true);
+    expect(transport.stop).not.toHaveBeenCalled();
+    expect(session.getTranscript().data?.segments[0]?.text).toBe('A retained thought.');
+    callbacks?.onConnectionReady(2);
+    expect(session.getState().status).toBe('transcribing');
+    expect(session.getState().sessionId).toBe('session-1');
+    expect(session.getState().connectionCount).toBe(2);
     expect((await session.stop()).code).toBe('TRANSCRIPTION_STOPPED');
     expect(session.getTranscript().data?.segments).toHaveLength(1);
     expect(mixer.sourceCount).toBe(1);

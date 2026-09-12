@@ -39,7 +39,7 @@ export interface ClientSignalMessage {
 export type ClientMessage = ClientSignalMessage | AgentCommand;
 
 export type ServerMessage =
-  | { type: 'welcome'; self: PeerIdentity; peers: PeerIdentity[]; sessionToken: string }
+  | { type: 'welcome'; self: PeerIdentity; peers: PeerIdentity[]; startedAt: number; serverTime: number; sessionToken: string }
   | { type: 'agent-state'; state: AgentRoomState; serverNow: number }
   | { type: 'peer-joined'; peer: PeerIdentity }
   | { type: 'peer-left'; peerId: string }

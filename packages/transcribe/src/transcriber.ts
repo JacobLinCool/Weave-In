@@ -12,6 +12,7 @@ export interface LiveTranscriptionCallbacks {
   onInterim(text: string): void;
   onFinal(text: string, connection: number): void;
   onConnectionReady(connection: number): void;
+  onReconnecting?(): void;
   onFatalError(code: string, message: string): void;
 }
 

@@ -93,6 +93,9 @@ button:disabled { cursor: wait; opacity: .55; }
 .caption-status.is-transcribing .caption-status__dot { animation: pulse 1.7s ease-out infinite; }
 .people-count { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 10px; font-weight: 640; white-space: nowrap; }
 .room-header__spacer { flex: 1; }
+.room-header__status { display: flex; align-items: center; gap: 14px; min-width: 0; }
+.meeting-timer { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-family: var(--notation); font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.meeting-timer time { min-width: 5ch; }
 .icon-button { min-width: 36px; min-height: 36px; padding: 0; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); display: inline-flex; align-items: center; justify-content: center; gap: 7px; cursor: pointer; }
 .icon-button:hover { background: var(--raised); }
 .icon-button--wide { padding: 0 12px; font-size: 10px; font-weight: 670; }
@@ -139,7 +142,13 @@ button:disabled { cursor: wait; opacity: .55; }
 @media (max-width: 640px) {
   .room-header { gap: 11px; }
   .room-header .brand span:last-child, .people-count, .icon-button--wide span, .icon-button--leave span { display: none; }
-  .icon-button--leave { padding: 0; }
+  .icon-button--leave, .icon-button--wide { padding: 0; }
+  .room-header__status { display: grid; justify-items: start; gap: 3px; padding: 5px 0; margin-inline-end: auto; }
+  .room-header__spacer { display: none; }
+  .room-header__status .caption-status { min-height: 24px; max-width: 100%; }
+  .room-header__status .caption-status span { overflow: hidden; text-overflow: ellipsis; }
+  .room-header__status .caption-status svg, .caption-status__dot { flex-shrink: 0; }
+  .meeting-timer { font-size: 11px; }
   .room-header__identity { padding-left: 10px; }
   .video-grid { grid-template-columns: 1fr; grid-auto-rows: minmax(220px, 1fr); }
   .video-grid--1 { min-height: calc(100svh - 160px); }
@@ -151,6 +160,7 @@ button:disabled { cursor: wait; opacity: .55; }
 
 @media (max-width: 420px) {
   .room-header { gap: 7px; padding: 0 8px; }
+  .room-header__identity { border: 0; padding-left: 0; }
   .caption-status { padding: 0 8px; }
 }
 

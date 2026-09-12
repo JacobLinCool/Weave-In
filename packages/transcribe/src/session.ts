@@ -261,6 +261,10 @@ export class TranscriptionSession {
             this.#store.markTranscribing(connection);
             this.#emit();
           },
+          onReconnecting: () => {
+            this.#store.markReconnecting();
+            this.#emit();
+          },
           onFatalError: (code, message) => void this.#failActiveSession(code, message),
         },
       });
@@ -308,6 +312,11 @@ export class TranscriptionSession {
     const aborted = signal?.aborted ?? false;
     await this.#releaseActiveResources();
     this.#store.setAudioSourceCount(this.#mixer.sourceCount);
+    const stopped = this.#store.snapshot();
+    if (stopped.status === 'error' && stopped.error) {
+      this.#emit();
+      return failure(stopped.error.code, stopped.error.message, summarizeState(stopped));
+    }
     this.#store.markStopped();
     this.#emit();
     if (aborted || signal?.aborted) {
@@ -333,7 +342,7 @@ export class TranscriptionSession {
 
   async #failActiveSession(code: string, message: string): Promise<void> {
     const state = this.#store.snapshot();
-    if (state.status !== 'starting' && state.status !== 'transcribing') return;
+    if (state.status !== 'starting' && state.status !== 'transcribing' && state.status !== 'stopping') return;
     this.#store.markError(code, redactCredential(message));
     this.#emit();
     await this.#releaseActiveResources();

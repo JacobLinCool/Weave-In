@@ -62,6 +62,10 @@ importers:
         version: 4.127.0(@cloudflare/workers-types@5.20260827.1)
 
   packages/transcribe:
+    dependencies:
+      opencc-js:
+        specifier: 1.4.2
+        version: 1.4.2
     devDependencies:
       tsup:
         specifier: 8.5.1
@@ -1330,6 +1334,9 @@ packages:
     resolution: {integrity: sha512-4a+OsYv9UktOJKE+l1A4OufDgdRF9PifWj+tJnHURo/P+WOxpG4GzUFL9qCalmWauao6ogiG+QvnCovwPoyAWA==}
     engines: {node: '>=12.20.0'}
 
+  opencc-js@1.4.2:
+    resolution: {integrity: sha512-EdcspgdROiCCZDM+jZR6Pa670xW+EW2QhctPBQ8gRjg6lrx4IHEl+2s+kt5izk/TkxVRgdWuFgaGkaEdIUfdaw==}
+
   path-to-regexp@6.3.0:
     resolution: {integrity: sha512-Yhpw4T9C6hPpgPeA28us07OJeqZ5EzQTkbfwuhsUg0c237RomFoETJgmp2sa3F/41gfLE6G5cqcYwznmeEeOlQ==}
 
@@ -2484,6 +2491,8 @@ snapshots:
   object-assign@4.1.1: {}
 
   obug@2.1.4: {}
+
+  opencc-js@1.4.2: {}
 
   path-to-regexp@6.3.0: {}
 

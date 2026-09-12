@@ -4,7 +4,7 @@
 
 **Not an all-browser pass.** Three verification agents and the primary task exercised the implementation locally on macOS, using three independent Clients and real OpenAI sessions as well as a deterministic provider simulator. Chromium flows and Chromium → WebKit delivery passed. Firefox peer links and WebKit → WebKit peer links failed in this environment. Native Safari, Windows, physical-device microphones and human listening have not been verified.
 
-All changes and tests are local on `codex/personal-group-agents`; no deployment was performed. Credentials stayed in ignored Worker configuration.
+All changes and tests are local on `codex/personal-group-agents`; no deployment was performed. Browser evidence below was collected before integrating main at `b5442a6`; the post-integration checks are distinguished below. Credentials stayed in ignored Worker configuration.
 
 ## Browser matrix
 
@@ -49,12 +49,16 @@ Synthetic audio uses a prerecorded sentence injected into a media track. Actual 
 - Fractional numeric literals in the screen tool schema caused real Live initialization HTTP 400. The schema is provider-compatible while runtime validation preserves the quality range.
 - Screen capture could wait forever on `video.play()` despite a frame timeout; both now participate in the bounded wait.
 - Live's observed 32,768 UTF-8 byte / 128 item input ceiling was exceeded by repeated context and images. The Client now de-duplicates background records, seeds at most 6,000 bytes, reserves foreground capacity, pages Agent records/files, resizes images, and stops visibly before exceeding its budget. Accounting covers Client-sent `response.item.create` JSON; provider-added history may still reach its own limit, which also produces a visible controlled error. A new question uses a fresh session; no undocumented reset event is assumed.
-- Caption rotation could leave an unfinished old item blocking all new finals, and the App unsubscribed before stop drained its last sentence. Rotation now discards expired unfinished items; the App keeps the subscription through drain and only publishes the stopped public session’s final snapshot before private capture. Partials are never promoted to final captions.
-- OpenAI captions used a media-less SDP path and unsupported server VAD. The existing PCM pipeline now uses the transcription WebSocket and explicit commits after speech/silence detection. Stop and rotation drain outstanding commits within bounded grace periods.
+- Caption rotation could leave an unfinished old item blocking all new finals, and the App unsubscribed before stop drained its last sentence. The App keeps the subscription through drain and only publishes the stopped public session’s final snapshot before private capture. After main integration, finalization uses its stronger five-second completion barrier and reports an explicit error on timeout instead of silently discarding unfinished text. Partials are never promoted to final captions.
+- OpenAI captions used a media-less SDP path and unsupported server VAD. The existing PCM pipeline now uses the transcription WebSocket and explicit commits after speech/silence detection. Stop and rotation drain outstanding commits with main’s five-second finalization limit.
+
+## Main integration before PR
+
+Integrated main `b5442a6`, retaining the meeting timer, social metadata, Traditional Chinese normalization and Gemini recovery changes. OpenAI captions keep the verified WebSocket transport while adopting main’s idempotent stop, setup cancellation, completion de-duplication, five-second finalization errors and minimal transcription delay. All PCM is sent, including quiet audio. Commits use an 800ms natural pause instead of a fixed two-second cut, so an approval command is not split solely by elapsed time. Updated tests cover this deliberate difference. Post-integration `pnpm check` passed (exit 0): 77 transcription + 95 meeting tests, **172 total**, type checking, builds and Worker dry-run. Log: `output/playwright/pr-pnpm-check.log`. Real-browser evidence predates this integration; the integrated caption settings still need a new real-provider browser pass.
 
 ## Local automated gate
 
-The final deterministic browser run used three independent Chromium Clients and passed every scripted assertion after the caption drain fix. **`pnpm check` passed with exit code 0:** type checking, 19 transcription + 79 meeting tests (98 total), production builds, bundle verification and Worker deployment dry-run. This was a dry-run, not a deployment. Full log: repository-root `output/playwright/final-pnpm-check.log`. `git diff --check` also passed. Named verification browsers and the temporary dev server were closed after testing.
+Before main integration, the final deterministic browser run used three independent Chromium Clients and passed every scripted assertion after the caption drain fix. **`pnpm check` passed with exit code 0:** type checking, 19 transcription + 79 meeting tests (98 total), production builds, bundle verification and Worker deployment dry-run. This was a dry-run, not a deployment. Full log: repository-root `output/playwright/final-pnpm-check.log`. `git diff --check` also passed. Named verification browsers and the temporary dev server were closed after testing.
 
 ## Reproducible artifacts
 

@@ -24,7 +24,7 @@ export interface Env {
   TOKEN_RATE_LIMITER: RateLimit;
 }
 
-interface SocketAttachment extends PeerIdentity, AgentMember { sessionToken: string; liveRequests: number[] }
+interface SocketAttachment extends PeerIdentity, AgentMember { startedAt: number; sessionToken: string; liveRequests: number[] }
 
 const GEMINI_TOKEN_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/auth_tokens';
 const OPENAI_TOKEN_ENDPOINT = 'https://api.openai.com/v1/realtime/client_secrets';
@@ -168,7 +168,8 @@ function openAiTokenRequest(apiKey: string): { url: string; init: RequestInit } 
           audio: {
             input: {
               format: { type: 'audio/pcm', rate: 24_000 },
-              transcription: { model: OPENAI_MODEL },
+              transcription: { model: OPENAI_MODEL, delay: 'minimal' },
+              turn_detection: null,
             },
           },
         },
@@ -231,8 +232,11 @@ export class MeetingRoom extends DurableObject<Env> {
 
     const active = this.#activeSockets();
     if (action === 'create' && active.length !== 0) return jsonError('ROOM_EXISTS', 409);
-    if (action === 'join' && (active.length === 0 || !this.#hasHost(active))) {
-      return jsonError('ROOM_NOT_FOUND', 404);
+    let startedAt = Date.now();
+    if (action === 'join') {
+      const host = active.find(({ attachment }) => attachment.isHost);
+      if (!host) return jsonError('ROOM_NOT_FOUND', 404);
+      startedAt = host.attachment.startedAt;
     }
     if (active.length >= MAX_PARTICIPANTS) return jsonError('ROOM_FULL', 409);
     if (active.some(({ attachment }) => attachment.peerId === peerId)) {
@@ -242,12 +246,12 @@ export class MeetingRoom extends DurableObject<Env> {
     const pair = new WebSocketPair();
     const client = pair[0];
     const server = pair[1];
-    const identity: SocketAttachment = { peerId, name, isHost: action === 'create', sessionToken: crypto.randomUUID(), joinedAt: Date.now(), heartbeat: Date.now(), ready: false, liveRequests: [] };
+    const identity: SocketAttachment = { peerId, name, startedAt, isHost: action === 'create', sessionToken: crypto.randomUUID(), joinedAt: Date.now(), heartbeat: Date.now(), ready: false, liveRequests: [] };
     server.serializeAttachment(identity);
     this.ctx.acceptWebSocket(server, [`peer:${peerId}`]);
 
     const peers = active.map(({ attachment }) => publicIdentity(attachment));
-    this.#send(server, { type: 'welcome', self: publicIdentity(identity), peers, sessionToken: identity.sessionToken });
+    this.#send(server, { type: 'welcome', self: publicIdentity(identity), peers, startedAt, serverTime: Date.now(), sessionToken: identity.sessionToken });
     this.#broadcast({ type: 'peer-joined', peer: publicIdentity(identity) }, peerId);
     await this.#publish();
     return new Response(null, { status: 101, webSocket: client });
@@ -301,7 +305,10 @@ export class MeetingRoom extends DurableObject<Env> {
 
   override webSocketClose(socket: WebSocket, code: number, reason: string, wasClean: boolean): void {
     const attachment = readAttachment(socket);
-    socket.close([1005, 1006, 1015].includes(code) ? 1001 : code, reason);
+    // Reserved status codes describe local failures and cannot be sent in a
+    // close frame. Echoing 1006 throws before peers can be notified of departure.
+    const reserved = [1004, 1005, 1006, 1015].includes(code);
+    socket.close(reserved ? 1000 : code, reserved ? '' : reason);
     if (!attachment) return;
     this.#broadcast({ type: 'peer-left', peerId: attachment.peerId }, attachment.peerId);
     this.ctx.waitUntil(this.#publish());
@@ -320,10 +327,6 @@ export class MeetingRoom extends DurableObject<Env> {
       const attachment = readAttachment(socket);
       return attachment && socket.readyState === WebSocket.OPEN ? [{ socket, attachment }] : [];
     });
-  }
-
-  #hasHost(active: Array<{ attachment: SocketAttachment }>): boolean {
-    return active.some(({ attachment }) => attachment.isHost);
   }
 
   #broadcast(message: ServerMessage, excludedPeerId?: string): void {
@@ -348,7 +351,10 @@ function readAttachment(socket: WebSocket): SocketAttachment | null {
   if (
     typeof candidate.peerId !== 'string' ||
     typeof candidate.name !== 'string' ||
-    typeof candidate.isHost !== 'boolean'
+    typeof candidate.isHost !== 'boolean' ||
+    typeof candidate.startedAt !== 'number' ||
+    !Number.isSafeInteger(candidate.startedAt) ||
+    candidate.startedAt <= 0
   ) return null;
   return candidate as SocketAttachment;
 }
@@ -399,6 +405,9 @@ function withSecurityHeaders(response: Response, url: URL): Response {
   headers.set('Referrer-Policy', 'no-referrer');
   headers.set('X-Content-Type-Options', 'nosniff');
   headers.set('X-Frame-Options', 'DENY');
+  if (headers.get('Content-Type')?.includes('text/html') && (url.searchParams.has('room') || url.pathname !== '/')) {
+    headers.set('X-Robots-Tag', 'noindex, follow');
+  }
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
 

@@ -23,6 +23,7 @@ pnpm deploy:dry-run
 
 ## The meeting
 
+- The header shows time since the room was created (`mm:ss`, then `h:mm:ss`). The signaling server supplies the shared start time and its current time, so late joiners see the room's duration without depending on their device clock matching the server. Socket attachments retain the timestamp through Durable Object hibernation. A new room starts a new clock.
 - Up to eight participants in a full-mesh WebRTC room with public STUN only.
 - Camera, microphone, and screen sharing; tracks are added and removed with perfect negotiation.
 - Chat and live transcript travel over a per-peer WebRTC data channel. Media and chat never reach the Worker.
@@ -61,7 +62,44 @@ Meeting media, chat and public captions travel peer-to-peer. Caption audio goes 
 
 ## Local development
 
-Copy `.dev.vars.example` to `.dev.vars` and set a key. For production, create the Worker secret with `pnpm exec wrangler secret put GEMINI_API_KEY` or `pnpm exec wrangler secret put OPENAI_API_KEY`.
+Copy `.dev.vars.example` to `.dev.vars` and set a key.
+
+## Deployment
+
+Public URL: [https://weave.nycu.ai](https://weave.nycu.ai/).
+
+Deploy through GitHub Actions only. Use a push to `main` or the workflow's manual trigger; local development may run builds, tests, and deployment dry runs, but must not publish directly to Cloudflare.
+
+The [GitHub Actions workflow](../../.github/workflows/deploy.yml) runs `pnpm check` for pull requests targeting `main` and pushes to `main`. After a successful check on `main`, it deploys the verified build to the `weave-in-meeting` Cloudflare Worker, including static assets and Durable Object migrations. The Actions tab also supports **Run workflow**; select `main` to deploy. Manual runs on other branches only run checks. Deployments run one at a time without interrupting an active deployment.
+
+Before the first deployment, add these repository secrets in [Settings → Secrets and variables → Actions](https://github.com/JacobLinCool/Weave-In/settings/secrets/actions):
+
+| Secret | Value |
+| --- | --- |
+| `CLOUDFLARE_ACCOUNT_ID` | The Cloudflare account ID that owns the Worker. |
+| `CLOUDFLARE_API_TOKEN` | An API token created with the **Edit Cloudflare Workers** template, scoped to that account. |
+
+See [Cloudflare's GitHub Actions authentication guide](https://developers.cloudflare.com/workers/ci-cd/external-cicd/github-actions/) for account ID lookup and token creation. Missing deployment secrets fail the deployment step with an explicit error; pull request checks do not require them.
+
+Production transcription keys are Worker secrets, configured separately from the GitHub deployment credentials. After the first deployment, set at least one provider key from the repository root:
+
+```bash
+pnpm --filter @weave-in/meeting exec wrangler secret put GEMINI_API_KEY
+# Or use OpenAI:
+pnpm --filter @weave-in/meeting exec wrangler secret put OPENAI_API_KEY
+```
+
+The workflow uses the pnpm version in `package.json` and the Wrangler version in `pnpm-lock.yaml`. Local `.dev.vars` files are ignored by Git and are not part of the CI checkout.
+
+## Search and link previews
+
+The initial HTML contains the canonical URL, Open Graph and X/Twitter large-image metadata, and WebSite/WebApplication structured data. Crawlers can read this metadata without running JavaScript. `public/robots.txt` points to the homepage-only sitemap; invitation URLs still serve the same preview but send `X-Robots-Tag: noindex, follow`. The web manifest supplies the name, theme, and home-screen icons.
+
+`public/og-image.png` is the 1200 × 630 social preview. Its vector source is `public/og-image.svg`; the generator uses the project's Jost font and woven brand mark. To regenerate it after editing the design, install ImageMagick and run from the repository root:
+
+```bash
+uv run --with fonttools --with brotli python apps/meeting/scripts/generate-social-image.py
+```
 
 ## Browser verification
 

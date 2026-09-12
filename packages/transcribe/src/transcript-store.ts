@@ -8,6 +8,7 @@ import {
   type TranscriptState,
   type TranscriptionOptions,
 } from './contracts';
+import { prefersTraditionalChinese, toTraditionalCharacters } from './chinese-script';
 
 const MAX_STORED_CHARACTERS = 500_000;
 const DEFAULT_QUERY_CHARACTERS = 50_000;
@@ -19,10 +20,12 @@ export class TranscriptStore {
   readonly #now: () => Date;
   #state: TranscriptState;
   #storedCharacters = 0;
+  #useTraditionalCharacters: boolean;
 
   constructor(now: () => Date = () => new Date(), initial?: TranscriptState) {
     this.#now = now;
     this.#state = initial ? cloneState(initial) : createInitialState();
+    this.#useTraditionalCharacters = prefersTraditionalChinese(this.#state.options.languageCodes);
     this.#storedCharacters = this.#state.segments.reduce(
       (total, segment) => total + segment.text.length,
       0,
@@ -39,6 +42,7 @@ export class TranscriptStore {
       options: cloneOptions(args.options),
     };
     this.#storedCharacters = 0;
+    this.#useTraditionalCharacters = prefersTraditionalChinese(this.#state.options.languageCodes);
   }
 
   setAudioSourceCount(count: number): void {
@@ -48,6 +52,12 @@ export class TranscriptStore {
   markTranscribing(connectionCount: number): void {
     this.#state.status = 'transcribing';
     this.#state.connectionCount = connectionCount;
+    this.#state.error = null;
+  }
+
+  markReconnecting(): void {
+    this.#state.status = 'starting';
+    this.#state.interim = '';
     this.#state.error = null;
   }
 
@@ -76,11 +86,11 @@ export class TranscriptStore {
   }
 
   setInterim(text: string): void {
-    this.#state.interim = normalizeTranscript(text);
+    this.#state.interim = this.#normalizeTranscript(text);
   }
 
   appendFinal(text: string, connection: number): TranscriptSegment[] {
-    const chunks = splitTranscript(normalizeTranscript(text));
+    const chunks = splitTranscript(this.#normalizeTranscript(text));
     const appended: TranscriptSegment[] = [];
     for (const chunk of chunks) {
       const segment: TranscriptSegment = {
@@ -105,6 +115,11 @@ export class TranscriptStore {
 
   query(input: TranscriptQuery = {}): TranscriptQueryResult {
     return queryTranscriptState(this.#state, input);
+  }
+
+  #normalizeTranscript(text: string): string {
+    const normalized = text.replace(/\s+/gu, ' ').trim();
+    return this.#useTraditionalCharacters ? toTraditionalCharacters(normalized) : normalized;
   }
 
   #enforceStorageLimit(): void {
@@ -169,10 +184,6 @@ function cloneState(state: TranscriptState): TranscriptState {
   };
 }
 
-function normalizeTranscript(text: string): string {
-  return text.replace(/\s+/gu, ' ').trim();
-}
-
 function splitTranscript(text: string): string[] {
   if (!text) return [];
   if (text.length <= MAX_SEGMENT_CHARACTERS) return [text];
@@ -187,7 +198,9 @@ function splitTranscript(text: string): string[] {
       candidate.lastIndexOf('？'),
       candidate.lastIndexOf('.'),
     );
-    const end = breakAt >= MAX_SEGMENT_CHARACTERS / 2 ? breakAt + 1 : MAX_SEGMENT_CHARACTERS;
+    let end = breakAt >= MAX_SEGMENT_CHARACTERS / 2 ? breakAt + 1 : MAX_SEGMENT_CHARACTERS;
+    const boundary = remaining.codePointAt(end - 1);
+    if (boundary !== undefined && boundary > 0xffff) end -= 1;
     chunks.push(remaining.slice(0, end).trim());
     remaining = remaining.slice(end).trim();
   }

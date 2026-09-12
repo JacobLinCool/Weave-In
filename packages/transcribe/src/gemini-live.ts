@@ -18,6 +18,8 @@ export const GEMINI_ROTATION_INTERVAL_MS = 9 * 60 * 1_000;
 const ROTATION_FINALIZATION_MS = 750;
 const STOP_FINALIZATION_MS = 900;
 const MAX_QUEUED_CHUNKS = 100;
+const RETRY_INITIAL_MS = 2_000;
+const RETRY_MAX_MS = 30_000;
 
 export interface GeminiLiveDependencies {
   createWebSocket(url: string): WebSocket;
@@ -45,6 +47,11 @@ export class GeminiLiveTranscriber implements LiveTranscriber {
   #queuedAudio: ArrayBuffer[] = [];
   #rotationTimer: ReturnType<typeof setTimeout> | null = null;
   #fatalErrorReported = false;
+  #retryTimer: ReturnType<typeof setTimeout> | null = null;
+  #retryAttempt = 0;
+  #reconnecting = false;
+  #rotating = false;
+  #cancelSetup: (() => void) | null = null;
 
   constructor(args: {
     credential: CredentialInput;
@@ -63,7 +70,7 @@ export class GeminiLiveTranscriber implements LiveTranscriber {
   }
 
   async start(): Promise<void> {
-    if (this.#socket || this.#stopping) {
+    if (this.#socket || this.#stopping || this.#reconnecting || this.#retryTimer !== null) {
       throw new TranscribeError('SESSION_ACTIVE', 'The Gemini Live client has already started.');
     }
     await this.#connect('initial');
@@ -72,16 +79,15 @@ export class GeminiLiveTranscriber implements LiveTranscriber {
   sendAudio(pcm16: ArrayBuffer): void {
     if (this.#stopping || pcm16.byteLength === 0) return;
     if (this.#ready && this.#socket?.readyState === WebSocket.OPEN) {
-      this.#sendAudioNow(this.#socket, pcm16);
-      return;
+      try {
+        this.#sendAudioNow(this.#socket, pcm16);
+        return;
+      } catch {
+        this.#scheduleReconnect();
+      }
     }
-    if (this.#queuedAudio.length >= MAX_QUEUED_CHUNKS) {
-      this.#reportFatal(
-        'AUDIO_BUFFER_OVERFLOW',
-        'The live connection could not accept audio for 10 seconds.',
-      );
-      return;
-    }
+    // Keep recent unsent audio without terminating the meeting on a long outage.
+    if (this.#queuedAudio.length >= MAX_QUEUED_CHUNKS) this.#queuedAudio.shift();
     this.#queuedAudio.push(pcm16);
   }
 
@@ -90,10 +96,14 @@ export class GeminiLiveTranscriber implements LiveTranscriber {
     this.#stopping = true;
     this.#ready = false;
     this.#clearRotationTimer();
+    this.#clearRetryTimer();
+    this.#cancelSetup?.();
     const socket = this.#socket;
     if (socket?.readyState === WebSocket.OPEN) {
-      socket.send(JSON.stringify({ realtimeInput: { audioStreamEnd: true } }));
-      await delay(STOP_FINALIZATION_MS, this.#dependencies);
+      try {
+        socket.send(JSON.stringify({ realtimeInput: { audioStreamEnd: true } }));
+        await delay(STOP_FINALIZATION_MS, this.#dependencies);
+      } catch { /* A concurrent transport failure must not prevent stopping. */ }
     }
     this.#socket = null;
     if (socket && socket.readyState < WebSocket.CLOSING) {
@@ -105,6 +115,7 @@ export class GeminiLiveTranscriber implements LiveTranscriber {
 
   async #connect(reason: 'initial' | 'rotation'): Promise<void> {
     const credential = await this.#resolveCredential(reason);
+    if (this.#stopping) throw new TranscribeError('ABORTED', 'Transcription stopped.');
     const url = endpointForCredential(credential);
     const socket = this.#dependencies.createWebSocket(url);
     this.#socket = socket;
@@ -112,47 +123,49 @@ export class GeminiLiveTranscriber implements LiveTranscriber {
 
     await new Promise<void>((resolve, reject) => {
       let settled = false;
-      const setupTimer = this.#dependencies.setTimeout(() => {
-        if (settled) return;
-        settled = true;
-        this.#socket = null;
-        socket.close(1000, 'Setup timeout');
-        reject(
-          new TranscribeError(
-            'GEMINI_SETUP_TIMEOUT',
-            'Gemini Live did not finish setup within 15 seconds.',
-          ),
-        );
-      }, SETUP_TIMEOUT_MS);
-
-      const finishSetup = (): void => {
+      const failSetup = (message: string, code = 'GEMINI_SETUP_FAILED'): void => {
         if (settled) return;
         settled = true;
         this.#dependencies.clearTimeout(setupTimer);
+        this.#cancelSetup = null;
+        if (socket === this.#socket) {
+          this.#socket = null;
+          this.#ready = false;
+        }
+        if (socket.readyState < WebSocket.CLOSING) socket.close(1000, 'Setup failed');
+        reject(new TranscribeError(code, this.#redact(message)));
+      };
+      const setupTimer = this.#dependencies.setTimeout(() => {
+        failSetup('Gemini Live did not finish setup within 15 seconds.', 'GEMINI_SETUP_TIMEOUT');
+      }, SETUP_TIMEOUT_MS);
+      this.#cancelSetup = () => failSetup('Transcription stopped.', 'ABORTED');
+
+      const finishSetup = (): void => {
+        if (settled || this.#stopping || socket !== this.#socket) return;
+        settled = true;
+        this.#dependencies.clearTimeout(setupTimer);
+        this.#cancelSetup = null;
         this.#ready = true;
         this.#connectionCount += 1;
-        this.#flushQueuedAudio();
+        this.#retryAttempt = 0;
         this.#callbacks.onConnectionReady(this.#connectionCount);
         this.#scheduleRotation();
         resolve();
-      };
-
-      const failSetup = (message: string): void => {
-        if (settled) return;
-        settled = true;
-        this.#dependencies.clearTimeout(setupTimer);
-        this.#socket = null;
-        reject(new TranscribeError('GEMINI_SETUP_FAILED', this.#redact(message)));
+        this.#flushQueuedAudio();
       };
 
       socket.addEventListener('open', () => {
-        socket.send(JSON.stringify(this.#createSetupMessage()));
+        if (socket !== this.#socket || this.#stopping) return;
+        try { socket.send(JSON.stringify(this.#createSetupMessage())); }
+        catch { failSetup('Gemini Live WebSocket setup send failed.'); }
       });
       socket.addEventListener('message', (event) => {
         void this.#handleMessage(event.data, socket, finishSetup, failSetup);
       });
       socket.addEventListener('error', () => {
-        if (!this.#ready) failSetup('Gemini Live WebSocket connection failed.');
+        if (socket !== this.#socket || this.#stopping) return;
+        if (!settled) failSetup('Gemini Live WebSocket connection failed.');
+        else this.#scheduleReconnect();
       });
       socket.addEventListener('close', (event) => {
         if (socket !== this.#socket) return;
@@ -163,7 +176,7 @@ export class GeminiLiveTranscriber implements LiveTranscriber {
           return;
         }
         if (!this.#stopping) {
-          this.#reportFatal('GEMINI_CONNECTION_CLOSED', closeMessage(event));
+          this.#scheduleReconnect();
         }
       });
     });
@@ -230,20 +243,23 @@ export class GeminiLiveTranscriber implements LiveTranscriber {
     try {
       const raw =
         typeof data === 'string' ? data : data instanceof Blob ? await data.text() : '';
-      if (!raw) return;
+      if (!raw || socket !== this.#socket) return;
       const message = JSON.parse(raw) as GeminiServerMessage;
       if (message.error) {
         const apiMessage = message.error.message || 'Gemini Live returned an unknown error.';
         if (!this.#ready) failSetup(apiMessage);
+        else if (message.error.code === 429 || (message.error.code ?? 0) >= 500) this.#scheduleReconnect();
         else this.#reportFatal('GEMINI_API_ERROR', apiMessage);
         return;
       }
       if (message.setupComplete !== undefined) finishSetup();
+      if (message.goAway && this.#ready) void this.#rotateConnection();
       const interim = message.serverContent?.interimInputTranscription?.text;
       const final = message.serverContent?.inputTranscription?.text;
       if (typeof interim === 'string') this.#callbacks.onInterim(interim);
       if (typeof final === 'string') this.#callbacks.onFinal(final, this.#connectionCount);
     } catch {
+      if (socket !== this.#socket) return;
       this.#reportFatal('INVALID_GEMINI_RESPONSE', 'Gemini Live returned an invalid response.');
     }
   }
@@ -263,7 +279,7 @@ export class GeminiLiveTranscriber implements LiveTranscriber {
     if (!this.#ready || socket?.readyState !== WebSocket.OPEN) return;
     const queued = this.#queuedAudio;
     this.#queuedAudio = [];
-    for (const chunk of queued) this.#sendAudioNow(socket, chunk);
+    for (const chunk of queued) this.sendAudio(chunk);
   }
 
   #scheduleRotation(): void {
@@ -274,28 +290,68 @@ export class GeminiLiveTranscriber implements LiveTranscriber {
   }
 
   async #rotateConnection(): Promise<void> {
-    if (this.#stopping) return;
+    if (this.#stopping || this.#rotating || this.#reconnecting || this.#retryTimer !== null) return;
+    this.#rotating = true;
     this.#ready = false;
+    this.#clearRotationTimer();
     const oldSocket = this.#socket;
-    if (oldSocket?.readyState === WebSocket.OPEN) {
-      oldSocket.send(JSON.stringify({ realtimeInput: { audioStreamEnd: true } }));
-      await delay(ROTATION_FINALIZATION_MS, this.#dependencies);
-    }
-    this.#socket = null;
-    if (oldSocket && oldSocket.readyState < WebSocket.CLOSING) {
-      oldSocket.close(1000, 'Scheduled session rotation');
-    }
     try {
+      if (oldSocket?.readyState === WebSocket.OPEN) {
+        oldSocket.send(JSON.stringify({ realtimeInput: { audioStreamEnd: true } }));
+        await delay(ROTATION_FINALIZATION_MS, this.#dependencies);
+      }
+    } catch { /* Reconnect even if the old socket can no longer send. */ }
+    this.#rotating = false;
+    if (this.#stopping) return;
+    this.#detachSocket();
+    await this.#reconnect();
+  }
+
+  #detachSocket(): void {
+    const socket = this.#socket;
+    this.#socket = null;
+    this.#ready = false;
+    if (socket && socket.readyState < WebSocket.CLOSING) socket.close(1000, 'Reconnecting');
+  }
+
+  #scheduleReconnect(): void {
+    if (this.#stopping || this.#fatalErrorReported || this.#rotating) return;
+    this.#clearRotationTimer();
+    this.#detachSocket();
+    if (this.#retryTimer !== null) return;
+    this.#callbacks.onInterim('');
+    this.#callbacks.onReconnecting?.();
+    const waitMs = Math.min(RETRY_INITIAL_MS * 2 ** Math.min(this.#retryAttempt++, 4), RETRY_MAX_MS);
+    this.#retryTimer = this.#dependencies.setTimeout(() => {
+      this.#retryTimer = null;
+      void this.#reconnect();
+    }, waitMs);
+  }
+
+  async #reconnect(): Promise<void> {
+    if (this.#stopping || this.#reconnecting) return;
+    this.#reconnecting = true;
+    try {
+      // Ephemeral credentials are single-use: ask the provider on every attempt.
       await this.#connect('rotation');
-    } catch (error) {
-      this.#reportFatal('GEMINI_ROTATION_FAILED', safeMessage(error));
+    } catch {
+      this.#scheduleReconnect();
+    } finally {
+      this.#reconnecting = false;
     }
+  }
+
+  #clearRetryTimer(): void {
+    if (this.#retryTimer === null) return;
+    this.#dependencies.clearTimeout(this.#retryTimer);
+    this.#retryTimer = null;
   }
 
   #reportFatal(code: string, message: string): void {
     if (this.#fatalErrorReported || this.#stopping) return;
     this.#fatalErrorReported = true;
     this.#clearRotationTimer();
+    this.#clearRetryTimer();
     this.#callbacks.onFatalError(code, this.#redact(message));
   }
 
@@ -314,6 +370,7 @@ export class GeminiLiveTranscriber implements LiveTranscriber {
 
 interface GeminiServerMessage {
   setupComplete?: object;
+  goAway?: { timeLeft?: string };
   serverContent?: {
     interimInputTranscription?: { text?: string };
     inputTranscription?: { text?: string };
@@ -332,10 +389,6 @@ function closeMessage(event: CloseEvent): string {
   return reason
     ? `Gemini Live closed the connection (${event.code}): ${reason}`
     : `Gemini Live closed the connection (${event.code}).`;
-}
-
-function safeMessage(error: unknown): string {
-  return error instanceof Error ? error.message : 'An unknown Gemini Live error occurred.';
 }
 
 function delay(milliseconds: number, dependencies: GeminiLiveDependencies): Promise<void> {

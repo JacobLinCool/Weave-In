@@ -150,3 +150,6 @@ dist
 # Local browser verification artifacts
 output/
 .playwright-cli/
+
+# Local editing guidance
+*.shadow.md
