@@ -101,11 +101,23 @@ async (page, origin = 'http://127.0.0.1:8788', options = {}) => {
   };
   const ownerContext = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
   const extraContexts = [];
-  const guestContext = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+  const guestContext = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
   const personalReady = (p) => p.waitForFunction(() => window.__agentTest.states.at(-1)?.agents.some(a => a.config.kind === 'personal' && a.owner === window.__agentTest.you));
   const tab = (p, name) => p.getByRole('tab', { name: new RegExp(`^${name}`) });
   const openConversation = async (p) => {
     await tab(p, 'Muse').click();
+  };
+  const verifyLivePanel = async (p) => {
+    const session = p.locator('.agent-live-session');
+    await session.getByRole('status').getByText('Live with Muse', { exact: true }).waitFor();
+    const end = session.getByRole('button', { name: 'End live conversation', exact: true });
+    if (!await end.evaluate(el => document.activeElement === el)) throw new Error('Live did not move keyboard focus to End');
+    const panelBox = await session.boundingBox(); const endBox = await end.boundingBox();
+    if (!panelBox || !endBox || endBox.width < 44 || endBox.height < 44 || endBox.x < panelBox.x ||
+      endBox.x + endBox.width > panelBox.x + panelBox.width || await session.evaluate(el => el.scrollWidth > el.clientWidth)) throw new Error('Live panel or End control overflows');
+    if (await p.getByRole('textbox', { name: 'Message Muse', exact: true }).count() ||
+      await p.getByRole('button', { name: 'Dictate message', exact: true }).count() ||
+      !await p.getByRole('button', { name: 'Muse settings', exact: true }).isDisabled()) throw new Error('Live leaves competing input or settings available');
   };
   try {
     await setup(ownerContext); await setup(guestContext);
@@ -115,6 +127,46 @@ async (page, origin = 'http://127.0.0.1:8788', options = {}) => {
     await page.getByRole('button', { name: 'Create a room', exact: true }).click();
     await tab(page, 'Muse').waitFor();
     if (await page.getByRole('tab', { name: /^(Chat|Agents|Assistant)$/ }).count()) throw new Error('Obsolete Chat or Agents tab remains'); await personalReady(page);
+    if (options.liveRestartOnly) {
+      await page.waitForFunction(() => window.__agentTest.states.at(-1)?.agents.some(a => a.config.kind === 'group'));
+      await openConversation(page);
+      const draft = page.getByRole('textbox', { name: 'Message Muse', exact: true });
+      await draft.fill('Keep this draft through a rapid restart.');
+      const micBefore = await page.evaluate(() => Array.from(document.querySelectorAll('[data-local="true"] video')).some(v => v.srcObject?.getAudioTracks().some(t => t.enabled)));
+      // Live clones the meeting track; hold audio enablement to deterministically overlap two starts.
+      await page.evaluate(() => {
+        const resume = AudioContext.prototype.resume;
+        const gates = window.__agentTest.liveStartGates = [];
+        window.__agentTest.restoreLiveStartResume = () => { AudioContext.prototype.resume = resume; };
+        AudioContext.prototype.resume = async function () {
+          if (gates.length >= 2) return resume.call(this);
+          const gate = { release: null, resumed: false };
+          await new Promise(resolve => { gate.release = resolve; gates.push(gate); });
+          await resume.call(this);
+          gate.resumed = true;
+        };
+      });
+      const start = page.getByRole('button', { name: 'Start live conversation', exact: true });
+      const end = page.getByRole('button', { name: 'End live conversation', exact: true });
+      await start.click();
+      await page.waitForFunction(() => window.__agentTest.liveStartGates.length === 1);
+      await end.click();
+      await start.click();
+      await page.waitForFunction(() => window.__agentTest.liveStartGates.length === 2);
+      await page.evaluate(() => window.__agentTest.liveStartGates[0].release());
+      await page.waitForFunction(() => window.__agentTest.liveStartGates[0].resumed);
+      await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => resolve())));
+      if (!await page.locator('.agent-live-session').getByText('Connecting to Muse', { exact: true }).isVisible() ||
+        !await end.isVisible() || await draft.count()) throw new Error('A canceled Live start cleared the newer connecting session');
+      await page.evaluate(() => { window.__agentTest.liveStartGates[1].release(); window.__agentTest.restoreLiveStartResume(); });
+      await verifyLivePanel(page);
+      if (await page.evaluate(() => window.__agentTest.sessions.length) !== 1) throw new Error('Canceled Live start opened a provider session');
+      await end.click();
+      await draft.waitFor();
+      if (await draft.inputValue() !== 'Keep this draft through a rapid restart.' || !await draft.evaluate(el => document.activeElement === el)) throw new Error('Restarted Live did not restore draft and focus');
+      if (await page.evaluate(() => Array.from(document.querySelectorAll('[data-local="true"] video')).some(v => v.srcObject?.getAudioTracks().some(t => t.enabled))) !== micBefore) throw new Error('Restarted Live did not restore the meeting microphone');
+      return { liveRestartConnecting: true, canceledStartSuppressed: true, liveDraftPreserved: true, liveFocusRestored: true, liveEndRestoresMicrophone: true, provider: 'simulated GPT-Live WebRTC (no real provider call)' };
+    }
     const roomUrl = page.url();
     await guest.goto(roomUrl);
     await guest.getByRole('textbox', { name: 'Display name', exact: true }).fill('Bob');
@@ -176,6 +228,8 @@ async (page, origin = 'http://127.0.0.1:8788', options = {}) => {
       if (await p.evaluate(() => window.__agentTest.sessions.length)) throw new Error('Live opened automatically on room entry');
     }
     await openConversation(guest);
+    await guest.locator('.side-panel').screenshot({ path: 'output/playwright/muse-empty-mobile.png' });
+    await guest.setViewportSize({ width: 1440, height: 1000 });
     const guestDraft = guest.getByRole('textbox', { name: 'Message Muse', exact: true });
     await guest.getByRole('button', { name: 'Dictate message', exact: true }).click();
     await guest.getByText('Recording', { exact: true }).waitFor();
@@ -204,6 +258,7 @@ async (page, origin = 'http://127.0.0.1:8788', options = {}) => {
     if (await page.getByText('Only you can see this chat', { exact: true }).count()) throw new Error('Removed personal chat subtitle remains');
     if (await page.getByRole('button', { name: 'Expand panel', exact: true }).count()) throw new Error('Redundant panel expansion remains');
     if (await page.locator('.agent-personal').getByRole('button', { name: 'Stop', exact: true }).count()) throw new Error('Idle Chat shows Stop');
+    await page.locator('.side-panel').screenshot({ path: 'output/playwright/muse-empty-desktop.png' });
     const museInput = page.getByRole('textbox', { name: 'Message Muse', exact: true });
     await museInput.fill('private-secret');
     await museInput.press('Shift+Enter');
@@ -214,8 +269,9 @@ async (page, origin = 'http://127.0.0.1:8788', options = {}) => {
     const liveButton = composer.getByRole('button', { name: 'Start live conversation', exact: true });
     const sendButton = composer.getByRole('button', { name: 'Send', exact: true });
     const voiceBox = await voiceButton.boundingBox(); const liveBox = await liveButton.boundingBox(); const sendBox = await sendButton.boundingBox();
-    if (!voiceBox || !liveBox || !sendBox || voiceBox.x >= liveBox.x || liveBox.x >= sendBox.x ||
-      voiceBox.y !== sendBox.y || liveBox.y !== sendBox.y || voiceBox.height !== sendBox.height || liveBox.height !== sendBox.height) throw new Error('Composer actions are not aligned');
+    if (!voiceBox || !liveBox || !sendBox || liveBox.x >= voiceBox.x || voiceBox.x >= sendBox.x ||
+      voiceBox.y !== sendBox.y || liveBox.y !== sendBox.y || voiceBox.height !== sendBox.height || liveBox.height !== sendBox.height ||
+      voiceBox.width < 44 || voiceBox.height < 44 || sendBox.width !== voiceBox.width || liveBox.width <= voiceBox.width) throw new Error('Composer controls lack aligned touch targets or a wide Live label');
     if ((await voiceButton.innerText()).trim() || (await sendButton.innerText()).trim()) throw new Error('Dictate and Send should be icons only');
     if ((await liveButton.innerText()).trim() !== 'Live' || await liveButton.getAttribute('aria-pressed') !== 'false') throw new Error('Idle Live control is missing its label or state');
     await page.locator('.agent-compose__input').screenshot({ path: 'output/playwright/muse-composer.png' });
@@ -240,6 +296,8 @@ async (page, origin = 'http://127.0.0.1:8788', options = {}) => {
     if (await page.locator('.agent-compose').getByRole('button', { name: 'Stop response', exact: true }).count()) throw new Error('Stop did not end response');
 
     // The simulator supplies one voice exchange; Live must remain open until End.
+    const savedLiveDraft = 'Keep this draft after Live.';
+    await museInput.fill(savedLiveDraft);
     const sessionsBeforeLive = await page.evaluate(() => window.__agentTest.sessions.length);
     const micBeforeLive = await page.evaluate(() => Array.from(document.querySelectorAll('[data-local="true"] video')).some(v => v.srcObject?.getAudioTracks().some(t => t.enabled)));
     if (!micBeforeLive) throw new Error('Expected an enabled meeting microphone before Live');
@@ -250,15 +308,28 @@ async (page, origin = 'http://127.0.0.1:8788', options = {}) => {
     await page.getByRole('log', { name: 'Muse transcript' }).getByText('A useful perspective for the meeting.', { exact: true }).waitFor();
     await page.waitForTimeout(2500);
     if (await endLive.getAttribute('aria-pressed') !== 'true' || (await endLive.innerText()).trim() !== 'End') throw new Error('Live ended after one answer');
-    if (!await museInput.evaluate(el => el.readOnly) || !await voiceButton.isDisabled() || await sendButton.count() || await stopResponse.count()) throw new Error('Live does not own the composer input controls');
+    await verifyLivePanel(page);
+    if (await sendButton.count() || await stopResponse.count()) throw new Error('Live exposes bounded response controls');
+    await page.locator('.side-panel').screenshot({ path: 'output/playwright/muse-live-desktop.png' });
     if (await page.evaluate(() => Array.from(document.querySelectorAll('[data-local="true"] video')).some(v => v.srcObject?.getAudioTracks().some(t => t.enabled)))) throw new Error('Live left the meeting microphone enabled');
     if (await page.evaluate(() => window.__agentTest.states.at(-1)?.floor !== null || window.__agentTest.sends.some(x => x.channel === 'weave-in' && JSON.stringify(x.value).includes('voice-secret')))) throw new Error('Private Live acquired a public floor or leaked speech');
     if (await guest.locator('body').innerText().then(t => t.includes('voice-secret'))) throw new Error('Guest saw private Live speech');
     await endLive.click();
     await liveButton.waitFor();
     if (await museInput.evaluate(el => el.readOnly) || await voiceButton.isDisabled()) throw new Error('End did not restore the composer');
+    if (!await museInput.evaluate(el => document.activeElement === el)) throw new Error('End did not return keyboard focus to the message draft');
+    if (await museInput.inputValue() !== savedLiveDraft || await page.getByRole('button', { name: 'Muse settings', exact: true }).isDisabled()) throw new Error('End did not restore draft and settings');
     if (await page.evaluate(() => Array.from(document.querySelectorAll('[data-local="true"] video')).some(v => v.srcObject?.getAudioTracks().some(t => t.enabled))) !== micBeforeLive) throw new Error('End did not restore the meeting microphone');
     if (await page.evaluate(() => window.__agentTest.sessions.length) !== sessionsBeforeLive + 1) throw new Error('Live unexpectedly replaced or restarted its session');
+
+    await guest.locator('.agent-compose').getByRole('button', { name: 'Send', exact: true }).waitFor();
+    await guest.setViewportSize({ width: 390, height: 844 });
+    await guest.getByRole('button', { name: 'Start live conversation', exact: true }).tap();
+    await verifyLivePanel(guest);
+    await guest.locator('.side-panel').screenshot({ path: 'output/playwright/muse-live-mobile.png' });
+    await guest.getByRole('button', { name: 'End live conversation', exact: true }).tap();
+    await guest.getByRole('textbox', { name: 'Message Muse', exact: true }).waitFor();
+    await guest.setViewportSize({ width: 1440, height: 1000 });
 
     const reply = page.locator('.agent-line--assistant').filter({ hasText: 'Private response.' }).first();
     const sendReply = reply.getByRole('button', { name: 'Send to everyone', exact: true });
@@ -287,12 +358,14 @@ async (page, origin = 'http://127.0.0.1:8788', options = {}) => {
     const touchPage = await touch.newPage();
     await touchPage.goto(origin);
     const panelStyles = await page.evaluate(() => [...document.styleSheets].flatMap(sheet => { try { return [...sheet.cssRules].map(rule => rule.cssText); } catch { return []; } }).join('\n'));
-    await touchPage.setContent('<main class="agent-panel"><article class="agent-line agent-line--assistant"><header>Muse</header><p>Please include a review step.</p><button class="agent-line__send" aria-label="Send to everyone"></button></article></main>');
+    const replyMarkup = await reply.evaluate(el => el.outerHTML);
+    await touchPage.setContent(`<main class="agent-panel">${replyMarkup}</main>`);
     await touchPage.addStyleTag({ content: panelStyles });
     const touchSend = touchPage.locator('.agent-line__send');
-    if (await touchSend.evaluate(el => getComputedStyle(el).opacity) !== '0') throw new Error('Touch Send is visible before interacting');
-    await touchPage.locator('.agent-line').tap();
-    if (await touchSend.evaluate(el => getComputedStyle(el).opacity) !== '1' || (await touchSend.boundingBox()).height < 44) throw new Error('Touch Send is not visible and tappable');
+    const touchSendBox = await touchSend.boundingBox();
+    if (await touchSend.evaluate(el => getComputedStyle(el).opacity !== '1' || getComputedStyle(el).pointerEvents === 'none') ||
+      !touchSendBox || touchSendBox.width < 44 || touchSendBox.height < 44) throw new Error('Touch Send is not visible and tappable before interacting');
+    await touchSend.tap();
     await touch.close();
     await sendReply.press('Enter');
     await page.locator('.agent-compose').getByRole('button', { name: 'Stop response', exact: true }).waitFor();
@@ -454,7 +527,7 @@ async (page, origin = 'http://127.0.0.1:8788', options = {}) => {
     await page.getByRole('button', { name: 'Add Omni', exact: true }).waitFor();
     await tab(guest, 'Room').click();
     await guest.getByRole('button', { name: 'Add Omni', exact: true }).waitFor();
-    return { liveControls: true, liveStaysOpenAfterAnswer: true, liveEndRestoresMicrophone: true, livePrivate: true, replySend: true, replyHover: true, replyKeyboard: true, replyTouch: true, selectedMessageOnly: true, responseSquare: true, responseStop: true, dictationStopDraft: true, dictationSendFinalized: true, dictationPrivate: true, automaticOmni: true, fullPanelSettings: true, backWithoutSaving: true, reminderControlsRemoved: true, groupRemoval: true, clients: 2, directMuseTab: true, groupInRoom: true, allMembersConfigureGroup: true, groupBorderGlow: true, injectedSystemSignal: false, automaticSystemSignal: true, editSettings: true, automaticChat: true, noLiveOnJoin: true, privateIsolation: true, privateRecovery: true, signalingRecovery: true, oneShotPublicSpeech: true, ownerAttribution: true, ownerMicOpen, omniApprovedSpeech: true, omniSilentBeforeApproval: true, omniReplayDedup: true, mobileOverflow: false, provider: 'simulated GPT-Live WebRTC (no real provider call)', relay: 'mocked provisioning; local peer connectivity' };
+    return { liveControls: true, liveStaysOpenAfterAnswer: true, liveEndRestoresMicrophone: true, liveDraftPreserved: true, liveMobileTouch: true, livePrivate: true, replySend: true, replyHover: true, replyKeyboard: true, replyTouch: true, selectedMessageOnly: true, responseSquare: true, responseStop: true, dictationStopDraft: true, dictationSendFinalized: true, dictationPrivate: true, automaticOmni: true, fullPanelSettings: true, backWithoutSaving: true, reminderControlsRemoved: true, groupRemoval: true, clients: 2, directMuseTab: true, groupInRoom: true, allMembersConfigureGroup: true, groupBorderGlow: true, injectedSystemSignal: false, automaticSystemSignal: true, editSettings: true, automaticChat: true, noLiveOnJoin: true, privateIsolation: true, privateRecovery: true, signalingRecovery: true, oneShotPublicSpeech: true, ownerAttribution: true, ownerMicOpen, omniApprovedSpeech: true, omniSilentBeforeApproval: true, omniReplayDedup: true, mobileOverflow: false, provider: 'simulated GPT-Live WebRTC (no real provider call)', relay: 'mocked provisioning; local peer connectivity' };
   } catch (error) {
     const diagnostics = await page.evaluate(() => ({ events: window.__agentTest?.incoming.slice(-20), audible: window.__agentTest?.audible, group: window.__agentTest?.states.at(-1)?.agents.find(a => a.config.kind === 'group'), errors: [...document.querySelectorAll('.agent-error')].map(e => e.textContent) })).catch(() => null);
     throw new Error(`${String(error)} ${JSON.stringify(diagnostics)}`);
