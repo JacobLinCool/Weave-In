@@ -20,6 +20,7 @@ import {
   Paperclip,
   PhoneOff,
   RefreshCw,
+  Presentation,
   ScreenShare,
   ScreenShareOff,
   Send,
@@ -239,6 +240,8 @@ export function PreviewControls({
 }
 
 export function MeetingControls({
+  whiteboardOpen,
+  onToggleWhiteboard,
   micEnabled,
   cameraEnabled,
   sharingScreen,
@@ -247,6 +250,8 @@ export function MeetingControls({
   onToggleCamera,
   onToggleScreen,
 }: {
+  whiteboardOpen: boolean;
+  onToggleWhiteboard(): void;
   micEnabled: boolean;
   cameraEnabled: boolean;
   sharingScreen: boolean;
@@ -272,6 +277,9 @@ export function MeetingControls({
         title={canShareScreen ? undefined : 'Screen sharing is not available in this browser.'}
       >
         {sharingScreen ? <ScreenShareOff size={20} /> : <ScreenShare size={20} />}<span>{sharingScreen ? 'Stop sharing' : 'Share screen'}</span>
+      </button>
+      <button className={`transport-button ${whiteboardOpen ? 'is-active' : ''}`} type="button" onClick={onToggleWhiteboard} aria-expanded={whiteboardOpen} aria-controls="meeting-whiteboard" aria-label={whiteboardOpen ? 'Close whiteboard' : 'Open shared whiteboard'}>
+        <Presentation size={20} /><span>Whiteboard</span>
       </button>
     </nav>
   );

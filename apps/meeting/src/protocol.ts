@@ -1,3 +1,7 @@
+import { parseBoardElement, type BoardElement } from './whiteboard-model';
+import { parseExcalidrawElement } from './excalidraw-store';
+import type { ExcalidrawElement } from '@excalidraw/excalidraw/element/types';
+
 export const MAX_PARTICIPANTS = 8;
 export const MAX_SIGNAL_FRAME_BYTES = 65_536;
 export const MAX_PEER_MESSAGE_BYTES = 16_384;
@@ -81,6 +85,8 @@ export type HistoryEntry =
  * later; `more: false` marks the last batch.
  */
 export type PeerMessage =
+  | { type: 'excalidraw'; element: ExcalidrawElement }
+  | { type: 'whiteboard'; element: BoardElement }
   | ({ type: 'state' } & PeerMediaState)
   | { type: 'chat'; id: string; text: string; at: string; agent: string | null }
   | { type: 'transcript'; id: string; text: string; at: string; final: boolean }
@@ -117,6 +123,14 @@ export function parseClientMessage(value: unknown): ClientMessage | null {
 export function parsePeerMessage(value: unknown): PeerMessage | null {
   if (!isRecord(value)) return null;
   switch (value['type']) {
+    case 'excalidraw': {
+      const element = parseExcalidrawElement(value['element']);
+      return element ? { type: 'excalidraw', element } : null;
+    }
+    case 'whiteboard': {
+      const element = parseBoardElement(value['element']);
+      return element ? { type: 'whiteboard', element } : null;
+    }
     case 'state': {
       const cameraStreamId = optionalStreamId(value['cameraStreamId']);
       const screenStreamId = optionalStreamId(value['screenStreamId']);

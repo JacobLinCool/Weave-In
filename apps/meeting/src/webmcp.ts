@@ -3,12 +3,11 @@ import type { SharedFile, SharedFileStatus } from './file-share';
 import { DEFAULT_LOG_PAGE, MAX_LOG_PAGE, type LogParticipant, type MeetingLog } from './meeting-log';
 import { MAX_AGENT_LABEL_CHARACTERS, MAX_CHAT_CHARACTERS } from './protocol';
 import type { CaptureOptions, CapturedFrame } from './screen-capture';
+import { WHITEBOARD_EDIT_SCHEMA, type WhiteboardEditResult } from './whiteboard-webmcp';
 
 /**
- * WebMCP exposes four tools to an agent running in the participant's browser: read the
- * meeting record, fetch a shared file, look at the screen being shared, and post to chat
- * as that participant's agent. Everything the tools return comes from this browser's own
- * copy of the room.
+ * WebMCP exposes meeting, screen capture and shared whiteboard tools to an agent in the
+ * participant's browser. Results come from this browser's own copy of the room.
  */
 
 export const MEETING_TOOL_NAMES = Object.freeze({
@@ -16,6 +15,8 @@ export const MEETING_TOOL_NAMES = Object.freeze({
   download: 'download_file',
   capture: 'capture_screen_share',
   send: 'send_chat_message',
+  captureWhiteboard: 'capture_whiteboard',
+  editWhiteboard: 'edit_whiteboard',
 });
 
 export const MIN_CAPTURE_WIDTH = 320;
@@ -56,6 +57,10 @@ export interface MeetingToolsContext {
   download(fileId: string): Promise<{ file: SharedFile; blob: Blob }>;
   /** Resolves null when nobody is sharing a screen. */
   captureScreen(options: CaptureOptions): Promise<ScreenCapture | null>;
+  /** Captures the open whiteboard viewport; rejects when the board is closed. */
+  captureWhiteboard(options: CaptureOptions): Promise<CapturedFrame>;
+  /** Mutates the shared room store; implementations should use the validated editWhiteboard helper. */
+  editWhiteboard(input: unknown): WhiteboardEditResult | Promise<WhiteboardEditResult>;
   sendAgentMessage(text: string, agent: string | null): { id: string; at: string };
 }
 
@@ -261,6 +266,66 @@ export function createMeetingTools(context: MeetingToolsContext): ToolDefinition
             { type: 'image', data: base64(bytes), mimeType: capture.blob.type },
           ],
         };
+      },
+    },
+    {
+      name: MEETING_TOOL_NAMES.captureWhiteboard,
+      description:
+        'Capture an image of the current shared whiteboard viewport, including shapes, their text, pen strokes and connectors, ' +
+        'without the toolbars. Open the whiteboard using the meeting controls first. Pan or zoom the canvas to frame the area ' +
+        'you want to inspect. This reads the board currently rendered in this browser and does not modify the shared board. ' +
+        'Use after edit_whiteboard to visually verify the resulting layout and text; a successful edit alone does not verify appearance.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          maxWidth: { type: 'integer', minimum: MIN_CAPTURE_WIDTH, maximum: MAX_CAPTURE_WIDTH, default: DEFAULT_CAPTURE_WIDTH },
+          format: { type: 'string', enum: ['jpeg', 'png'], default: 'png' },
+          quality: { type: 'number', minimum: 0.1, maximum: 1, default: DEFAULT_CAPTURE_QUALITY },
+        },
+        additionalProperties: false,
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+      execute: async (input) => {
+        if (!input || typeof input !== 'object' || Array.isArray(input)) return failure('Expected an object.');
+        const args = input as Record<string, unknown>;
+        if (Object.keys(args).some(key => !['maxWidth', 'format', 'quality'].includes(key))) return failure('Unknown capture option.');
+        const maxWidth = optionalInteger(args['maxWidth'], DEFAULT_CAPTURE_WIDTH, MIN_CAPTURE_WIDTH, MAX_CAPTURE_WIDTH);
+        const format = args['format'] === undefined ? 'png' : args['format'];
+        const quality = optionalNumber(args['quality'], DEFAULT_CAPTURE_QUALITY, 0.1, 1);
+        if (maxWidth === null || args['maxWidth'] === null) return failure(`\`maxWidth\` must be an integer between ${MIN_CAPTURE_WIDTH} and ${MAX_CAPTURE_WIDTH}.`);
+        if (format !== 'jpeg' && format !== 'png') return failure('`format` must be "jpeg" or "png".');
+        if (quality === null || args['quality'] === null) return failure('`quality` must be a number between 0.1 and 1.');
+        try {
+          const capture = await context.captureWhiteboard({ maxWidth, format, quality });
+          const bytes = new Uint8Array(await capture.blob.arrayBuffer());
+          return { content: [
+            { type: 'text', text: JSON.stringify({ shared: true, view: 'viewport', capturedAt: new Date().toISOString(), width: capture.width, height: capture.height, sourceWidth: capture.sourceWidth, sourceHeight: capture.sourceHeight, mimeType: capture.blob.type, bytes: bytes.byteLength }) },
+            { type: 'image', data: base64(bytes), mimeType: capture.blob.type },
+          ] };
+        } catch (error) {
+          return failure(error instanceof Error ? error.message : 'The whiteboard could not be captured.');
+        }
+      },
+    },
+    {
+      name: MEETING_TOOL_NAMES.editWhiteboard,
+      description:
+        'Read or edit the whiteboard shared by everyone in this meeting. Use action read to obtain object ids and board coordinates; ' +
+        'read pages contain up to 100 native Excalidraw records (bound text points to its node through containerId). Use action edit with up to 50 create, update or delete operations, or action undo/redo ' +
+        'for the local participant’s most recent undoable edit (including manual edits). Every modification is immediately shared ' +
+        'with other participants. Text belongs to its node; update that same node’s text, x/y or width/height to edit, move or resize it. ' +
+        'Create note, rectangle, diamond or text nodes, pen strokes with 2–256 relative points, or connectors using from/to node ids. ' +
+        'Use action mermaid with a source string starting with flowchart TD or graph LR to import a complete Mermaid flowchart ' +
+        'as native editable nodes, bound text and arrows. Optional x/y position its top-left corner; by default it is placed to the right ' +
+        'of existing content. Source is limited to 12000 characters and imports to 300 native elements including labels. Other diagram ' +
+        'types, initialization directives and image fallbacks are rejected. Existing content is preserved. ' +
+        'Use unique create ids to connect nodes in one batch. Text is limited to 500 characters per node. Deleting a node removes ' +
+        'its connectors. Undo avoids overwriting another participant’s newer changes. After editing, use capture_whiteboard to inspect the visible result.',
+      inputSchema: WHITEBOARD_EDIT_SCHEMA,
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+      execute: async (input) => {
+        try { return success(await context.editWhiteboard(input)); }
+        catch (error) { return failure(error instanceof Error ? error.message : 'The whiteboard operation failed.'); }
       },
     },
     {

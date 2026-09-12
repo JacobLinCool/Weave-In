@@ -149,3 +149,6 @@ dist
 
 # Local editing guidance
 *.shadow.md
+
+# Generated from the installed Excalidraw package
+apps/meeting/public/excalidraw/

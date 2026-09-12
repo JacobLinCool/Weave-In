@@ -1,0 +1,11 @@
+.meeting-stage:has(#meeting-whiteboard) { overflow-y:auto; }
+#meeting-whiteboard { flex:1 0 460px; min-height:460px; display:flex; }
+.whiteboard { position:relative; width:100%; flex:1; min-width:0; min-height:460px; height:100%; border:1px solid #d9dfda; border-radius:12px; background:#fafaf8; overflow:hidden; }
+.whiteboard .excalidraw { --color-primary:#466a58; --color-primary-darker:#2d4e3d; --color-primary-darkest:#243e31; --color-primary-light:#e5eee7; --island-bg-color:#ffffff; --default-bg-color:#fafaf8; --color-surface-low:#f1f5f0; --color-surface-mid:#e5eee7; --color-on-primary-container:#294f3a; --color-primary-container:#dceade; }
+.whiteboard .excalidraw .welcome-screen-center,.whiteboard .excalidraw .welcome-screen-decor { display:none; }
+.whiteboard .excalidraw .Island { box-shadow:0 3px 14px #23332a0b; border:1px solid #23332a14; }
+.whiteboard-video-strip { display:flex; flex-shrink:0; gap:8px; height:72px; overflow:auto; margin-top:10px; }
+.whiteboard-video-strip > * { min-width:110px; max-width:128px; flex:1; }
+.whiteboard-video-strip .video-tile-shell,.whiteboard-video-strip .video-tile { min-height:0; height:100%; }
+
+.whiteboard__error { position:absolute; z-index:20; top:65px; left:50%; transform:translateX(-50%); max-width:90%; border:1px solid #d3b5a0; padding:8px 12px; border-radius:8px; background:#fff6e9; color:#51352e; font-size:12px; }

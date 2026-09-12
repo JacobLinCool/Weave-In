@@ -1,3 +1,8 @@
+import { captureWhiteboard } from './whiteboard-capture';
+import { editExcalidrawWhiteboard } from './whiteboard-webmcp';
+import { Whiteboard } from './whiteboard';
+import { ExcalidrawStore } from './excalidraw-store';
+import type { ExcalidrawImperativeAPI } from '@excalidraw/excalidraw/types';
 import {
   createTranscription,
   type Credential,
@@ -100,6 +105,9 @@ export function App(): ReactNode {
   const localStreamRef = useRef<MediaStream | null>(null);
   const screenStreamRef = useRef<MediaStream | null>(null);
   const controllerRef = useRef<MeetingController | null>(null);
+  const [whiteboard] = useState(() => new ExcalidrawStore((element) => controllerRef.current?.broadcast({ type: 'excalidraw', element })));
+  const whiteboardApiRef = useRef<ExcalidrawImperativeAPI | null>(null);
+  const onWhiteboardApi = useCallback((api: ExcalidrawImperativeAPI | null) => { whiteboardApiRef.current = api; }, []);
   const participantsRef = useRef<Record<string, RemoteParticipant>>({});
   const nameRef = useRef('You');
   const micRef = useRef(true);
@@ -242,6 +250,9 @@ export function App(): ReactNode {
 
   const handlePeerMessage = (peerId: string, message: PeerMessage): void => {
     switch (message.type) {
+      case 'excalidraw':
+        whiteboard.merge(message.element);
+        return;
       case 'state':
         setParticipants((current) => {
           const participant = current[peerId];
@@ -493,6 +504,7 @@ export function App(): ReactNode {
       return;
     }
     setError(null);
+    whiteboard.reset();
     setPhase('connecting');
     nameRef.current = name;
     storeDisplayName(name);
@@ -557,6 +569,7 @@ export function App(): ReactNode {
         },
         onPeerChannelOpen: (peerId) => {
           controllerRef.current?.send(peerId, { type: 'state', ...currentMediaState() });
+          for (const element of whiteboard.records()) controllerRef.current?.send(peerId, { type: 'excalidraw', element });
           fileShareRef.current?.announceTo(peerId);
           if (newcomersRef.current.has(peerId)) replayHistoryTo(peerId);
         },
@@ -776,6 +789,19 @@ export function App(): ReactNode {
         return { file, blob };
       },
       captureScreen,
+      captureWhiteboard: (options) => {
+        const root = document.querySelector<HTMLElement>('.whiteboard');
+        if (!root) throw new Error('Open the whiteboard before capturing it.');
+        return captureWhiteboard(root, options);
+      },
+      editWhiteboard: async (input) => {
+        const result = await editExcalidrawWhiteboard(whiteboard, input);
+        if (result.action !== 'read') {
+          await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+          whiteboardApiRef.current?.scrollToContent(undefined, { fitToViewport: true, viewportZoomFactor: 0.8, animate: false });
+        }
+        return result;
+      },
       sendAgentMessage: (text, agent) => sendChat(text, agent ?? 'Assistant'),
     });
     return () => unregister?.();
@@ -790,6 +816,8 @@ export function App(): ReactNode {
     return (
       <>
       <MeetingSurface
+        whiteboard={whiteboard}
+        onWhiteboardApi={onWhiteboardApi}
         roomCode={roomCode}
         displayName={nameRef.current}
         localStream={localStream}
@@ -852,6 +880,8 @@ export function App(): ReactNode {
 }
 
 function MeetingSurface(props: {
+  whiteboard: ExcalidrawStore;
+  onWhiteboardApi(api: ExcalidrawImperativeAPI | null): void;
   roomCode: string;
   displayName: string;
   localStream: MediaStream | null;
@@ -881,6 +911,7 @@ function MeetingSurface(props: {
   onCopy(): void;
   onLeave(): void;
 }): ReactNode {
+  const [whiteboardOpen, setWhiteboardOpen] = useState(false);
   const participants = Object.values(props.participants);
   const presentation = findPresentation(props.screenStream, props.displayName, participants);
   const tiles = [
@@ -925,7 +956,9 @@ function MeetingSurface(props: {
       />
       <div className="meeting-body">
         <section className="meeting-stage">
-          {presentation ? (
+          {whiteboardOpen ? (
+            <><div id="meeting-whiteboard"><Whiteboard store={props.whiteboard} onApi={props.onWhiteboardApi} /></div><div className="whiteboard-video-strip">{tiles}</div></>
+          ) : presentation ? (
             <div className="stage-presentation">
               <div className="stage-presentation__screen">
                 <VideoTile name={presentation.name} stream={presentation.stream} muted={false} cameraOff={false} local={presentation.local} presentation />
@@ -939,6 +972,8 @@ function MeetingSurface(props: {
             <ErrorNotice message={props.error ?? props.transcription.error?.message ?? 'Something went wrong.'} />
           )}
           <MeetingControls
+            whiteboardOpen={whiteboardOpen}
+            onToggleWhiteboard={() => setWhiteboardOpen(open => !open)}
             micEnabled={props.micEnabled}
             cameraEnabled={props.cameraEnabled}
             sharingScreen={Boolean(props.screenStream)}
