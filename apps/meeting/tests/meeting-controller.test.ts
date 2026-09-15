@@ -313,7 +313,7 @@ describe('relay-backed peer connections', () => {
     const controller = new MeetingController([], callbacks);
     vi.mocked(callbacks.onConnected).mockImplementation(() => {
       expect(controller.sessionToken).toBe('agent-session-token');
-      controller.sendAgent({ type: 'agent-ready', ready: true });
+      controller.sendAgent({ type: 'agent-ready', ready: true, groupReady: true });
     });
     const ready = controller.connect(args);
     await vi.advanceTimersByTimeAsync(0);
@@ -323,7 +323,7 @@ describe('relay-backed peer connections', () => {
     socket.message({ type: 'agent-state', state, serverNow: Date.now() });
     await ready;
     await vi.advanceTimersByTimeAsync(0);
-    expect(socket.send).toHaveBeenCalledWith(JSON.stringify({ type: 'agent-ready', ready: true }));
+    expect(socket.send).toHaveBeenCalledWith(JSON.stringify({ type: 'agent-ready', ready: true, groupReady: true }));
     expect(callbacks.onAgentState).toHaveBeenCalledWith(state, Date.now());
     expect(PeerConnection.instances[0]!.configuration.iceServers).toEqual(credentials().iceServers);
     expect(fetch).toHaveBeenCalledTimes(1);

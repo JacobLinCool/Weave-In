@@ -5,6 +5,7 @@ import type { LiveCallbacks } from '../src/agents/live';
 import { MeetingLog } from '../src/meeting-log';
 import type { MeetingSnapshot, ToolDefinition } from '../src/webmcp';
 import { defaultAgentConfig } from '../src/agents/config';
+import { applyAgentCommand, reconcileAgents } from '../src/agents/room';
 
 const calls = vi.hoisted(() => ({ requests: vi.fn(), contexts: vi.fn(), close: vi.fn(), start: vi.fn(), tools: [] as unknown[][], lives: [] as LiveCallbacks[], enable: vi.fn(async (): Promise<void> => undefined), mute: vi.fn(async (): Promise<void> => undefined), attach: vi.fn((_stream: MediaStream, _allowed: () => boolean, _level: unknown, _error: (message: string) => void) => ({ stop: vi.fn(), output: { id: 'output' } as MediaStream })) }));
 vi.mock('../src/agents/live', () => ({ AgentLive: class {
@@ -439,7 +440,7 @@ it('reports blocked remote audio and retries its receiver after enabling audio',
   expect(calls.attach).toHaveBeenCalledOnce();
   calls.attach.mock.calls[0]![3]('Playback blocked');
   expect(runtime.snapshot()).toMatchObject({ ready: false, error: 'Playback blocked' });
-  expect(sendAgent).toHaveBeenLastCalledWith({ type: 'agent-ready', ready: false });
+  expect(sendAgent).toHaveBeenLastCalledWith({ type: 'agent-ready', ready: false, groupReady: false });
   expect(calls.attach.mock.results[0]!.value.stop).toHaveBeenCalledOnce();
   await runtime.enable();
   expect(calls.attach).toHaveBeenCalledTimes(2);
@@ -727,6 +728,79 @@ it('pauses automatic review while its runner is hidden or cannot monitor audio',
   runtime.setGroupMonitoring(true);
   await vi.advanceTimersByTimeAsync(4000);
   expect(sendAgent.mock.calls.some(([c]) => c.type === 'agent-review')).toBe(true);
+});
+
+it('keeps approved Omni speech when participant updates repeat the foreground state', async () => {
+  vi.useFakeTimers();
+  const { runtime, log, sendAgent } = setup(); seedDiscussion(log); await runtime.enable();
+  const state = structuredClone(runtime.snapshot().room);
+  const group: RoomAgent = { ...state.agents[0]!, id: 'group', config: { ...state.agents[0]!.config, kind: 'group' }, phase: 'preparing', request: 1 };
+  state.agents.push(group); runtime.update(state, Date.now()); await Promise.resolve();
+  await calls.lives.at(-1)!.prepared(JSON.stringify({ kind: 'convergence', severity: .8, evidenceSeqs: [1, 4], targetPeerId: null, text: 'Should we verify the launch risk first?' }));
+  group.phase = 'raised'; state.approval = { id: group.id, epoch: group.epoch, request: group.request };
+  runtime.update(structuredClone(state), Date.now());
+  await vi.advanceTimersByTimeAsync(2000);
+  group.phase = 'speaking'; state.floor = { id: 'group-floor', agentId: group.id, runner: 'owner', epoch: group.epoch, startedAt: Date.now(), expiresAt: Date.now() + 60_000 };
+  runtime.update(structuredClone(state), Date.now()); await Promise.resolve();
+  calls.lives.at(-1)!.stream({} as MediaStream);
+  const playable = calls.attach.mock.calls.at(-1)![1];
+  await vi.advanceTimersByTimeAsync(1);
+  runtime.setGroupForeground(true); // The App monitor effect also reruns for camera/microphone state changes.
+  runtime.checkGroup();
+  expect(sendAgent).not.toHaveBeenCalledWith({ type: 'agent-cancel', id: group.id });
+  expect(playable()).toBe(true);
+
+  runtime.setGroupForeground(false); runtime.setGroupForeground(true);
+  runtime.checkGroup();
+  expect(playable()).toBe(false);
+  expect(sendAgent).toHaveBeenCalledWith({ type: 'agent-cancel', id: group.id });
+});
+
+it.each(['hidden', 'unmonitored'] as const)('yields Omni from a %s device without revoking its Muse floor', async reason => {
+  const { runtime, sendAgent } = setup(); await runtime.enable();
+  const state = structuredClone(runtime.snapshot().room);
+  state.groupInitialized = true;
+  const group: RoomAgent = { ...state.agents[0]!, id: 'group', config: defaultAgentConfig('group') };
+  state.agents.push(group);
+  state.floor = { id: 'personal-floor', agentId: 'personal', runner: 'owner', epoch: 1, startedAt: Date.now(), expiresAt: Date.now() + 60_000 };
+  runtime.update(structuredClone(state), Date.now());
+  const members = ['owner', 'guest'].map((peerId, joinedAt) => ({ peerId, joinedAt, isHost: peerId === 'owner', ready: true, groupReady: true, heartbeat: Date.now() }));
+  sendAgent.mockImplementation(command => {
+    const owner = members[0]!;
+    applyAgentCommand(state, owner, command, Date.now(), () => crypto.randomUUID());
+    reconcileAgents(state, members, Date.now(), () => crypto.randomUUID());
+    runtime.update(structuredClone(state), Date.now());
+  });
+  if (reason === 'hidden') runtime.setGroupForeground(false); else runtime.setGroupMonitoring(false);
+  expect(group.runner).toBe('guest');
+  expect(members[0]!.ready).toBe(true);
+  expect(state.floor?.id).toBe('personal-floor');
+});
+
+it.each([
+  ['hidden', false], ['unmonitored', false], ['hidden', true], ['unmonitored', true],
+] as const)('resumes review after %s only for fresh discussion (replayed=%s)', async (reason, replayed) => {
+  vi.useFakeTimers();
+  const { runtime, log, sendAgent } = setup(); await runtime.enable();
+  const state = structuredClone(runtime.snapshot().room);
+  state.groupInitialized = true;
+  const group: RoomAgent = { ...state.agents[0]!, id: 'group', config: defaultAgentConfig('group') };
+  state.agents.push(group); runtime.update(structuredClone(state), Date.now());
+  const owner = { peerId: 'owner', joinedAt: 0, isHost: true, ready: true, groupReady: true, heartbeat: Date.now() };
+  sendAgent.mockImplementation(command => {
+    owner.heartbeat = Date.now();
+    applyAgentCommand(state, owner, command, Date.now(), () => crypto.randomUUID());
+    reconcileAgents(state, [owner], Date.now(), () => crypto.randomUUID());
+    runtime.update(structuredClone(state), Date.now());
+  });
+  if (reason === 'hidden') runtime.setGroupForeground(false); else runtime.setGroupMonitoring(false);
+  expect(group.runner).toBeNull();
+  seedDiscussion(log);
+  if (replayed) log.restore(log.snapshot().map(record => ({ ...record, replayed: true })));
+  if (reason === 'hidden') runtime.setGroupForeground(true); else runtime.setGroupMonitoring(true);
+  expect(group.runner).toBe('owner');
+  await vi.advanceTimersByTimeAsync(4000);
+  expect(sendAgent.mock.calls.some(([command]) => command.type === 'agent-review')).toBe(!replayed);
 });
 
 it('withdraws an invitation if the target leaves while waiting for quiet', async () => {

@@ -263,7 +263,7 @@ export class MeetingRoom extends DurableObject<Env> {
     const pair = new WebSocketPair();
     const client = pair[0];
     const server = pair[1];
-    const identity: SocketAttachment = { peerId, name, startedAt, isHost, sessionToken: crypto.randomUUID(), joinedAt: Date.now(), heartbeat: Date.now(), ready: false, liveRequests: [] };
+    const identity: SocketAttachment = { peerId, name, startedAt, isHost, sessionToken: crypto.randomUUID(), joinedAt: Date.now(), heartbeat: Date.now(), ready: false, groupReady: false, liveRequests: [] };
     server.serializeAttachment(identity);
     this.ctx.acceptWebSocket(server, [`peer:${peerId}`]);
 
@@ -301,7 +301,6 @@ export class MeetingRoom extends DurableObject<Env> {
     socket.serializeAttachment(attachment);
     if (message.type !== 'signal') {
       try {
-        if (message.type === 'agent-ready') attachment.ready = message.ready;
         applyAgentCommand(this.#agents, attachment, message, Date.now(), () => crypto.randomUUID());
         socket.serializeAttachment(attachment);
         await this.#publish();

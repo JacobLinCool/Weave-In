@@ -11,7 +11,7 @@ import { editWhiteboard } from '../src/whiteboard-webmcp';
 
 const config: AgentConfig = { kind: 'group', name: 'Facilitator', instructions: 'Help the room think.', language: 'auto', source: 'all', chat: true, system: true, screen: false, files: false, audience: 'public' };
 const signal = { kind: 'convergence' as const, evidence: ['host/1', 'guest/2'] };
-const member = (id: string, joinedAt = 0): AgentMember => ({ peerId: id, isHost: id === 'host', ready: true, joinedAt, heartbeat: 1000 });
+const member = (id: string, joinedAt = 0): AgentMember => ({ peerId: id, isHost: id === 'host', ready: true, groupReady: true, joinedAt, heartbeat: 1000 });
 function fixture() {
   const state = emptyAgentRoom(); const host = member('host'); const guest = member('guest', 1); let next = 0;
   const uuid = () => `id-${++next}`;
@@ -143,7 +143,31 @@ describe('agent creation, approval and recovery', () => {
     reconcileAgents(state, [guest, host], 31_001, uuid);
     expect(agent.runner).toBeNull();
   });
+  it.each(['finish', 'expiry'] as const)('lets published Omni speech finish in a hidden tab, then yields after %s', (end) => {
+    const { state, host, guest, uuid, agent } = fixture();
+    applyAgentCommand(state, host, { type: 'agent-review', id: agent.id, epoch: 1, request: 0 }, 1000, uuid);
+    applyAgentCommand(state, host, { type: 'agent-raised', id: agent.id, epoch: 1, request: 1, signal }, 1000, uuid);
+    applyAgentCommand(state, guest, { type: 'agent-approve', id: agent.id, epoch: 1, request: 1 }, 1000, uuid);
+    applyAgentCommand(state, host, { type: 'agent-publish', id: agent.id, epoch: 1, request: 1 }, 1000, uuid);
+    const floor = state.floor!;
+    applyAgentCommand(state, host, { type: 'agent-published', floorId: floor.id }, 1000, uuid);
+    applyAgentCommand(state, host, { type: 'agent-ready', ready: true, groupReady: false }, 1001, uuid);
+    reconcileAgents(state, [host, guest], 1001, uuid);
+    expect(agent).toMatchObject({ runner: 'host', epoch: 1, phase: 'speaking' });
+    expect(state.floor).toEqual(floor);
+    expect(permitsFloor(state, host.peerId, floor.id, 1, 1001)).toBe(true);
+
+    const now = end === 'finish' ? 1002 : floor.expiresAt;
+    if (end === 'finish') applyAgentCommand(state, host, { type: 'agent-finish', floorId: floor.id }, now, uuid);
+    host.heartbeat = guest.heartbeat = now;
+    reconcileAgents(state, [host, guest], now, uuid);
+    expect(agent).toMatchObject({ runner: 'guest', epoch: 2 });
+    expect(state.floor).toBeNull();
+  });
   it('rejects removed manual commands and malformed review evidence', () => {
+    expect(parseAgentCommand({ type: 'agent-ready', ready: true })).toBeNull();
+    expect(parseAgentCommand({ type: 'agent-ready', ready: true, groupReady: 'true' })).toBeNull();
+    expect(parseAgentCommand({ type: 'agent-ready', ready: true, groupReady: false })).toEqual({ type: 'agent-ready', ready: true, groupReady: false });
     expect(parseAgentCommand({ type: 'agent-signal', id: 'group' })).toBeNull();
     expect(parseAgentCommand({ type: 'agent-approve', id: 'group', epoch: 1, request: 1 })?.type).toBe('agent-approve');
     expect(parseAgentCommand({ type: 'agent-raised', id: 'group', epoch: 1, request: 1, signal: { kind: 'manual', evidence: [] } })).toBeNull();

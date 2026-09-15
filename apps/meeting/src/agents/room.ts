@@ -2,13 +2,14 @@ import { GROUP_DRAFT_MS, GROUP_CHECK_MS, GROUP_COOLDOWN_MS, GROUP_MAX_INTERVENTI
 import { LEASE_MS, PUBLIC_TURN_MS, type AgentCommand, type AgentRoomState, type RoomAgent } from './contracts';
 import { defaultAgentConfig } from './config';
 
-export interface AgentMember { peerId: string; isHost: boolean; ready: boolean; joinedAt: number; heartbeat: number }
+export interface AgentMember { peerId: string; isHost: boolean; ready: boolean; groupReady: boolean; joinedAt: number; heartbeat: number }
 
 /** One room authority; only control metadata goes through the server. */
 export function reconcileAgents(state: AgentRoomState, members: AgentMember[], now: number, uuid: () => string): void {
   const present = new Set(members.map((member) => member.peerId));
   state.agents = state.agents.filter((agent) => agent.config.kind === 'group' || present.has(agent.owner));
   const available = members.filter((member) => member.ready && member.heartbeat + LEASE_MS > now).sort((a, b) => a.joinedAt - b.joinedAt || a.peerId.localeCompare(b.peerId));
+  const groupAvailable = available.filter((member) => member.groupReady);
   // Initialize once at the room authority, so simultaneous joins cannot create
   // duplicate agents and later joins do not undo an explicit removal.
   if (!state.groupInitialized && members.length) {
@@ -21,9 +22,12 @@ export function reconcileAgents(state: AgentRoomState, members: AgentMember[], n
   }
   for (const agent of state.agents) {
     if (agent.config.kind === 'personal') continue;
-    const runner = available.find((member) => member.peerId === agent.runner);
+    // Foreground monitoring gates new interventions; an already published speech keeps its valid floor.
+    const publishedFloor = agent.phase === 'speaking' && state.floor?.agentId === agent.id && state.floor.runner === agent.runner &&
+      state.floor.epoch === agent.epoch && state.floor.expiresAt > now && !!state.signal && state.automation.events.includes(JSON.stringify(state.signal.evidence));
+    const runner = (publishedFloor ? available : groupAvailable).find((member) => member.peerId === agent.runner);
     if (runner) { agent.leaseUntil = runner.heartbeat + LEASE_MS; continue; }
-    const next = available[0];
+    const next = groupAvailable[0];
     if (agent.runner !== (next?.peerId ?? null)) {
       state.approval = null;
       agent.epoch++;
@@ -51,7 +55,8 @@ export function reconcileAgents(state: AgentRoomState, members: AgentMember[], n
 }
 
 export function applyAgentCommand(state: AgentRoomState, member: AgentMember, command: AgentCommand, now: number, uuid: () => string): void {
-  if (command.type === 'agent-ready' || command.type === 'agent-heartbeat') return;
+  if (command.type === 'agent-ready') { member.ready = command.ready; member.groupReady = command.groupReady; return; }
+  if (command.type === 'agent-heartbeat') return;
   if (command.type === 'agent-create') {
     const config = command.config;
     if (state.agents.some((agent) => agent.config.kind === config.kind && (config.kind === 'group' || agent.owner === member.peerId))) throw new Error('This agent already exists.');
@@ -100,7 +105,7 @@ export function applyAgentCommand(state: AgentRoomState, member: AgentMember, co
       if (state.floor?.agentId === agent.id) state.floor = null;
       return;
     case 'agent-review':
-      if (!group || agent.runner !== member.peerId || !member.ready || agent.leaseUntil <= now || agent.epoch !== command.epoch || agent.request !== command.request || agent.phase !== 'idle') return;
+      if (!group || agent.runner !== member.peerId || !member.ready || !member.groupReady || agent.leaseUntil <= now || agent.epoch !== command.epoch || agent.request !== command.request || agent.phase !== 'idle') return;
       if (state.floor || now < state.automation.nextCheckAt || now < state.automation.nextPublishAt || state.automation.published >= GROUP_MAX_INTERVENTIONS) return;
       state.approval = null;
       state.automation.nextCheckAt = now + GROUP_CHECK_MS;
@@ -122,7 +127,7 @@ export function applyAgentCommand(state: AgentRoomState, member: AgentMember, co
       state.approval = { id: agent.id, epoch: agent.epoch, request: agent.request };
       return;
     case 'agent-publish':
-      if (!group || agent.runner !== member.peerId || !member.ready || agent.phase !== 'raised' || agent.epoch !== command.epoch || agent.request !== command.request || agent.leaseUntil <= now || !state.signal) return;
+      if (!group || agent.runner !== member.peerId || !member.ready || !member.groupReady || agent.phase !== 'raised' || agent.epoch !== command.epoch || agent.request !== command.request || agent.leaseUntil <= now || !state.signal) return;
       if (state.approval?.id !== agent.id || state.approval.epoch !== agent.epoch || state.approval.request !== agent.request || now - state.signal.at > GROUP_DRAFT_MS) return;
       if (state.floor || now < state.automation.nextPublishAt || state.automation.published >= GROUP_MAX_INTERVENTIONS) return;
       grant(state, agent, now, uuid);

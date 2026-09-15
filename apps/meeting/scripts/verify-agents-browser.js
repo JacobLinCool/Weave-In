@@ -502,7 +502,7 @@ async (page, origin = 'http://127.0.0.1:8788', options = {}) => {
     }
     await page.locator('.agent-panel--group.agent-panel--active').waitFor();
     await guest.locator('.agent-panel--group.agent-panel--active').waitFor();
-    await page.waitForFunction(() => { const card = document.querySelector('.agent-panel--group.agent-panel--active'); return card && getComputedStyle(card).borderTopColor === 'rgb(233, 180, 76)' && getComputedStyle(card).boxShadow !== 'none'; });
+    await page.waitForFunction(() => { const card = document.querySelector('.agent-panel--group.agent-panel--active'); const button = card?.querySelector('.agent-group > .agent-action'); return card && button && getComputedStyle(card).boxShadow === 'none' && getComputedStyle(button).boxShadow !== 'none'; });
     await page.screenshot({ path: 'output/playwright/group-room-active.png' });
     await guest.getByRole('button', { name: 'Allow Omni to speak', exact: true }).waitFor();
     await page.waitForTimeout(2500);
