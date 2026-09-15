@@ -302,8 +302,8 @@ describe('MeetingRoom Durable Object', () => {
     const messages: ServerMessage[] = [];
     host.socket.addEventListener('message', (event) => { messages.push(JSON.parse(String(event.data)) as ServerMessage); });
     guest.socket.addEventListener('message', (event) => { messages.push(JSON.parse(String(event.data)) as ServerMessage); });
-    host.socket.send(JSON.stringify({ type: 'agent-ready', ready: true }));
-    guest.socket.send(JSON.stringify({ type: 'agent-ready', ready: true }));
+    host.socket.send(JSON.stringify({ type: 'agent-ready', ready: true, groupReady: true }));
+    guest.socket.send(JSON.stringify({ type: 'agent-ready', ready: true, groupReady: true }));
     await vi.waitFor(() => expect(messages.filter((m) => m.type === 'agent-state').length).toBeGreaterThanOrEqual(2));
     const initial = messages.filter((m) => m.type === 'agent-state').at(-1);
     expect(initial?.state.agents).toHaveLength(1);

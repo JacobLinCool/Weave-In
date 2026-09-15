@@ -54,7 +54,7 @@ export interface AgentRoomState {
 }
 export const emptyAgentRoom = (): AgentRoomState => ({ agents: [], floor: null, approval: null, grants: [], queue: [], signal: null, automation: { nextCheckAt: 0, nextPublishAt: 0, published: 0, events: [] } });
 export type AgentCommand =
-  | { type: 'agent-ready'; ready: boolean }
+  | { type: 'agent-ready'; ready: boolean; groupReady: boolean }
   | { type: 'agent-heartbeat' }
   | { type: 'agent-create'; config: AgentConfig }
   | { type: 'agent-configure'; id: string; config: AgentConfig }
@@ -102,7 +102,7 @@ export function parseAgentConfig(value: unknown): AgentConfig | null {
 export function parseAgentCommand(value: unknown): AgentCommand | null {
   if (!record(value)) return null;
   switch (value.type) {
-    case 'agent-ready': return typeof value.ready === 'boolean' ? { type: value.type, ready: value.ready } : null;
+    case 'agent-ready': return typeof value.ready === 'boolean' && typeof value.groupReady === 'boolean' ? { type: value.type, ready: value.ready, groupReady: value.groupReady } : null;
     case 'agent-heartbeat': return { type: value.type };
     case 'agent-create': { const config = parseAgentConfig(value.config); return config ? { type: value.type, config } : null; }
     case 'agent-configure': { const config = parseAgentConfig(value.config); return config && identifier(value.id) ? { type: value.type, id: value.id, config } : null; }

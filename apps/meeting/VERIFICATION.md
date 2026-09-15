@@ -24,6 +24,20 @@ This runs workspace type checks, transcription and meeting tests, production bui
 
 These tests verify deterministic application behavior and fixtures. They do not establish model accuracy, real speech understanding, device interoperability or production reliability.
 
+## Omni trigger and approval repair — 2026-09-15
+
+The following pre-rebase checks covered changes based on `6867b07` that separate Omni monitoring readiness from Muse audio readiness. Hidden or unmonitored runners yield, fresh discussion remains reviewable on return, and repeated foreground updates no longer cancel approved speech. Already published speech keeps its valid floor until completion or expiry. Omni now glows only while awaiting approval, shows the initial finalized-discussion count, and provides a full-width approval button. Muse Live uses the surrounding voice-control styling.
+
+`pnpm check` passed with exit code 0: **77 transcription + 435 meeting tests (512 total)**, type checking, production builds, asset validation and Worker deployment dry-run. Desktop and 390px mobile UI checks covered six Omni states, approval by Enter, visible 44px approval targets and no document overflow.
+
+The local Chromium microphone-to-approval-to-audio flow passed using synthetic Mandarin microphone input, real captions and real GPT-Live. Four separately finalized public captions led to automatic preparation and a ready glow; clicking **Allow Omni to speak** produced one relevant Mandarin question, measured audio peak 0.526 and a finished public transcript. No model response or caption record was injected. This was a single-participant room with mocked ICE provisioning; cross-device delivery, physical microphones/speakers and production behavior were not verified. No deployment was performed.
+
+Local evidence under repository-root `output/playwright/`: `omni-trigger-check.log`, `omni-trigger-results.json`, `omni-voice-check.js`, `omni-voice-ready.png`, `omni-approval-desktop.png`, `omni-approval-mobile.png`, and `muse-live-style-desktop.png` / `muse-live-style-mobile.png`.
+
+Click affordance follow-up: the glow now belongs to the approval button itself. A provider-free Chrome check of the real AgentPanel confirmed click, Enter and Space each approve once, only the ready/unapproved button glows, and the button stays visible at 44px high on desktop and 390px mobile without document overflow. Type checking and browser-script syntax checks passed. Evidence: `output/playwright/omni-ready-button-results.log`, `verify-omni-ready-button.js`, and `omni-ready-button-desktop.png` / `omni-ready-button-mobile.png`. This follow-up did not repeat provider or cross-device tests.
+
+After integration with main `857e6f2`, `pnpm check` passed with exit code 0: **83 transcription + 436 meeting tests (519 total)**, type checking, production builds, asset validation and Worker deployment dry-run. Main's newer Muse interface and Live controls are preserved. Evidence: `output/playwright/omni-pr-integrated-check.log`. The real-provider observations above precede this integration; no deployment was performed.
+
 ## Reconciliation validation — 2026-09-13
 
 The working tree based on `6867b07`, including the documentation reconciliation and bounded code fixes, was checked locally with Node.js 24.2.0 and pnpm 11.24.0. Dependencies were synchronized with `pnpm install --frozen-lockfile` before validation.

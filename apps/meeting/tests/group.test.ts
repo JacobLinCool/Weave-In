@@ -29,7 +29,7 @@ it('does not invite participants in two-person rooms', () => {
   expect(parseGroupDecision(JSON.stringify({ ...decision, kind: 'float', targetPeerId: 'Bob', text: 'Bob, any thoughts?' }), records, { ...snapshot, participants: people.slice(0, 2) })).toBeNull();
 });
 it('room authority fences the runner and persists throttling, cooldown, duplicate suppression and the room cap', () => {
-  const state = emptyAgentRoom(); const member = { peerId: 'Alice', isHost: true, ready: true, joinedAt: 0, heartbeat: 0 };
+  const state = emptyAgentRoom(); const member = { peerId: 'Alice', isHost: true, ready: true, groupReady: true, joinedAt: 0, heartbeat: 0 };
   const config: AgentConfig = { kind: 'group', name: 'Omni', instructions: '', language: 'auto', source: 'all', chat: true, system: true, screen: false, files: false, audience: 'public' };
   applyAgentCommand(state, member, { type: 'agent-create', config }, 0, () => 'group');
   const agent = state.agents[0]!;
@@ -66,7 +66,7 @@ it('room authority fences the runner and persists throttling, cooldown, duplicat
 
 it('canceling a granted but unpublished question does not consume the room allowance', () => {
   const state = emptyAgentRoom();
-  const member = { peerId: 'Alice', isHost: true, ready: true, joinedAt: 0, heartbeat: 1000 };
+  const member = { peerId: 'Alice', isHost: true, ready: true, groupReady: true, joinedAt: 0, heartbeat: 1000 };
   state.agents.push({ id: 'group', owner: 'Alice', runner: 'Alice', epoch: 1, phase: 'raised', request: 1, pending: false, leaseUntil: 100000,
     config: { kind: 'group', name: 'Omni', instructions: '', language: 'auto', source: 'all', chat: true, system: true, screen: false, files: false, audience: 'public' } });
   state.signal = { id: 1, by: 'Alice', at: 0, kind: 'echo', evidence: ['Alice/1', 'Bob/2'] };
@@ -91,7 +91,7 @@ it('uses stable, distinct evidence identifiers for different messages in the sam
 
 it('requires fresh approval for the exact prepared request and revokes it on cancel', () => {
   const state = emptyAgentRoom();
-  const member = { peerId: 'Alice', isHost: true, ready: true, joinedAt: 0, heartbeat: 0 };
+  const member = { peerId: 'Alice', isHost: true, ready: true, groupReady: true, joinedAt: 0, heartbeat: 0 };
   state.agents.push({ id: 'group', owner: 'Alice', runner: 'Alice', epoch: 1, phase: 'raised', request: 1, pending: false, leaseUntil: 1_000_000,
     config: { kind: 'group', name: 'Omni', instructions: '', language: 'auto', source: 'all', chat: true, system: true, screen: false, files: false, audience: 'public' } });
   state.signal = { id: 1, by: 'Alice', at: 0, kind: 'echo', evidence: ['a', 'b'] };

@@ -115,18 +115,20 @@ export class AgentRuntime {
   subscribe = (listener: () => void): (() => void) => { this.#listeners.add(listener); return () => this.#listeners.delete(listener); };
   snapshot = (): AgentView => this.#view;
   #snapshot(): AgentView {
+    const discussionCount = this.#discussion().length;
     return { room: this.#state, personal: this.#personal(), group: this.#state.agents.find((agent) => agent.config.kind === 'group') ?? null,
-      groupStatus: this.#state.automation.published >= GROUP_MAX_INTERVENTIONS ? 'Five suggestions shared; automatic review is finished for this room.' : this.#now() < this.#state.automation.nextPublishAt ? 'Giving the room time to discuss.' : this.#discussion().length < GROUP_MIN_RECORDS ? 'Waiting for at least four public discussion messages.' : 'Watching for new public discussion.',
+      groupStatus: this.#state.automation.published >= GROUP_MAX_INTERVENTIONS ? 'Five suggestions shared; automatic review is finished for this room.' : this.#now() < this.#state.automation.nextPublishAt ? 'Giving the room time to discuss.' : discussionCount < GROUP_MIN_RECORDS ? `Waiting for public discussion (${discussionCount}/${GROUP_MIN_RECORDS}). Enable captions for speech, or use Room chat.` : 'Watching for new public discussion.',
       personalActive: this.#operations.has('personal') || this.#queue.length > 0 || this.#publicRequestPending,
       lines: [...this.#lines], status: this.#status, error: this.#error, voice: !!this.#operations.get('personal')?.microphone, ready: this.#ready, queued: this.#queue.length, publicPersonalSpeaking: this.#publicRequestPending || this.#operations.get('personal')?.audience === 'public' || this.#queue.some((item) => item.audience === 'public') };
   }
   #emit(): void { if (this.#closed) return; this.#view = this.#snapshot(); for (const listener of this.#listeners) listener(); }
   #personal(): RoomAgent | null { return this.#state.agents.find((agent) => agent.config.kind === 'personal' && agent.owner === this.ctx.peerId) ?? null; }
   command(command: AgentCommand): void { if (!this.#closed) this.ctx.controller.sendAgent(command); }
+  #reportReady(): void { this.command({ type: 'agent-ready', ready: this.#ready, groupReady: this.#ready && this.#groupForeground && this.#groupMonitoring }); }
   async enable(): Promise<void> {
     try {
       this.#audio ??= new AgentAudio(); await this.#audio.enable();
-      this.#ready = true; this.#error = null; this.command({ type: 'agent-ready', ready: true });
+      this.#ready = true; this.#error = null; this.#reportReady();
       this.#attachRemote(); this.#emit();
     } catch (error) { this.#error = error instanceof Error ? error.message : 'Unable to enable audio.'; this.#emit(); throw error; }
   }
@@ -253,7 +255,7 @@ export class AgentRuntime {
   }
   connectionRestored(): void {
     this.#connectionLost = false;
-    if (this.#recoverReady) { this.#ready = true; this.command({ type: 'agent-ready', ready: true }); }
+    if (this.#recoverReady) { this.#ready = true; this.#reportReady(); }
     // Welcome precedes the authoritative agent-state. The cached personal agent may no longer exist.
     this.#awaitingRecoveryState = !!this.#recoverConfig;
     this.#recoverReady = false; this.#emit();
@@ -301,9 +303,12 @@ export class AgentRuntime {
     const time = Date.parse(at) + this.#serverOffset;
     if (isGroupApproval(text) && this.#state.signal && time >= this.#state.signal.at && time <= this.#now() + 1000 && this.#now() - time < 10_000) this.approveGroup();
   }
-  setGroupForeground(visible: boolean): void { this.#groupForeground = visible; this.noteHumanActivity(); }
+  setGroupForeground(visible: boolean): void {
+    if (this.#groupForeground === visible) return;
+    this.#groupForeground = visible; this.noteHumanActivity(); this.#reportReady();
+  }
   setGroupMonitoring(available: boolean): void {
-    this.#groupMonitoring = available;
+    if (this.#groupMonitoring !== available) { this.#groupMonitoring = available; this.#reportReady(); }
     if (!available) this.#error = 'Omni is paused because speech activity monitoring is unavailable.';
     else if (this.#error === 'Omni is paused because speech activity monitoring is unavailable.') this.#error = null;
     this.#emit();
@@ -371,7 +376,8 @@ export class AgentRuntime {
     for (const [kind, op] of this.#operations) if (!this.#valid(op)) this.#stop(kind, 'interrupted');
     const group = this.#viewGroup();
     if (group?.id !== previousGroup?.id || group?.epoch !== previousGroup?.epoch) {
-      this.#draft = null; this.#reviewCursor = this.#discussion().at(-1)?.seq ?? 0;
+      this.#draft = null;
+      if (group?.id !== previousGroup?.id) this.#reviewCursor = this.#discussion().at(-1)?.seq ?? 0;
       this.#observedCursor = this.#reviewCursor; this.noteHumanActivity();
     }
     if (state.signal && state.signal.id !== this.#signal) {
@@ -609,7 +615,7 @@ export class AgentRuntime {
       if (!allowed()) { entry.stop?.(); this.#announcements.delete(key); continue; }
       const remote = this.#remoteStreams.get(key);
       if (!entry.stop && remote && this.#audio && this.#ready) entry.stop = this.#audio.attach(remote.stream, allowed, undefined, (message) => {
-        entry.stop?.(); entry.stop = null; this.#ready = false; this.command({ type: 'agent-ready', ready: false }); this.#error = message; this.#emit();
+        entry.stop?.(); entry.stop = null; this.#ready = false; this.#reportReady(); this.#error = message; this.#emit();
       }).stop;
     }
   }
@@ -621,7 +627,7 @@ export class AgentRuntime {
     if (this.#closed) return;
     for (const cancel of this.#pendingSaves) cancel();
     this.#stop('personal', 'interrupted'); this.#stop('group', 'interrupted');
-    this.command({ type: 'agent-ready', ready: false }); this.#closed = true;
+    this.#ready = false; this.#reportReady(); this.#closed = true;
     clearInterval(this.#heartbeat); clearInterval(this.#contextTimer); this.#audio?.close(); this.#listeners.clear(); this.#lines = []; this.#queue = [];
   }
 }

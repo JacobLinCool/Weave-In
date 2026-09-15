@@ -67,7 +67,7 @@ export function AgentPanel({ runtime, isHost, mode = 'personal' }: { runtime: Ag
       } finally { setSending(false); }
     });
   };
-  return <div ref={panel} className={`agent-panel${mode === 'personal' ? ' agent-panel--personal' : ` agent-panel--group${group && ['preparing', 'raised', 'speaking'].includes(group.phase) ? ' agent-panel--active' : ''}`}`}>
+  return <div ref={panel} className={`agent-panel${mode === 'personal' ? ' agent-panel--personal' : ` agent-panel--group${group?.phase === 'raised' && !view.room.approval ? ' agent-panel--active' : ''}`}`}>
     {!editing && !view.ready && mode === 'group' && group && <button onClick={() => run(() => runtime.enable())}><Volume2 size={16} /> Enable assistant audio on this device</button>}
     {(error || view.error || dictated.error) && <p className="agent-error" role="alert">{error ?? view.error ?? dictated.error}</p>}
     {!creating && !editing && mode !== 'personal' && <section className="agent-group" aria-label="Omni">
@@ -77,9 +77,9 @@ export function AgentPanel({ runtime, isHost, mode = 'personal' }: { runtime: Ag
       }}><Plus size={18} aria-hidden="true" /></button>}</header>
       {group?.phase === 'idle' && <p role="status">{view.groupStatus}</p>}
       {group && group.phase !== 'idle' && <>
-        <p role="status">{({ preparing: 'Reviewing public discussion', raised: view.room.approval ? 'Approved · waiting for a quiet moment' : 'Omni has something to say · waiting for your approval', speaking: 'Speaking to everyone', waiting: 'Waiting for an available device' })[group.phase]}</p>
+        <p role="status">{({ preparing: 'Analyzing public discussion…', raised: view.room.approval ? 'Approved · waiting for a quiet moment' : 'Omni is ready. Allow it to speak to the room.', speaking: 'Speaking to everyone', waiting: 'Waiting for an available device' })[group.phase]}</p>
         {group.phase === 'raised' && !view.room.approval && <>
-          <button onClick={() => runtime.approveGroup()}><Volume2 size={16} /> Allow Omni to speak</button>
+          <button type="button" className="agent-action" onClick={() => runtime.approveGroup()}><Volume2 size={16} aria-hidden="true" /> Allow Omni to speak</button>
           <p className="agent-note">Or say “Omni, go ahead” / “Omni，請發言” with captions enabled.</p>
         </>}
         <button onClick={() => runtime.command({ type: 'agent-cancel', id: group.id })}><Square size={14} /> Stop</button>
