@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { isGroupApproval, GROUP_ACTIONS, GROUP_REVIEW_POLICY, evidenceKey, parseGroupEvidence, parseGroupDecision, isDiscussion, type DiscussionRecord } from '../src/agents/group';
+import { isGroupApproval, GROUP_ACTIONS, evidenceKey, parseGroupEvidence, parseGroupDecision, isDiscussion, type DiscussionRecord } from '../src/agents/group';
 import { emptyAgentRoom, type AgentConfig } from '../src/agents/contracts';
 import { applyAgentCommand } from '../src/agents/room';
 import type { MeetingSnapshot } from '../src/webmcp';
@@ -7,15 +7,14 @@ import type { MeetingSnapshot } from '../src/webmcp';
 const people = ['Alice', 'Bob', 'Carol'].map(name => ({ peerId: name, name, you: name === 'Alice', isHost: name === 'Alice', micOn: false, cameraOn: false, sharingScreen: false }));
 const snapshot: MeetingSnapshot = { roomCode: 'ABC123', you: people[0]!, participants: people, captions: 'idle', presentation: null, live: [], files: [] };
 const records: DiscussionRecord[] = Array.from({ length: 6 }, (_, i) => ({ seq: i + 1, kind: 'chat', at: new Date(i * 1000).toISOString(), sender: people[0]!, text: `Public discussion ${i}`, agent: null }));
-const decision = { kind: 'convergence', severity: 0.8, evidenceSeqs: [1, 6], targetPeerId: null, text: 'Can we examine the unresolved launch risk first?' };
-it.each(Object.entries(GROUP_ACTIONS))('accepts grounded %s decisions with the %s intervention', (kind, action) => {
+const decision = { kind: 'convergence', confidence: 0.9, evidenceSeqs: [1, 6], targetPeerId: null, text: 'Can we examine the unresolved launch risk first?' };
+it.each(Object.entries(GROUP_ACTIONS))('accepts grounded %s decisions with the %s intervention', (kind) => {
   const value = { ...decision, kind, ...(kind === 'float' ? { targetPeerId: 'Carol', text: 'Carol, what evidence would help us choose a launch date?' } : {}) };
   expect(parseGroupDecision(JSON.stringify(value), records, snapshot)).toEqual(value);
-  expect(GROUP_REVIEW_POLICY).toContain(`${kind} / ${action}`);
 });
 it.each([
-  { kind: 'none', severity: 0, evidenceSeqs: [], text: '' },
-  { kind: 'manual' }, { severity: 0.49 }, { severity: 2 }, { evidenceSeqs: [1, 999] }, { evidenceSeqs: [1, 1] },
+  { kind: 'none', confidence: 0, evidenceSeqs: [], text: '' },
+  { kind: 'manual' }, { confidence: 0.49 }, { confidence: 2 }, { evidenceSeqs: [1, 999] }, { evidenceSeqs: [1, 1] },
   { evidenceSeqs: [1, 2] }, { text: 'x'.repeat(241) }, { targetPeerId: 'Carol' },
   { kind: 'float', targetPeerId: 'nobody' }, { kind: 'float', targetPeerId: 'Alice', text: 'Alice, any thoughts?' },
 ])('abstains on unsupported, low-confidence or ungrounded output: %j', value => {

@@ -1,6 +1,7 @@
 import { emptyAgentRoom, LEASE_MS, type AgentRoomState } from '../src/agents/contracts';
 import { applyAgentCommand, reconcileAgents, type AgentMember } from '../src/agents/room';
 import { initializeLive } from './live';
+import { reviewGroup } from './group-review';
 import { privateAnalysis } from './private-analysis';
 import { issueIceServers } from './ice-servers';
 import { DurableObject } from 'cloudflare:workers';
@@ -21,6 +22,7 @@ export interface Env {
   ASSETS: Fetcher;
   GEMINI_API_KEY?: string;
   OPENAI_API_KEY?: string;
+  TYPESAFE_API_KEY?: string;
   /** Optional: force `gemini` or `openai` when both keys are configured. */
   TRANSCRIPTION_PROVIDER?: string;
   TOKEN_RATE_LIMITER: RateLimit;
@@ -55,7 +57,7 @@ export default {
     if (url.pathname === '/api/transcription-token') {
       return issueTranscriptionToken(request, env);
     }
-    const match = /^\/api\/rooms\/([A-Z0-9]{6})\/(connect|agents\/[\w-]{1,64}\/live)$/u.exec(url.pathname);
+    const match = /^\/api\/rooms\/([A-Z0-9]{6})\/(connect|agents\/[\w-]{1,64}\/(?:live|review))$/u.exec(url.pathname);
     if (match) {
       const code = match[1];
       if (!code || !ROOM_CODE_PATTERN.test(code)) return jsonError('INVALID_ROOM', 400);
@@ -222,7 +224,8 @@ export class MeetingRoom extends DurableObject<Env> {
 
   override async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
-    if (url.pathname.endsWith('/live')) {
+    if (url.pathname.endsWith('/live') || url.pathname.endsWith('/review')) {
+      const reviewing = url.pathname.endsWith('/review');
       if (request.method !== 'POST') return jsonError('METHOD_NOT_ALLOWED', 405);
       if (request.headers.get('Origin') !== url.origin) return jsonError('INVALID_ORIGIN', 403);
       const member = this.#activeSockets().find(({ attachment }) => attachment.sessionToken === request.headers.get('X-Room-Token'));
@@ -230,13 +233,18 @@ export class MeetingRoom extends DurableObject<Env> {
       const id = url.pathname.split('/').at(-2);
       const agent = this.#agents.agents.find((entry) => entry.id === id);
       if (!agent || agent.runner !== member.attachment.peerId || (agent.config.kind === 'group' && (agent.leaseUntil <= Date.now() || !['preparing', 'speaking'].includes(agent.phase)))) return jsonError('NOT_AGENT_RUNNER', 403);
-      if (!this.env.OPENAI_API_KEY) return jsonError('GPT_LIVE_UNAVAILABLE', 503);
+      if (reviewing && (agent.config.kind !== 'group' || agent.phase !== 'preparing')) return jsonError('NOT_AGENT_RUNNER', 403);
+      const key = (reviewing ? this.env.TYPESAFE_API_KEY : this.env.OPENAI_API_KEY)?.trim();
+      if (!key) return reviewing
+        ? Response.json({ error: 'Jev detection is unavailable: configure TYPESAFE_API_KEY.' }, { status: 503, headers: { 'Cache-Control': 'no-store' } })
+        : jsonError('GPT_LIVE_UNAVAILABLE', 503);
       const now = Date.now();
       const recent = member.attachment.liveRequests.filter((at) => at > now - 60_000);
       if (recent.length >= 6) return jsonError('RATE_LIMITED', 429);
       member.attachment.liveRequests = [...recent, now];
       member.socket.serializeAttachment(member.attachment);
-      return initializeLive(request, structuredClone(agent), this.env.OPENAI_API_KEY);
+      if (reviewing) return reviewGroup(request, structuredClone(agent), this.#activeSockets().map(({ attachment }) => ({ peerId: attachment.peerId, name: attachment.name })), key);
+      return initializeLive(request, structuredClone(agent), key);
     }
     const action = url.searchParams.get('action');
     const rawName = url.searchParams.get('name') ?? '';

@@ -1,4 +1,5 @@
-import { GROUP_DRAFT_MS, isGroupApproval, GROUP_CHECK_MS, GROUP_MAX_INTERVENTIONS, GROUP_MIN_RECORDS, GROUP_QUIET_MS, GROUP_REVIEW_REQUEST, evidenceKey, isDiscussion, parseGroupDecision, parseGroupEvidence, type DiscussionRecord, type GroupDecision } from './group';
+import { detectGroup, groupReviewContext, type GroupDetection } from './group-detection';
+import { GROUP_DRAFT_MS, isGroupApproval, GROUP_CHECK_MS, GROUP_MAX_INTERVENTIONS, GROUP_MIN_RECORDS, GROUP_QUIET_MS, groupDraftRequest, evidenceKey, isDiscussion, parseGroupDecision, parseGroupEvidence, type DiscussionRecord, type GroupDecision } from './group';
 import { defaultAgentConfig } from './config';
 import { AgentAudio } from './audio';
 import { AgentLive } from './live';
@@ -23,6 +24,7 @@ interface Operation {
   floorId: string;
   preparing: boolean;
   live: AgentLive | null;
+  abort: AbortController;
   microphone: MediaStreamTrack | null;
   stopAudio: (() => void) | null;
   streamId: string | null;
@@ -397,7 +399,7 @@ export class AgentRuntime {
         this.#reviewRecords = [...anchors.filter(record => !recent.some(entry => entry.seq === record.seq)), ...recent];
         this.#reviewCursor = this.#reviewRecords.at(-1)?.seq ?? 0;
         if (this.#reviewRecords.length < GROUP_MIN_RECORDS) this.#discardGroup(group);
-        else void this.#start(group, 'public', true, GROUP_REVIEW_REQUEST, false);
+        else void this.#start(group, 'public', true, '', false);
       }
     }
     if (group && ['raised', 'speaking'].includes(group.phase)) this.checkGroup();
@@ -435,7 +437,7 @@ export class AgentRuntime {
   }
   async #start(agent: RoomAgent, audience: Audience, preparing: boolean, text: string, voice: boolean, inputLine?: AgentLine): Promise<void> {
     const op: Operation = { key: crypto.randomUUID(), agent: structuredClone(agent), audience, floorId: this.#state.floor?.agentId === agent.id ? this.#state.floor.id : '', preparing,
-      live: null, microphone: null, stopAudio: null, streamId: null, startedAt: Date.now(), lastSound: 0, heard: false, published: false, playback: null, voice, timer: null, rows: new Map() };
+      live: null, abort: new AbortController(), microphone: null, stopAudio: null, streamId: null, startedAt: Date.now(), lastSound: 0, heard: false, published: false, playback: null, voice, timer: null, rows: new Map() };
     this.#operations.set(agent.config.kind, op);
     this.#error = null;
     const behalf = audience === 'public' && !preparing;
@@ -446,7 +448,20 @@ export class AgentRuntime {
       this.#line(op, 'user', '', 0, 0, 'text');
     }
     const valid = () => this.#valid(op);
+    let detection: GroupDetection | null = null;
+    if (preparing) op.timer = setTimeout(() => {
+      if (!valid()) return;
+      this.#error = 'Omni preparation timed out.';
+      this.#discardGroup(agent); this.#emit();
+    }, 55_000);
     try {
+      if (preparing) {
+        detection = await detectGroup({ room: this.ctx.room, token: this.ctx.controller.sessionToken, id: agent.id, epoch: agent.epoch, request: agent.request,
+          context: groupReviewContext(this.#reviewRecords, this.ctx.tools.log().snapshot(500)), signal: op.abort.signal });
+        if (!valid()) return;
+        if (!detection || this.#discussion().at(-1)?.seq !== this.#reviewCursor) { this.#discardGroup(agent); return; }
+        text = groupDraftRequest(detection.kind);
+      }
       if (voice) {
         const microphone = await this.ctx.beginVoice(audience, op.key);
         if (!valid()) { microphone.stop(); this.ctx.endVoice(op.key); return; }
@@ -478,7 +493,9 @@ export class AgentRuntime {
         prepared: async (draft) => {
           if (!valid()) return;
           try {
-            const decision = parseGroupDecision(draft, this.#reviewRecords, this.ctx.tools.snapshot());
+            const raw: unknown = JSON.parse(draft);
+            if (!detection || !raw || typeof raw !== 'object' || !('kind' in raw) || raw.kind !== detection.kind) { this.#discardGroup(agent); return; }
+            const decision = parseGroupDecision(JSON.stringify({ ...raw, confidence: detection.confidence }), this.#reviewRecords, this.ctx.tools.snapshot());
             if (!decision) { this.#discardGroup(agent); return; }
             const evidence = await Promise.all(this.#reviewRecords.filter(record => decision.evidenceSeqs.includes(record.seq)).map(evidenceKey));
             if (!valid()) return;
@@ -517,16 +534,6 @@ export class AgentRuntime {
       if (!behalf && agent.config.system && this.#state.signal) context += `\nSystem signal: ${JSON.stringify(this.#state.signal)}`;
       if (voice) live.context(context); else live.request(context, text);
       this.#status = voice ? (audience === 'private' ? 'Speak naturally or interrupt at any time. Your meeting microphone is paused.' : 'Speak publicly to Muse. Everyone can hear you.') : preparing ? 'Preparing a suggestion…' : 'Waiting for Muse’s response…';
-      // Muse conversations have no fixed duration limit. Only group suggestion
-      // preparation is bounded by the room's preparation lease.
-      if (preparing) op.timer = setTimeout(() => {
-        if (!valid()) return;
-        this.#error = 'Omni preparation timed out.';
-        this.#stop(agent.config.kind, 'interrupted');
-        this.command({ type: 'agent-cancel', id: agent.id });
-        this.#drain();
-        this.#emit();
-      }, 55_000);
       this.#emit();
     } catch (error) {
       if (valid()) { this.#error = error instanceof Error ? error.message : 'Unable to start the agent.'; this.#stop(agent.config.kind, 'interrupted'); if (preparing) this.command({ type: 'agent-cancel', id: agent.id }); this.#emit(); }
@@ -566,6 +573,7 @@ export class AgentRuntime {
       this.#publishLine(op, row.line);
     }
     this.#operations.delete(kind);
+    op.abort.abort();
     if (op.timer) clearTimeout(op.timer);
     op.stopAudio?.();
     if (op.streamId) this.ctx.controller.removeStream(op.streamId);

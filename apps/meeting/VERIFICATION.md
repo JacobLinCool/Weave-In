@@ -17,12 +17,20 @@ This runs workspace type checks, transcription and meeting tests, production bui
 | Room lifecycle and peer protocol | `meeting-room.test.ts`, `meeting-controller.test.ts`, `protocol.test.ts`, `history.test.ts`, `meeting-timer.test.ts`: admission, duplicate/stale identity, reconnect, capacity, timer, bounded messages and replay |
 | TURN provisioning and recovery | `ice-servers.test.ts`, `ice-configuration.test.ts`: response validation, rate limits, deadlines, credential reuse/renewal and cancellation; provider responses are simulated |
 | Assistant authority and tools | `agents.test.ts`, `agent-runtime.test.ts`, `agent-live.test.ts`: owner controls, epoch/lease/floor fencing, settings revocation, private/public isolation, interruption, input budgets and session lifecycle |
-| Omni review | `group.test.ts`, `agents.test.ts`, `agent-runtime.test.ts`: policy fixtures, abstention, evidence, quiet/freshness checks, review limits, approval, expiry and takeover |
+| Omni review | `group-review.test.ts` (Jev confidence, response/request validation, provider errors), `group.test.ts`, `agents.test.ts`, `agent-runtime.test.ts`: policy fixtures, abstention, evidence, quiet/freshness checks, review limits, approval, expiry and takeover |
 | Dictation and public caption isolation | `dictation.test.ts`, `caption-session.test.ts`, `voice-activity.test.ts`, plus transcription-package tests: stop/drain, cancellation and microphone routing |
 | Reminders and recovery | `auto-reminders.test.ts`, `private-analysis.test.ts`, `private-notices.test.ts`, `meeting-session.test.ts`: evidence, recipient, recurrence, stale results, provider errors and checkpoint validation |
 | Meeting/file/board tools | `webmcp.test.ts`, `agent-attachments.test.ts`, `file-share.test.ts`, `screen-capture.test.ts`, `whiteboard-webmcp.test.ts`, `excalidraw-store.test.ts` and related preview/board tests: permissions, peer transfers, parsing, cancellation, scene validation and edits |
 
 These tests verify deterministic application behavior and fixtures. They do not establish model accuracy, real speech understanding, device interoperability or production reliability.
+
+## Jev integration validation — 2026-09-18
+
+- `pnpm check` passed: 83 transcription tests and 467 meeting tests, workspace type checks, production builds, asset verification and Worker deployment dry-run. No deployment was performed.
+- Real TypeSafe requests using `scripts/evaluate-group-detection.mjs` resolved `jev-latest` to `jev-1.13.0`. The final six synthetic fixtures matched the expected routing: all four intervention categories, an answered objection with no intervention, and Traditional Chinese premature closure. Calls took 244–641 ms in that run. Earlier runs abstained on borderline invitation confidence; the evaluator reports abstentions separately. These samples do not establish general accuracy or a latency guarantee.
+- `verify-agents-browser.js` passed the `convergence` and `none` scenarios in two isolated Chrome contexts against the built local Worker. With simulated Jev/GPT-Live and local peer connectivity, convergence produced one approved intervention audible to both peers, with silence before approval. Abstention opened zero Live sessions and produced zero public messages or audio.
+- Local raw evaluation and browser evidence is in the ignored `output/playwright/jev/` directory. Real-provider testing covered Jev detection, not OpenAI speech, physical microphones or TURN relay behavior.
+- After rebasing onto `3bb121b`, `pnpm check` passed again with 83 transcription and 476 meeting tests (559 total), including the upstream Omni readiness and approval regressions. Type checks, production builds, asset validation and Worker deployment dry-run passed. Evidence: `output/playwright/jev/rebased-check.log`.
 
 ## Omni trigger and approval repair — 2026-09-15
 
@@ -57,13 +65,14 @@ Local evidence is retained in the ignored repository-root `output/playwright/ali
 
 ## Reproducible browser checks
 
-Launch/configuration instructions are in [README.md](README.md#browser-verification). All harnesses require a running development or built-Worker origin; pass it explicitly. The two app harnesses use independent browser contexts with real room WebSockets and local peer connections. Their default GPT-Live and ICE provisioning responses are simulated.
+Launch/configuration instructions are in [README.md](README.md#browser-verification). All harnesses require a running development or built-Worker origin; pass it explicitly. The two app harnesses use independent browser contexts with real room WebSockets and local peer connections. Their default Jev, GPT-Live and ICE provisioning responses are simulated.
 
 | Script | What the current harness checks |
 | --- | --- |
 | `scripts/verify-agents-browser.js` | Automatic Muse/Omni setup without a Live connection on entry; private isolation; dictation stop/send; a bounded simulated Live start/answer/End cycle; selected-reply reading; settings and permission changes; owner attribution, microphone interruption and no automatic resume; silent Omni preparation, approval-before-audio, public delivery/replay; room recovery and mobile layout |
 | `scripts/verify-chat-tools-browser.js` | Actual meeting read; another peer's text/image transfer and readable/vision result; shared-board read, Mermaid edit and rendered capture; receiving peer's board; default file access, screen opt-in, 500-record tool schema, and no private-response publication or default Room-posting tool |
 | `scripts/verify-turn-relay.js` | Real credential provisioning and two peers with relay-only policy for all transports, TCP-only and TLS/443-only; bidirectional data/media and selected relay candidate pairs via `getStats()` |
+| `scripts/evaluate-group-detection.mjs` | Opt-in real Jev routing checks using synthetic English and Traditional Chinese discussion; reports confidence, selected category and request latency |
 | `scripts/evaluate-private-analysis.mjs` | Opt-in real Gemini checks using synthetic unresolved/resolved objections, ordinary agreement, unclear transcription and prompt-injection fixtures |
 
 The agent harness accepts a third argument:

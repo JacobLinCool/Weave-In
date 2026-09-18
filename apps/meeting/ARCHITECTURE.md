@@ -30,7 +30,7 @@ flowchart LR
     W <-->|Embeddings and structured decision| G
 ```
 
-API keys stay in Worker secrets. After initialization, caption audio goes directly to its provider, and Live context, tool results, private conversations and assistant audio go directly between the browser and OpenAI. Automatic reminder analysis is a separate request through the Worker to Gemini. Peer media and data-channel messages do not flow through the signaling Worker; TURN can relay encrypted WebRTC traffic.
+API keys stay in Worker secrets. After initialization, caption audio goes directly to its provider, and Live context, tool results, private conversations and assistant audio go directly between the browser and OpenAI. Omni detection sends bounded public discussion through the Worker to TypeSafe Jev. Automatic reminder analysis is a separate request through the Worker to Gemini. Peer media and data-channel messages do not flow through the signaling Worker; TURN can relay encrypted WebRTC traffic.
 
 ## Worker routes and bindings
 
@@ -42,11 +42,12 @@ The API routes below enforce a matching `Origin`. JSON endpoints validate their 
 | `POST /api/transcription-token` | Issues an ephemeral Gemini or OpenAI caption token; 20 requests per IP per minute. `TRANSCRIPTION_PROVIDER` selects a configured provider explicitly; otherwise Gemini is preferred when both keys exist. |
 | `POST /api/private-analysis` | Uses `GEMINI_API_KEY` for bounded private reminder analysis; 64 KiB request limit and 30 requests per IP per minute. This endpoint validates the supplied records; it does not query a server transcript archive. |
 | WebSocket `/api/rooms/:room/connect` | Six-character room code; create/join identity, peer signaling, assistant commands and state. Requires a WebSocket upgrade. |
-| `POST /api/rooms/:room/agents/:id/live` | Accepts `{ epoch, request, session, sdp }`; requires the active socket's `X-Room-Token` and current runner. Validates epoch/request, Group phase/lease, models and tool declarations. Bounds input to 64 KiB, allows six initializations per connection per minute and sets a 20-second upstream timeout. Returns a session ID and WebRTC SDP answer. |
+| `POST /api/rooms/:room/agents/:id/live` | Accepts `{ epoch, request, session, sdp }`; requires the active socket's `X-Room-Token` and current runner. Validates epoch/request, Group phase/lease, models and tool declarations. Bounds input to 64 KiB, shares a six-request-per-connection-per-minute budget with `/review` and sets a 20-second upstream timeout. Returns a session ID and WebRTC SDP answer. |
+| `POST /api/rooms/:room/agents/:id/review` | Requires same origin, the active socket’s `X-Room-Token`, current group runner, preparation phase/lease and matching epoch/request. Accepts 4–43 public records and up to five prior interventions within 256 KiB. Server-supplied participants and counts accompany four Jev Choice questions. Uses a 12-second upstream timeout and the shared six-request budget. Returns a qualifying category/confidence or null, without storing discussion. |
 | `/about`, `/about/` | Public project narrative, with About-specific title, description, social metadata and canonical `/about` URL. |
 | Other paths | Static assets with SPA routing and security headers; room invitation and unknown pages receive `X-Robots-Tag: noindex, follow`. |
 
-Bindings are `ASSETS`, SQLite-backed `ROOMS`, and the three rate limiters in [wrangler.jsonc](wrangler.jsonc). There is no D1, R2 or KV meeting archive. `OPENAI_API_KEY` powers Muse and Omni independently of the selected caption provider. Private reminders require Gemini. TURN provisioning is required before a controller joins a room; failure is visible rather than silently using a hard-coded STUN list.
+Bindings are `ASSETS`, SQLite-backed `ROOMS`, and the three rate limiters in [wrangler.jsonc](wrangler.jsonc). There is no D1, R2 or KV meeting archive. `TYPESAFE_API_KEY` powers Omni detection; `OPENAI_API_KEY` powers Muse and Omni drafting/speech independently of the selected caption provider. Private reminders require Gemini. TURN provisioning is required before a controller joins a room; failure is visible rather than silently using a hard-coded STUN list.
 
 ## Membership and peer transport
 
@@ -99,7 +100,7 @@ The runtime checks every two seconds, only while the runner is connected, foregr
 The lifecycle is `idle → preparing → raised → speaking → idle`, with `waiting` when no runner is available:
 
 1. The current runner sends `agent-review`; the authority enforces 30-second review spacing, a 120-second intervention cooldown, an available public floor and a five-intervention room cap.
-2. A silent, bounded review asks the reasoning backend for one structured counterpoint, refocus, invitation or deepening question, or abstention. `group.ts` validates severity, current participants, 2–8 evidence records including one among the latest four, and text of at most 240 characters. Preparation times out after 55 seconds. No public output is permitted during preparation.
+2. The browser calls `/review`; Jev evaluates four independent scenarios against the same public state. Confidence must reach 0.85 for convergence or 0.80 for drift, float or echo. Convergence takes priority across qualifying scenarios; otherwise the highest confidence wins. Abstention never opens GPT-Live. A qualifying detection starts a silent drafting session restricted to that category. `group.ts` validates Jev confidence, current participants, 2–8 evidence records including one among the latest four, and text of at most 240 characters. The entire detection-and-drafting operation times out after 55 seconds; cancellation aborts pending detection. No public output is permitted during preparation.
 3. A valid fresh result becomes `agent-raised`. The question stays on the runner; shared state contains only the scenario and evidence hashes. **Allow Omni to speak** or a fresh local finalized “Omni, go ahead” / “Omni，請發言” caption sends `agent-approve` for the exact agent/epoch/request. Typed chat and replay cannot approve. The anchored matcher also accepts the Traditional Chinese assistant-name variant in `group.ts`.
 4. After approval, the runner still waits for quiet and an available floor, then sends `agent-publish`. A fresh session reads only the approved question aloud, with no tools or background context. Audio and transcripts use the existing public peer transport. `agent-published` records the intervention when output begins; `agent-finish` releases the floor.
 

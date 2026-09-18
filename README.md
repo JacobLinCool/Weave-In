@@ -28,11 +28,12 @@ pnpm check            # typecheck + tests + build + deployment dry run
 | Credentials | Enables |
 | --- | --- |
 | `GEMINI_API_KEY` | Gemini captions and automatic private analysis |
-| `OPENAI_API_KEY` | OpenAI captions, Muse, and Omni |
+| `OPENAI_API_KEY` | OpenAI captions, Muse, and Omni question drafting/speech |
+| `TYPESAFE_API_KEY` | Jev automatic public meeting detection for Omni |
 | `TRANSCRIPTION_PROVIDER` | Optional `gemini` or `openai` caption-provider override; Gemini is preferred when both keys exist |
 | `TURN_KEY_ID` and `TURN_KEY_SECRET` | Cloudflare TURN relay provisioning; both are required for room connection setup |
 
-Automatic private analysis requires Gemini even when captions use OpenAI. Muse and Omni require OpenAI even when captions use Gemini. Credentials stay server-side. See the [meeting setup guide](apps/meeting/README.md) for provisioning, API limits, local preview, and deployment.
+Automatic private analysis requires Gemini even when captions use OpenAI. Muse requires OpenAI; Omni uses TypeSafe Jev for detection and OpenAI for question drafting and speech, independently of the caption provider. Credentials stay server-side. See the [meeting setup guide](apps/meeting/README.md) for provisioning, API limits, local preview, and deployment.
 
 Deployment runs through [GitHub Actions](.github/workflows/deploy.yml) after checks on `main`; use `pnpm deploy:dry-run` to validate locally.
 

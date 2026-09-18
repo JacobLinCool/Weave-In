@@ -1,4 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
+import { detectGroup } from '../src/agents/group-detection';
 import { AgentRuntime } from '../src/agents/runtime';
 import { emptyAgentRoom, parseAgentConfig, type AgentLine, type RoomAgent } from '../src/agents/contracts';
 import type { LiveCallbacks } from '../src/agents/live';
@@ -17,9 +18,10 @@ vi.mock('../src/agents/live', () => ({ AgentLive: class {
   request(...args: unknown[]) { calls.requests(...args); }
   close() { calls.close(); }
 } }));
+vi.mock('../src/agents/group-detection', async importOriginal => ({ ...await importOriginal<typeof import('../src/agents/group-detection')>(), detectGroup: vi.fn(async () => ({ kind: 'convergence', confidence: 0.9 })) }));
 vi.mock('../src/agents/audio', () => ({ AgentAudio: class { attach = calls.attach; enable = calls.enable; silence() { return { track: {}, stop() {} }; } close() {} } }));
 let runtime: AgentRuntime | null = null;
-afterEach(() => { runtime?.close(); runtime = null; calls.lives = []; calls.enable.mockReset(); calls.mute.mockReset(); calls.attach.mockClear(); calls.requests.mockClear(); calls.contexts.mockClear(); calls.start.mockClear(); calls.close.mockClear(); calls.tools = []; vi.useRealTimers(); });
+afterEach(() => { runtime?.close(); runtime = null; calls.lives = []; vi.mocked(detectGroup).mockReset(); vi.mocked(detectGroup).mockResolvedValue({ kind: 'convergence', confidence: 0.9 }); calls.enable.mockReset(); calls.mute.mockReset(); calls.attach.mockClear(); calls.requests.mockClear(); calls.contexts.mockClear(); calls.start.mockClear(); calls.close.mockClear(); calls.tools = []; vi.useRealTimers(); });
 function setup(beginVoice: (audience: string, owner: string) => Promise<MediaStreamTrack> = vi.fn(), endVoice = vi.fn()) {
   const broadcast = vi.fn(); const publicLine = vi.fn(); const sendAgent = vi.fn();
   const log = new MeetingLog();
@@ -34,6 +36,59 @@ function setup(beginVoice: (audience: string, owner: string) => Promise<MediaStr
   runtime.update({ ...emptyAgentRoom(), agents: [agent] }, Date.now());
   return { runtime, publicLine, broadcast, sendAgent, log, snapshot, sendAgentMessage, editWhiteboard };
 }
+
+async function startGroupReview() {
+  const fixture = setup();
+  seedDiscussion(fixture.log);
+  await fixture.runtime.enable();
+  const state = structuredClone(fixture.runtime.snapshot().room);
+  state.agents.push({ ...state.agents[0]!, id: 'group', config: defaultAgentConfig('group'), phase: 'preparing', request: 1 });
+  fixture.runtime.update(state, Date.now());
+  return { ...fixture, state };
+}
+
+it('abstains before opening GPT-Live when Jev finds no confident intervention', async () => {
+  vi.mocked(detectGroup).mockResolvedValueOnce(null);
+  const { sendAgent, runtime } = await startGroupReview();
+  expect(sendAgent).toHaveBeenCalledWith({ type: 'agent-cancel', id: 'group' });
+  expect(calls.start).not.toHaveBeenCalled();
+  expect(runtime.snapshot().ready).toBe(true);
+});
+
+it('reports Jev failure without falling back and keeps private Muse available', async () => {
+  vi.mocked(detectGroup).mockRejectedValueOnce(new Error('Jev unavailable'));
+  const { runtime, sendAgent } = await startGroupReview();
+  expect(runtime.snapshot()).toMatchObject({ error: 'Jev unavailable', ready: true });
+  expect(calls.start).not.toHaveBeenCalled();
+  expect(sendAgent).toHaveBeenCalledWith({ type: 'agent-cancel', id: 'group' });
+  await runtime.ask('Continue privately');
+  expect(calls.start).toHaveBeenCalledOnce();
+});
+
+it.each(['cancel', 'new-discussion', 'runner-change'] as const)('discards an in-flight Jev result after %s', async change => {
+  let resolve!: (value: { kind: 'convergence'; confidence: number }) => void;
+  vi.mocked(detectGroup).mockImplementationOnce(() => new Promise(done => { resolve = done; }));
+  const { runtime, log, state, sendAgent } = await startGroupReview();
+  const signal = vi.mocked(detectGroup).mock.calls.at(-1)![0].signal;
+  if (change === 'new-discussion') log.append({ kind: 'chat', at: new Date().toISOString(), sender: { peerId: 'owner', name: 'Owner' }, text: 'We resolved that concern.', agent: null });
+  else {
+    if (change === 'cancel') state.agents.at(-1)!.phase = 'idle';
+    else { state.agents.at(-1)!.epoch++; state.agents.at(-1)!.runner = 'other'; }
+    runtime.update(state, Date.now());
+    expect(signal.aborted).toBe(true);
+  }
+  resolve({ kind: 'convergence', confidence: 0.95 });
+  await Promise.resolve();
+  expect(calls.start).not.toHaveBeenCalled();
+  expect(sendAgent.mock.calls.some(([c]) => c.type === 'agent-raised')).toBe(false);
+});
+
+it('does not let the drafting model change Jev’s selected category', async () => {
+  const { sendAgent } = await startGroupReview();
+  await calls.lives.at(-1)!.prepared(JSON.stringify({ kind: 'echo', confidence: 1, evidenceSeqs: [1, 4], targetPeerId: null, text: 'What evidence supports that?' }));
+  expect(sendAgent).toHaveBeenCalledWith({ type: 'agent-cancel', id: 'group' });
+  expect(sendAgent.mock.calls.some(([c]) => c.type === 'agent-raised')).toBe(false);
+});
 it('confirms settings from room state, stops old work and keeps private history', async () => {
   const { runtime, sendAgent } = setup();
   await runtime.ask('keep this conversation');
@@ -286,7 +341,7 @@ it.each(['personal', 'group'] as const)('delivers new system signals once to an 
   runtime.update(structuredClone(state), Date.now());
   if (kind === 'personal') await runtime.ask('Review the meeting');
   await Promise.resolve();
-  expect(calls.requests).toHaveBeenLastCalledWith(expect.stringContaining(JSON.stringify(state.signal)), expect.any(String));
+  await vi.waitFor(() => expect(calls.requests).toHaveBeenLastCalledWith(expect.stringContaining(JSON.stringify(state.signal)), expect.any(String)));
   calls.requests.mockClear(); calls.contexts.mockClear();
 
   state.signal = { ...state.signal, id: 2 };
@@ -551,7 +606,7 @@ it.each(['button', 'voice'] as const)('keeps Omni silent until %s approval, then
   expect(sendAgent.mock.calls.some(([c]) => c.type === 'agent-approve')).toBe(false);
   calls.lives.at(-1)!.stream({} as MediaStream);
   expect(calls.attach).not.toHaveBeenCalled();
-  await calls.lives.at(-1)!.prepared(JSON.stringify({ kind: 'convergence', severity: 0.8, evidenceSeqs: [1, 4], targetPeerId: null, text: 'Can we verify the launch risk first?' }));
+  await calls.lives.at(-1)!.prepared(JSON.stringify({ kind: 'convergence', evidenceSeqs: [1, 4], targetPeerId: null, text: 'Can we verify the launch risk first?' }));
   group.phase = 'raised';
   state.signal = { id: 1, at: Date.now(), by: 'owner', kind: 'convergence', evidence: ['a', 'b'] };
   runtime.update(structuredClone(state), Date.now());
@@ -708,7 +763,7 @@ it.each(['none', 'newer', 'invalid'] as const)('discards %s review results witho
   state.agents.push({ ...state.agents[0]!, id: 'group', config: { ...state.agents[0]!.config, kind: 'group' }, phase: 'preparing', request: 1 });
   runtime.update(state, Date.now()); await Promise.resolve();
   if (kind === 'newer') log.append({ kind: 'chat', at: new Date().toISOString(), sender: { peerId: 'guest', name: 'Guest' }, text: 'The risk is now resolved; here is the test result.', agent: null });
-  await calls.lives.at(-1)!.prepared(kind === 'invalid' ? 'broken JSON' : JSON.stringify({ kind: kind === 'none' ? 'none' : 'convergence', severity: 0.8, evidenceSeqs: [1, 4], targetPeerId: null, text: 'Should we check the risk?' }));
+  await calls.lives.at(-1)!.prepared(kind === 'invalid' ? 'broken JSON' : JSON.stringify({ kind: kind === 'none' ? 'none' : 'convergence', evidenceSeqs: [1, 4], targetPeerId: null, text: 'Should we check the risk?' }));
   expect(sendAgent).toHaveBeenCalledWith({ type: 'agent-cancel', id: 'group' });
   expect(sendAgent.mock.calls.some(([c]) => c.type === 'agent-raised')).toBe(false);
   expect(publicLine).not.toHaveBeenCalled();
@@ -736,7 +791,7 @@ it('keeps approved Omni speech when participant updates repeat the foreground st
   const state = structuredClone(runtime.snapshot().room);
   const group: RoomAgent = { ...state.agents[0]!, id: 'group', config: { ...state.agents[0]!.config, kind: 'group' }, phase: 'preparing', request: 1 };
   state.agents.push(group); runtime.update(state, Date.now()); await Promise.resolve();
-  await calls.lives.at(-1)!.prepared(JSON.stringify({ kind: 'convergence', severity: .8, evidenceSeqs: [1, 4], targetPeerId: null, text: 'Should we verify the launch risk first?' }));
+  await calls.lives.at(-1)!.prepared(JSON.stringify({ kind: 'convergence', evidenceSeqs: [1, 4], targetPeerId: null, text: 'Should we verify the launch risk first?' }));
   group.phase = 'raised'; state.approval = { id: group.id, epoch: group.epoch, request: group.request };
   runtime.update(structuredClone(state), Date.now());
   await vi.advanceTimersByTimeAsync(2000);
@@ -804,6 +859,7 @@ it.each([
 });
 
 it('withdraws an invitation if the target leaves while waiting for quiet', async () => {
+  vi.mocked(detectGroup).mockResolvedValueOnce({ kind: 'float', confidence: 0.95 });
   vi.useFakeTimers();
   const { runtime, log, snapshot, sendAgent, publicLine } = setup(); await runtime.enable();
   snapshot.participants = ['owner', 'Bob', 'Carol'].map(name => ({ peerId: name, name, you: name === 'owner', isHost: name === 'owner', micOn: false, cameraOn: false, sharingScreen: false }));
@@ -811,7 +867,7 @@ it('withdraws an invitation if the target leaves while waiting for quiet', async
   const state = structuredClone(runtime.snapshot().room);
   state.agents.push({ ...state.agents[0]!, id: 'group', config: { ...state.agents[0]!.config, kind: 'group' }, phase: 'preparing', request: 1 });
   runtime.update(state, Date.now()); await Promise.resolve();
-  await calls.lives.at(-1)!.prepared(JSON.stringify({ kind: 'float', severity: .8, evidenceSeqs: [1, 6], targetPeerId: 'Carol', text: 'Carol, how would you evaluate this proposal?' }));
+  await calls.lives.at(-1)!.prepared(JSON.stringify({ kind: 'float', evidenceSeqs: [1, 6], targetPeerId: 'Carol', text: 'Carol, how would you evaluate this proposal?' }));
   expect(sendAgent.mock.calls.some(([c]) => c.type === 'agent-raised')).toBe(true);
   snapshot.participants = snapshot.participants.filter(person => person.peerId !== 'Carol');
   state.agents.at(-1)!.phase = 'raised';

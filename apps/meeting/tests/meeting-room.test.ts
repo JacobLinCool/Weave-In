@@ -318,9 +318,9 @@ describe('MeetingRoom Durable Object', () => {
     expect(states.every((m) => m.state.agents.length <= 1)).toBe(true);
     if (!group) throw new Error('Group missing');
     const foreign = group.runner === host.welcome.self.peerId ? guest : host;
-    const init = (token: string) => stub.fetch(new Request(`https://room.invalid/agents/${group.id}/live`, { method: 'POST', headers: { Origin: 'https://room.invalid', 'X-Room-Token': token, 'Content-Type': 'application/json' }, body: '{}' }));
-    for (const token of ['invented-token', foreign.welcome.sessionToken]) {
-      const response = await init(token);
+    const init = (token: string, action: 'live' | 'review') => stub.fetch(new Request(`https://room.invalid/agents/${group.id}/${action}`, { method: 'POST', headers: { Origin: 'https://room.invalid', 'X-Room-Token': token, 'Content-Type': 'application/json' }, body: '{}' }));
+    for (const token of ['invented-token', foreign.welcome.sessionToken]) for (const action of ['live', 'review'] as const) {
+      const response = await init(token, action);
       expect(response.status).toBe(403);
       await response.text(); // Drain the request before asking the runtime to hibernate.
     }

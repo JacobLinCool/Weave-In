@@ -59,6 +59,7 @@ async (page, origin = 'http://127.0.0.1:8788', options = {}) => {
       RTCDataChannel.prototype.send = function(data) { if(this.label === 'oai-events' && !inspectedChannels.has(this)) { inspectedChannels.add(this); this.addEventListener('message', ({data}) => { try { const e=JSON.parse(data); if(e.type==='response.event'&&e.event?.type==='response.output_text.delta') window.__agentTest.reasoning.push(e.event.delta); } catch {} }); } if(typeof data==='string') { try { const v=JSON.parse(data); window.__agentTest.sends.push({channel:this.label,value:v}); } catch {} } return originalSend.call(this,data); };
       const originalFetch = window.fetch.bind(window);
       window.fetch = async (input, init) => {
+        if (!realProvider && String(input).match(/\/agents\/[^/]+\/review$/)) return Response.json({ detection: scenario === 'none' ? null : { kind: scenario, confidence: 0.95 } });
         if (!String(input).match(/\/agents\/[^/]+\/live$/)) return originalFetch(input, init);
         const body=JSON.parse(init.body); window.__agentTest.sessions.push(body);
         if (realProvider) return originalFetch(input, init);
@@ -78,7 +79,7 @@ async (page, origin = 'http://127.0.0.1:8788', options = {}) => {
             const records=(reviewContext.meeting??[]).filter(r=>(r.kind==='chat'||r.kind==='transcript')&&!r.agent);
             const target=reviewContext.participants?.find(p=>p.name==='Carol');
             const texts={ convergence:'Consider an alternative before deciding.', drift:'Should we return to choosing the database rather than planning a holiday?', float:'Carol, what evidence would help us choose the launch date?', echo:'What concrete evidence supports approving this proposal?' };
-            const value=preparing?JSON.stringify(scenario==='none'?{kind:'none',severity:0,evidenceSeqs:[],targetPeerId:null,text:''}:{kind:scenario,severity:.8,evidenceSeqs:[records.at(-4)?.seq,records.at(-1)?.seq],targetPeerId:scenario==='float'?target?.peerId:null,text:texts[scenario]}):explicitRequest.includes('private-secret')?'Private response.':explicitRequest.includes('Approved message: ')?JSON.parse(explicitRequest.split('Approved message: ').at(-1)) :'A useful perspective for the meeting.';
+            const value=preparing?JSON.stringify(scenario==='none'?{kind:'none',evidenceSeqs:[],targetPeerId:null,text:''}:{kind:scenario,evidenceSeqs:[records.at(-4)?.seq,records.at(-1)?.seq],targetPeerId:scenario==='float'?target?.peerId:null,text:texts[scenario]}):explicitRequest.includes('private-secret')?'Private response.':explicitRequest.includes('Approved message: ')?JSON.parse(explicitRequest.split('Approved message: ').at(-1)) :'A useful perspective for the meeting.';
             emit({type:'response.event',delegation_id:'d1',event:{type:'response.created',response:{id:'r1'}}});
             emit({type:'response.event',delegation_id:'d1',event:{type:'response.output_text.delta',delta:value}});
             if(preparing){ gain.gain.value=.1; emit({type:'session.output_transcript.delta',delta:'SUPPRESSED PREPARATION',start_ms:0,end_ms:800}); }
@@ -165,7 +166,7 @@ async (page, origin = 'http://127.0.0.1:8788', options = {}) => {
       await draft.waitFor();
       if (await draft.inputValue() !== 'Keep this draft through a rapid restart.' || !await draft.evaluate(el => document.activeElement === el)) throw new Error('Restarted Live did not restore draft and focus');
       if (await page.evaluate(() => Array.from(document.querySelectorAll('[data-local="true"] video')).some(v => v.srcObject?.getAudioTracks().some(t => t.enabled))) !== micBefore) throw new Error('Restarted Live did not restore the meeting microphone');
-      return { liveRestartConnecting: true, canceledStartSuppressed: true, liveDraftPreserved: true, liveFocusRestored: true, liveEndRestoresMicrophone: true, provider: 'simulated GPT-Live WebRTC (no real provider call)' };
+      return { liveRestartConnecting: true, canceledStartSuppressed: true, liveDraftPreserved: true, liveFocusRestored: true, liveEndRestoresMicrophone: true, provider: 'simulated Jev + GPT-Live WebRTC (no real provider call)' };
     }
     const roomUrl = page.url();
     await guest.goto(roomUrl);
@@ -215,14 +216,14 @@ async (page, origin = 'http://127.0.0.1:8788', options = {}) => {
           messages: [...new Map(window.__agentTest.sends.filter(x => x.channel === 'weave-in' && x.value.type === 'agent-line').map(x => [x.value.line.id, x.value.line.text])).values()] };
       });
       if (scenario === 'none' && result.audible > .01) throw new Error('Abstention produced audio');
-      if (scenario === 'none') { if (result.publications || result.messages.length) throw new Error('An answered concern produced a public intervention'); }
+      if (scenario === 'none') { if (result.publications || result.messages.length || result.sessions) throw new Error('Jev abstention started a Live session or produced a public intervention'); }
       else {
         if (result.signal?.kind !== scenario || result.publications !== 1 || result.messages.length !== 1) throw new Error(JSON.stringify({ scenario, result, error: await page.locator('.agent-error').allTextContents() }));
         await tab(guest, 'Transcript').click();
         await guest.getByText(result.messages[0], { exact: true }).waitFor();
         if (result.audible <= .01 || await guest.evaluate(() => window.__agentTest.audible) <= .01) throw new Error('Approved speech was not audible on both peers');
       }
-      return { scenario, provider: options.realProvider ? 'real GPT-Live' : 'simulated GPT-Live', ...result };
+      return { scenario, provider: options.realProvider ? 'real Jev + GPT-Live' : 'simulated Jev + GPT-Live', ...result };
     }
     for (const p of [page, guest]) {
       if (await p.evaluate(() => window.__agentTest.sessions.length)) throw new Error('Live opened automatically on room entry');
@@ -527,7 +528,7 @@ async (page, origin = 'http://127.0.0.1:8788', options = {}) => {
     await page.getByRole('button', { name: 'Add Omni', exact: true }).waitFor();
     await tab(guest, 'Room').click();
     await guest.getByRole('button', { name: 'Add Omni', exact: true }).waitFor();
-    return { liveControls: true, liveStaysOpenAfterAnswer: true, liveEndRestoresMicrophone: true, liveDraftPreserved: true, liveMobileTouch: true, livePrivate: true, replySend: true, replyHover: true, replyKeyboard: true, replyTouch: true, selectedMessageOnly: true, responseSquare: true, responseStop: true, dictationStopDraft: true, dictationSendFinalized: true, dictationPrivate: true, automaticOmni: true, fullPanelSettings: true, backWithoutSaving: true, reminderControlsRemoved: true, groupRemoval: true, clients: 2, directMuseTab: true, groupInRoom: true, allMembersConfigureGroup: true, groupBorderGlow: true, injectedSystemSignal: false, automaticSystemSignal: true, editSettings: true, automaticChat: true, noLiveOnJoin: true, privateIsolation: true, privateRecovery: true, signalingRecovery: true, oneShotPublicSpeech: true, ownerAttribution: true, ownerMicOpen, omniApprovedSpeech: true, omniSilentBeforeApproval: true, omniReplayDedup: true, mobileOverflow: false, provider: 'simulated GPT-Live WebRTC (no real provider call)', relay: 'mocked provisioning; local peer connectivity' };
+    return { liveControls: true, liveStaysOpenAfterAnswer: true, liveEndRestoresMicrophone: true, liveDraftPreserved: true, liveMobileTouch: true, livePrivate: true, replySend: true, replyHover: true, replyKeyboard: true, replyTouch: true, selectedMessageOnly: true, responseSquare: true, responseStop: true, dictationStopDraft: true, dictationSendFinalized: true, dictationPrivate: true, automaticOmni: true, fullPanelSettings: true, backWithoutSaving: true, reminderControlsRemoved: true, groupRemoval: true, clients: 2, directMuseTab: true, groupInRoom: true, allMembersConfigureGroup: true, groupBorderGlow: true, injectedSystemSignal: false, automaticSystemSignal: true, editSettings: true, automaticChat: true, noLiveOnJoin: true, privateIsolation: true, privateRecovery: true, signalingRecovery: true, oneShotPublicSpeech: true, ownerAttribution: true, ownerMicOpen, omniApprovedSpeech: true, omniSilentBeforeApproval: true, omniReplayDedup: true, mobileOverflow: false, provider: 'simulated Jev + GPT-Live WebRTC (no real provider call)', relay: 'mocked provisioning; local peer connectivity' };
   } catch (error) {
     const diagnostics = await page.evaluate(() => ({ events: window.__agentTest?.incoming.slice(-20), audible: window.__agentTest?.audible, group: window.__agentTest?.states.at(-1)?.agents.find(a => a.config.kind === 'group'), errors: [...document.querySelectorAll('.agent-error')].map(e => e.textContent) })).catch(() => null);
     throw new Error(`${String(error)} ${JSON.stringify(diagnostics)}`);
