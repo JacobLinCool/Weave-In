@@ -2,8 +2,15 @@ import { cloudflare } from '@cloudflare/vite-plugin';
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vite';
 import { viteStaticCopy } from 'vite-plugin-static-copy';
+import { buildMetadata } from './scripts/build-metadata.mjs';
+
+const build = buildMetadata();
 
 export default defineConfig({
+  define: {
+    __WEAVE_SOURCE_COMMIT__: JSON.stringify(build.commit),
+    __WEAVE_DEPLOYMENT_CHANNEL__: JSON.stringify(build.channel),
+  },
   build: { manifest: true },
   plugins: [
     {

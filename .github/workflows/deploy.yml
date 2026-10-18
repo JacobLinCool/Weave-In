@@ -21,6 +21,8 @@ jobs:
     timeout-minutes: 20
     env:
       WRANGLER_SEND_METRICS: 'false'
+      WEAVE_SOURCE_COMMIT: ${{ github.sha }}
+      WEAVE_DEPLOYMENT_CHANNEL: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && 'production' || 'preview' }}
 
     steps:
       - name: Check out repository
@@ -44,6 +46,15 @@ jobs:
       - name: Check types, tests, build, and deployment bundle
         run: pnpm check
 
+      - name: Check deployment observability without credentials
+        run: node --test apps/meeting/scripts/observability.test.mjs
+
+      - name: Verify existing public landing entry without credentials
+        working-directory: apps/meeting
+        # Runs on PRs and before main deploy; never requires the unreleased health API.
+        # No Cloudflare credentials, cookies or browser identity are supplied.
+        run: node scripts/check-deployed.mjs --origin https://weave.nycu.ai --entry-only
+
       - name: Deploy to Cloudflare
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         working-directory: apps/meeting
@@ -57,3 +68,9 @@ jobs:
             exit 1
           fi
           pnpm exec wrangler deploy
+
+      - name: Verify deployed public build and landing entry
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        working-directory: apps/meeting
+        # Deliberately outside the deployment step's Cloudflare secret scope.
+        run: node scripts/check-deployed.mjs --origin https://weave.nycu.ai --commit "$WEAVE_SOURCE_COMMIT" --channel production

@@ -4,6 +4,7 @@ import { initializeLive } from './live';
 import { reviewGroup } from './group-review';
 import { privateAnalysis } from './private-analysis';
 import { issueIceServers } from './ice-servers';
+import { healthResponse } from './health';
 import { DurableObject } from 'cloudflare:workers';
 import { GEMINI_MODEL, OPENAI_MODEL, type TranscriptionProvider } from '@weave-in/transcribe';
 import {
@@ -52,6 +53,8 @@ type UpstreamFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<R
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
+    // This liveness/build route never accesses rooms, secrets or AI providers.
+    if (url.pathname === '/healthz' || url.pathname === '/healthz/') return healthResponse(request);
     if (url.pathname === '/api/ice-servers') return issueIceServers(request, env);
     if (url.pathname === '/api/private-analysis') return privateAnalysis(request, env);
     if (url.pathname === '/api/transcription-token') {

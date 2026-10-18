@@ -253,6 +253,31 @@ The browser harness creates two independent browser contexts with real room WebS
 
 ### Stable local preview behind Tailscale
 
+`GET /healthz` returns Worker liveness and public build labels (`source_commit`
+and `deployment_channel`); `HEAD` returns the same headers without a body. It
+does not join a room, check credentials, contact an AI provider or report meeting
+contents. Its response is not cached. A 200 alone does not establish that media,
+TURN or AI features work.
+
+CI labels its build with the full GitHub SHA and production/preview channel,
+then verifies the deployed JSON label and static landing entry without deployment
+credentials. A stale build or an HTML fallback at `/healthz` fails verification.
+`PUBLIC_ROUTE_ACCESS_BLOCKED` means the probe received401/403; it does not prove
+the deployed app is down and does not trigger an automatic rollback.
+
+For an isolated local snapshot, first verify its clean source commit, then build
+with `WEAVE_SOURCE_COMMIT=<full-sha> WEAVE_DEPLOYMENT_CHANNEL=preview pnpm build`.
+Unlabelled builds expose a null commit rather than guessing from a snapshot
+directory. Check a labelled preview with:
+
+```bash
+node scripts/check-deployed.mjs --origin https://your-preview-origin --commit <full-sha> --channel preview
+```
+
+Changing these labels requires a new build. Reading `/healthz` does not rebuild
+or restart an existing preview; keep an in-use snapshot in place until its owner
+chooses to replace it.
+
 For a long-running local meeting, build once and serve the completed Worker directly through Miniflare:
 
 ```bash
