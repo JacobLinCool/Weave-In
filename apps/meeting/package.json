@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "pnpm --filter @weave-in/transcribe build && node scripts/prepare-whiteboard-assets.mjs && WRANGLER_LOG_PATH=./wrangler.log vite",
-    "build": "node scripts/prepare-whiteboard-assets.mjs && WRANGLER_LOG_PATH=./wrangler.log vite build && node scripts/verify-bundle.mjs",
+    "build": "node scripts/prepare-whiteboard-assets.mjs && WRANGLER_LOG_PATH=./wrangler.log vite build && node scripts/prerender-public-pages.mjs && node scripts/verify-bundle.mjs",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test": "WRANGLER_LOG_PATH=./wrangler.log vitest run",

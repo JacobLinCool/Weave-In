@@ -78,6 +78,7 @@ export default {
     if (url.pathname.startsWith('/api/rooms/')) return jsonError('INVALID_ROOM', 400);
 
     const assetResponse = await env.ASSETS.fetch(request);
+    if (isSpaFallback(assetResponse, url)) return withSecurityHeaders(notFoundPage(request), url);
     return withSecurityHeaders(assetResponse, url);
   },
 } satisfies ExportedHandler<Env>;
@@ -450,6 +451,42 @@ function readToken(value: unknown, field: 'name' | 'value'): string | null {
 
 function isLocalHostname(hostname: string): boolean {
   return hostname === '127.0.0.1' || hostname === 'localhost';
+}
+
+const PUBLIC_PAGE_PATHS = new Set(['/', '/about', '/about/']);
+
+/** The asset binding answers unknown paths with the app shell (`not_found_handling`),
+ * which would make every mistyped or crawled URL a 200 copy of the homepage. */
+function isSpaFallback(response: Response, url: URL): boolean {
+  return response.ok
+    && !!response.headers.get('Content-Type')?.includes('text/html')
+    && !PUBLIC_PAGE_PATHS.has(url.pathname);
+}
+
+const NOT_FOUND_HTML = `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex" />
+    <title>Page not found — Weave In</title>
+    <style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#141A33;color:#F3EEE3;font-family:system-ui,sans-serif}main{max-width:32rem;padding:2rem}a{color:inherit}</style>
+  </head>
+  <body>
+    <main>
+      <h1>Page not found</h1>
+      <p>This address is not part of Weave In. Meeting invitations open the homepage with a room code, such as <code>/?room=ABC123</code>.</p>
+      <p><a href="/">Go to the Weave In homepage</a> · <a href="/about">About Weave In</a></p>
+    </main>
+  </body>
+</html>
+`;
+
+function notFoundPage(request: Request): Response {
+  return new Response(request.method === 'HEAD' ? null : NOT_FOUND_HTML, {
+    status: 404,
+    headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'public, max-age=0, must-revalidate' },
+  });
 }
 
 function withSecurityHeaders(response: Response, url: URL): Response {

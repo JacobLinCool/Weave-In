@@ -85,3 +85,11 @@ for (const asset of [
   if (!(await stat(resolve(clientRoot, 'pdfjs', asset))).size) throw new Error(`Empty PDF asset: ${asset}`);
 }
 console.log('Production bundle includes lazy document readers and same-origin PDF decoding assets.');
+
+// Public pages must be readable before JavaScript runs, and share the app shell's entry.
+for (const [page, heading] of [['index.html', 'id="hero-title"'], ['about.html', 'id="about-title"']]) {
+  const html = page === 'index.html' ? indexHtml : await readFile(resolve(clientRoot, page), 'utf8');
+  if (!html.includes(`<h1 ${heading}`)) throw new Error(`Production ${page} is missing its prerendered heading.`);
+  if (!html.includes(`src="${entryMatch[1]}"`)) throw new Error(`Production ${page} does not load the application entry.`);
+}
+console.log('Production HTML includes prerendered public pages: index.html, about.html.');
