@@ -221,7 +221,11 @@ The workflow uses the pnpm version in `package.json` and the Wrangler version in
 
 ## Search and link previews
 
-The initial HTML contains the canonical URL, Open Graph and X/Twitter large-image metadata, and WebSite/WebApplication structured data. Crawlers can read this metadata without running JavaScript. `public/robots.txt` points to the homepage-only sitemap; invitation URLs still serve the same preview but send `X-Robots-Tag: noindex, follow`. The web manifest supplies the name, theme, and home-screen icons.
+The initial HTML contains the canonical URL, Open Graph and X/Twitter large-image metadata, and WebSite/WebApplication structured data. Crawlers can read this metadata without running JavaScript. The Worker rewrites the title, description and canonical URL for `/about`. `public/robots.txt` points to the sitemap, which lists the two public pages, `/` and `/about`; invitation URLs still serve the same preview but send `X-Robots-Tag: noindex, follow`. The web manifest supplies the name, theme, and home-screen icons.
+
+`pnpm build` renders the landing and About pages with React (`src/prerender.tsx`, `scripts/prerender-public-pages.mjs`) into `dist/client/index.html` and `dist/client/about.html`, so their headings and text are in the HTML response. The client replaces that markup when its page module loads; it does not hydrate it. `verify-bundle.mjs` fails the build if either page lacks its prerendered heading.
+
+Only `/`, `/about` and `/about/` are app pages. When the asset binding would answer any other path with the app shell (`not_found_handling: single-page-application`), the Worker returns a small `404` page with `noindex` instead, so unknown URLs are not soft-404 copies of the homepage.
 
 `public/og-image.png` is the 1200 × 630 social preview. Its vector source is `public/og-image.svg`; the generator uses the project's Jost font and woven brand mark. To regenerate it after editing the design, install ImageMagick and run from the repository root:
 

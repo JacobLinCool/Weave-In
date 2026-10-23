@@ -154,16 +154,56 @@ describe('MeetingRoom Durable Object', () => {
       expect(page.headers.get('X-Robots-Tag')).toBeNull();
       expect(await page.text()).toContain('property="og:title"');
     }
-    for (const path of ['/?room=ABC123', '/nonexistent']) {
-      const page = await worker.fetch(new Request(`https://weave.nycu.ai${path}`), assetEnv);
-      expect(page.headers.get('X-Robots-Tag')).toBe('noindex, follow');
-      expect(await page.text()).toBe(previewHtml);
-    }
+    const invitation = await worker.fetch(new Request('https://weave.nycu.ai/?room=ABC123'), assetEnv);
+    expect(invitation.status).toBe(200);
+    expect(invitation.headers.get('X-Robots-Tag')).toBe('noindex, follow');
+    expect(await invitation.text()).toBe(previewHtml);
     for (const path of ['/about?room=ABC123', '/about/?room=ABC123']) {
       const page = await worker.fetch(new Request(`https://weave.nycu.ai${path}`), assetEnv);
       expect(page.headers.get('X-Robots-Tag')).toBe('noindex, follow');
       expect(await page.text()).toContain('content="About Weave In"');
     }
+  });
+
+  it.each(['/nonexistent', '/seo-audit-nonexistent-20261023', '/room/ABC123', '/about/team', '/assets/missing.js'])(
+    'answers the app shell fallback for unknown path %s with a noindex 404',
+    async (path) => {
+      const shellHtml = '<html><head><link rel="canonical" href="https://weave.nycu.ai/"></head><body><div id="root"></div></body></html>';
+      const assetEnv = {
+        ...tokenEnv(),
+        ASSETS: { fetch: async () => new Response(shellHtml, { headers: { 'Content-Type': 'text/html' } }) } as unknown as Fetcher,
+      };
+      const page = await worker.fetch(new Request(`https://weave.nycu.ai${path}`), assetEnv);
+      expect(page.status).toBe(404);
+      expect(page.headers.get('X-Robots-Tag')).toBe('noindex, follow');
+      expect(page.headers.get('Content-Security-Policy')).toContain("script-src 'self'");
+      const html = await page.text();
+      expect(html).toContain('<meta name="robots" content="noindex" />');
+      expect(html).toContain('<h1>Page not found</h1>');
+      expect(html).not.toContain('rel="canonical"');
+      const head = await worker.fetch(new Request(`https://weave.nycu.ai${path}`, { method: 'HEAD' }), assetEnv);
+      expect(head.status).toBe(404);
+      expect(await head.text()).toBe('');
+    },
+  );
+
+  it('passes through static assets and asset responses that are not the app shell', async () => {
+    const assetEnv = {
+      ...tokenEnv(),
+      ASSETS: {
+        fetch: async (request: Request) => new URL(request.url).pathname === '/robots.txt'
+          ? new Response('User-agent: *\nAllow: /\n', { headers: { 'Content-Type': 'text/plain' } })
+          : new Response(null, { status: 307, headers: { Location: '/about' } }),
+      } as unknown as Fetcher,
+    };
+    const robots = await worker.fetch(new Request('https://weave.nycu.ai/robots.txt'), assetEnv);
+    expect(robots.status).toBe(200);
+    expect(await robots.text()).toContain('User-agent: *');
+    const redirect = await worker.fetch(new Request('https://weave.nycu.ai/about.html'), assetEnv);
+    expect(redirect.status).toBe(307);
+    expect(redirect.headers.get('Location')).toBe('/about');
+    const missing = await worker.fetch(new Request('https://weave.nycu.ai/missing.png'), tokenEnv());
+    expect(missing.status).toBe(404);
   });
 
   it.each(['/about', '/about/'])('serves About metadata at %s while preserving app markup and security headers', async (path) => {
