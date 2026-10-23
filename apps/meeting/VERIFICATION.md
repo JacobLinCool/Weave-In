@@ -24,6 +24,31 @@ This runs workspace type checks, transcription and meeting tests, production bui
 
 These tests verify deterministic application behavior and fixtures. They do not establish model accuracy, real speech understanding, device interoperability or production reliability.
 
+## Search indexing fix (GSC-20261023) — 2026-10-23
+
+**Defects found on production `61682e8`.** Any unknown path, e.g. `/seo-audit-nonexistent-20261023`, returned HTTP 200 with the app shell: `<meta name="robots" content="index, follow">` and a canonical URL pointing at `/`, contradicted only by an `X-Robots-Tag: noindex, follow` header (soft-404 risk). Root cause: `not_found_handling: single-page-application` plus the Worker passing every asset response through. The raw HTML of `/` and `/about` had a title, description and canonical URL but an empty `#root`, with no `h1` or body text. How Google rendered these pages was not checked, so this record does not claim Google could not read them.
+
+**Fix: PR #27, merge commit `c39ca10`.** The Worker answers the app-shell fallback for any path other than `/`, `/about`, `/about/` with a `noindex` 404 page. The build prerenders `LandingSurface` and `AboutPage` into `index.html` and `about.html`, and the client replaces that markup when its page module loads. Search Console HTML-tag verification for the site owner's existing URL-prefix property was added to `index.html` in a follow-up commit; it adds no DNS records or account permissions.
+
+**Tests.** PR #27 CI ran `pnpm check` with exit 0: 83 transcription + 484 meeting tests, including new unknown-path 404/HEAD and asset pass-through cases, plus build, prerender, `verify-bundle` and Worker dry-run. Locally, under host load average ~48, the full suite had 5 s timeouts in DOCX extraction and DO close tests; those files passed in isolation (51/51). A local Miniflare preview checked status codes, canonical URLs and headings for all routes listed below. In headless Chromium without JavaScript, `/` exposed 5,402 characters of text with 8 `h2` and `/about` exposed 6,409; with JavaScript, React mounted on both pages with no console errors.
+
+**Production evidence for `c39ca10`** (from `/healthz` `source_commit`, deployment_channel `production`, checked 2026-10-23):
+
+| URL | Result |
+| --- | --- |
+| `https://weave.nycu.ai/` | 200, canonical `https://weave.nycu.ai/`, meta robots `index, follow, max-image-preview:large`, no `X-Robots-Tag`, `h1` "Keep the thread. Weave everyone in." in raw HTML |
+| `https://weave.nycu.ai/about` | 200, canonical `https://weave.nycu.ai/about`, title "About Weave In", same robots, narrative `h1` in raw HTML |
+| `/about/`, `/about.html` | 307 → `/about` |
+| `/index.html` | 307 → `/` |
+| `/?room=ABC123` | 200, `X-Robots-Tag: noindex, follow` (invitations stay out of the index) |
+| `/seo-audit-nonexistent-20261023` | **404**, `X-Robots-Tag: noindex, follow`, meta robots `noindex`, no canonical |
+| `robots.txt` | 200, `Allow: /`, `Disallow: /api/`, `Sitemap: https://weave.nycu.ai/sitemap.xml` |
+| `https://weave.nycu.ai/sitemap.xml` | 200, 2 URLs: `https://weave.nycu.ai/`, `https://weave.nycu.ai/about` |
+
+The deploy run (`39932032611`) deployed successfully, but its post-deploy probe reported `DEPLOYED_BUILD_MISMATCH` because it runs once and reached the previous build before the new one propagated. Rerunning `check-deployed.mjs --commit c39ca10… --channel production` minutes later passed all three checks. The probe has no retry, so later deploys can fail the same way.
+
+**Not done here.** Search Console verification and sitemap submission are done separately in Google tools. Submitting or reading a sitemap does not mean a page is indexed. Meeting rooms, private assistant data and the sharing/sign-in model were not changed.
+
 ## Jev integration validation — 2026-09-18
 
 - `pnpm check` passed: 83 transcription tests and 467 meeting tests, workspace type checks, production builds, asset verification and Worker deployment dry-run. No deployment was performed.
