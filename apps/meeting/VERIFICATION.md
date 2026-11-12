@@ -24,6 +24,20 @@ This runs workspace type checks, transcription and meeting tests, production bui
 
 These tests verify deterministic application behavior and fixtures. They do not establish model accuracy, real speech understanding, device interoperability or production reliability.
 
+## Whiteboard tools open and frame a closed board — 2026-11-13
+
+**Defect seen on production `6867b07` (2026-09-12).** Calling `edit_whiteboard` while the board was closed created the elements, but the editor stayed closed. A following `capture_whiteboard` then returned an error. When the board was opened by hand, imported content could sit against the viewport edge, because the fit-to-viewport step after the edit had no editor to act on. The production test used a `registerTool` adapter in Chromium. Native WebMCP in an external client was not available or tested.
+
+**Fix.** `edit_whiteboard` edits (not reads) and `capture_whiteboard` now open a closed board in that browser. When the editor first mounts with existing content, they fit that content to the viewport. After an edit, they fit the latest scene. A capture of a board that is already open keeps the participant's current view. Async imports stop committing once the participant has left the room. Opening the board manually from the meeting controls still shows the default viewport.
+
+| Check | Result and boundary |
+| --- | --- |
+| `pnpm check` on this branch (base `4cf1b61`) | Exit 0: 83 transcription + 484 meeting tests, workspace type checks, production builds, prerender/bundle validation and Worker deployment dry-run. No deployment. |
+| `verify-demo-whiteboard-browser.js` against `pnpm dev` | Passed: closed-board Mermaid import opened and framed the board, a pointer-drawn rectangle was extended through its actual ID with prior elements unchanged, capture after closing reopened the board, late join received every element, and a fresh browser saw an empty board after everyone left. Captures contained drawn content clear of all edges. No AI calls; ICE provisioning was mocked. |
+| 1440px and 390px screenshots | The board was closed after joining. A closed-board import opened and framed it, and a capture after closing reopened it. Neither width had document overflow. A peer that opened the board manually saw the default, unfitted viewport. |
+
+Local evidence is in the ignored `output/playwright/whiteboard-pr/` and `output/playwright/demo-whiteboard/` directories. Earlier production observations of Muse Live and Omni from the same 2026-09-12 session predate the Jev detection and approval-button changes and are not carried forward.
+
 ## Search indexing fix (GSC-20261023) — 2026-10-23
 
 **Defects found on production `61682e8`.** Any unknown path, e.g. `/seo-audit-nonexistent-20261023`, returned HTTP 200 with the app shell: `<meta name="robots" content="index, follow">` and a canonical URL pointing at `/`, contradicted only by an `X-Robots-Tag: noindex, follow` header (soft-404 risk). Root cause: `not_found_handling: single-page-application` plus the Worker passing every asset response through. The raw HTML of `/` and `/about` had a title, description and canonical URL but an empty `#root`, with no `h1` or body text. How Google rendered these pages was not checked, so this record does not claim Google could not read them.
@@ -90,12 +104,13 @@ Local evidence is retained in the ignored repository-root `output/playwright/ali
 
 ## Reproducible browser checks
 
-Launch/configuration instructions are in [README.md](README.md#browser-verification). All harnesses require a running development or built-Worker origin; pass it explicitly. The two app harnesses use independent browser contexts with real room WebSockets and local peer connections. Their default Jev, GPT-Live and ICE provisioning responses are simulated.
+Launch/configuration instructions are in [README.md](README.md#browser-verification). All harnesses require a running development or built-Worker origin; pass it explicitly. The app harnesses use independent browser contexts with real room WebSockets and local peer connections. Their default Jev, GPT-Live and ICE provisioning responses are simulated.
 
 | Script | What the current harness checks |
 | --- | --- |
 | `scripts/verify-agents-browser.js` | Automatic Muse/Omni setup without a Live connection on entry; private isolation; dictation stop/send; a bounded simulated Live start/answer/End cycle; selected-reply reading; settings and permission changes; owner attribution, microphone interruption and no automatic resume; silent Omni preparation, approval-before-audio, public delivery/replay; room recovery and mobile layout |
 | `scripts/verify-chat-tools-browser.js` | Actual meeting read; another peer's text/image transfer and readable/vision result; shared-board read, Mermaid edit and rendered capture; receiving peer's board; default file access, screen opt-in, 500-record tool schema, and no private-response publication or default Room-posting tool |
+| `scripts/verify-demo-whiteboard-browser.js` | Provider-free WebMCP adapter calling the real tool callbacks: meeting read and attributed post, Mermaid import into a closed board that opens and is framed, a pointer-drawn human rectangle connected by its actual ID with prior elements unchanged, capture after closing, late join, and an empty board after everyone leaves |
 | `scripts/verify-turn-relay.js` | Real credential provisioning and two peers with relay-only policy for all transports, TCP-only and TLS/443-only; bidirectional data/media and selected relay candidate pairs via `getStats()` |
 | `scripts/evaluate-group-detection.mjs` | Opt-in real Jev routing checks using synthetic English and Traditional Chinese discussion; reports confidence, selected category and request latency |
 | `scripts/evaluate-private-analysis.mjs` | Opt-in real Gemini checks using synthetic unresolved/resolved objections, ordinary agreement, unclear transcription and prompt-injection fixtures |

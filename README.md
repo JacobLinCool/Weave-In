@@ -72,7 +72,7 @@ Private Muse Live and dictation pause the owner’s room microphone and public c
 
 Choose **Open shared whiteboard** in the meeting controls. Each participant controls their own view; closing the board preserves its contents and synchronization. The [Excalidraw](https://github.com/excalidraw/excalidraw) editor supports shapes, bound text, arrows, freehand drawing, pan/zoom, and export. Fonts are served locally. Late joiners receive element records, including deletions, from connected peers. Concurrent edits resolve by native element version and nonce ordering.
 
-For manual Mermaid input, open **More tools → Mermaid to Excalidraw**. For agent edits, `edit_whiteboard` supports read, edit, undo, redo, and Mermaid import; follow edits with `capture_whiteboard` to inspect the visible result. External WebMCP captures require the board to be open. Muse opens it when needed.
+For manual Mermaid input, open **More tools → Mermaid to Excalidraw**. For agent edits, `edit_whiteboard` supports read, edit, undo, redo, and Mermaid import; follow edits with `capture_whiteboard` to inspect the visible result. Editing and capture tools open a closed board and fit its content to the viewport; an already open board keeps your current view for capture. Finish any active text edit before capturing.
 
 ```json
 {
